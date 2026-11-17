@@ -1,0 +1,108 @@
+# NovelWorkbench 容器化编排：应用容器 + 可选本地中间件（profile: infra）
+# 生产环境中间件使用云服务器（见 doc/deploy.md），本地全栈开发用：
+#   docker compose --profile infra up -d
+name: novel-workbench
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: novel-workbench-backend:latest
+    container_name: nw-backend
+    restart: unless-stopped
+    environment:
+      NW_SERVER_PORT: "8080"
+      NW_JWT_SECRET: ${NW_JWT_SECRET:-novel-workbench-dev-secret-change-me}
+      NW_POSTGRES_HOST: ${NW_POSTGRES_HOST:-47.108.73.153}
+      NW_POSTGRES_PASSWORD: ${NW_POSTGRES_PASSWORD:-admin_public}
+      NW_REDIS_ADDR: ${NW_REDIS_ADDR:-47.108.73.153:6379}
+      NW_REDIS_PASSWORD: ${NW_REDIS_PASSWORD:-admin_public}
+      NW_RABBITMQ_URL: ${NW_RABBITMQ_URL:-amqp://admin:admin_public@47.108.73.153:5672/}
+      NW_MINIO_ENDPOINT: ${NW_MINIO_ENDPOINT:-47.108.73.153:9000}
+      NW_MINIO_ACCESS_KEY: ${NW_MINIO_ACCESS_KEY:-minioadmin}
+      NW_MINIO_SECRET_KEY: ${NW_MINIO_SECRET_KEY:-minioadminpublic}
+      NW_MANTICORE_BASE_URL: ${NW_MANTICORE_BASE_URL:-http://47.108.73.153:9308}
+      NW_AI_BASE_URL: ${NW_AI_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      NW_AI_API_KEY: ${NW_AI_API_KEY:-sk-your-api-key}
+      NW_AI_CHAT_MODEL: ${NW_AI_CHAT_MODEL:-qwen-plus}
+      NW_AI_EMBEDDING_MODEL: ${NW_AI_EMBEDDING_MODEL:-text-embedding-v3}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: novel-workbench-frontend:latest
+    container_name: nw-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+  # ---- 以下为本地中间件（--profile infra 时启动），生产直连云服务器 ----
+  postgres:
+    image: pgvector/pgvector:pg16
+    profiles: ["infra"]
+    container_name: nw-postgres
+    environment:
+      POSTGRES_PASSWORD: admin_public
+    ports:
+      - "5432:5432"
+    volumes:
+      - nw_pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8.4
+    profiles: ["infra"]
+    container_name: nw-redis
+    command: ["redis-server", "--requirepass", "admin_public", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    profiles: ["infra"]
+    container_name: nw-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpublic
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - nw_minio_data:/data
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    profiles: ["infra"]
+    container_name: nw-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin_public
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  manticore:
+    image: manticoresearch/manticore:latest
+    profiles: ["infra"]
+    container_name: nw-manticore
+    ports:
+      - "9306:9306"
+      - "9308:9308"
+    volumes:
+      - nw_manticore_data:/var/lib/manticore
+
+volumes:
+  nw_pg_data:
+  nw_minio_data:
+  nw_manticore_data:

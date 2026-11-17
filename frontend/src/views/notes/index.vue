@@ -1,0 +1,313 @@
+<!--
+  创作笔记页：左侧笔记列表（标题/更新时间/搜索）+ 右侧 WangEditor 富文本编辑。
+  标题/正文统一走 debounce 2s 自动保存（POST /lore/save，有 lore_ulid 为更新），
+  切换笔记前先落盘；右上角展示保存状态（保存中/已保存/未保存/失败可重试）。
+-->
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
+import {
+  deleteLore,
+  listLoreNotes,
+  NW_LORE_TYPE_NOTE,
+  saveLore,
+  type NWLoreVo,
+} from '@/api/lore'
+import NWButton from '@/components/NWButton.vue'
+import NWEmpty from '@/components/NWEmpty.vue'
+import NWLoading from '@/components/NWLoading.vue'
+import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
+import NoteEditor from './NoteEditor.vue'
+
+const route = useRoute()
+const { t } = useI18n()
+
+const projectUlid = computed(() => String(route.params.project_ulid ?? ''))
+
+/** 自动保存防抖时长（毫秒，与写作台章节编辑器一致） */
+const NW_SAVE_DEBOUNCE_MS = 2000
+
+/** 保存状态：idle 未改动 / saving 保存中 / saved 已保存 / failed 保存失败 */
+type NWSaveStatus = 'idle' | 'saving' | 'saved' | 'failed'
+
+const noteList = ref<NWLoreVo[]>([])
+const listLoading = ref(false)
+const searchText = ref('')
+const currentNote = ref<NWLoreVo | null>(null)
+const noteName = ref('')
+const contentHtml = ref('')
+const saveStatus = ref<NWSaveStatus>('idle')
+const creatingFlag = ref(false)
+
+let saveTimer: number | null = null
+let dirtyFlag = false
+/** 程序化回填内容期间抑制 change 事件触发自动保存 */
+let suppressChangeFlag = false
+
+/** 过滤后的笔记列表（按标题模糊匹配） */
+const filteredNoteList = computed<NWLoreVo[]>(() => {
+  const keyword = searchText.value.trim().toLowerCase()
+  if (!keyword) {
+    return noteList.value
+  }
+  return noteList.value.filter((item) => item.lore_name.toLowerCase().includes(keyword))
+})
+
+/** 毫秒时间戳转本地时间 */
+function formatTime(timeMs: number): string {
+  return new Date(timeMs).toLocaleString()
+}
+
+/** 加载笔记列表 */
+async function loadNotes(): Promise<void> {
+  if (!projectUlid.value) {
+    return
+  }
+  listLoading.value = true
+  try {
+    const listData = await listLoreNotes(projectUlid.value)
+    noteList.value = Array.isArray(listData) ? listData : []
+  } catch {
+    // 失败提示由 http 层统一弹出
+    noteList.value = []
+  } finally {
+    listLoading.value = false
+  }
+}
+
+/** 安排防抖自动保存 */
+function scheduleSave(): void {
+  dirtyFlag = true
+  saveStatus.value = 'idle'
+  if (saveTimer !== null) {
+    window.clearTimeout(saveTimer)
+  }
+  saveTimer = window.setTimeout(() => {
+    saveTimer = null
+    void saveNote()
+  }, NW_SAVE_DEBOUNCE_MS)
+}
+
+/** 取消未触发的防抖 */
+function cancelScheduledSave(): void {
+  if (saveTimer !== null) {
+    window.clearTimeout(saveTimer)
+    saveTimer = null
+  }
+}
+
+/** 保存当前笔记（新建走首次落盘拿 lore_ulid，后续为更新） */
+async function saveNote(): Promise<void> {
+  const note = currentNote.value
+  if (!note) {
+    return
+  }
+  saveStatus.value = 'saving'
+  try {
+    const savedVo = await saveLore({
+      lore_ulid: note.lore_ulid || undefined,
+      project_ulid: projectUlid.value,
+      lore_name: noteName.value || t('notes.defaultName'),
+      lore_type_code: NW_LORE_TYPE_NOTE,
+      content_text: contentHtml.value,
+      sort_order: note.sort_order,
+    })
+    currentNote.value = savedVo
+    const listItem = noteList.value.find((item) => item.lore_ulid === savedVo.lore_ulid)
+    if (listItem) {
+      listItem.lore_name = savedVo.lore_name
+      listItem.updated_at_ms = savedVo.updated_at_ms
+    }
+    dirtyFlag = false
+    saveStatus.value = 'saved'
+  } catch {
+    // 失败提示由 http 层统一弹出；状态置失败可重试
+    saveStatus.value = 'failed'
+  }
+}
+
+/** 立即落盘未保存内容（切换笔记前调用） */
+async function flushSave(): Promise<void> {
+  cancelScheduledSave()
+  if (dirtyFlag) {
+    await saveNote()
+  }
+}
+
+/** 回填编辑器（抑制回环触发保存） */
+function applyNoteContent(html: string): void {
+  suppressChangeFlag = true
+  contentHtml.value = html
+  window.setTimeout(() => {
+    suppressChangeFlag = false
+  }, 0)
+}
+
+/** 切换笔记：先落盘当前，再载入目标 */
+async function selectNote(noteVo: NWLoreVo): Promise<void> {
+  if (currentNote.value?.lore_ulid === noteVo.lore_ulid) {
+    return
+  }
+  await flushSave()
+  currentNote.value = noteVo
+  noteName.value = noteVo.lore_name
+  applyNoteContent(noteVo.content_text)
+  saveStatus.value = 'idle'
+}
+
+/** 新建笔记（立即落库占位，后续编辑走自动保存） */
+async function handleCreate(): Promise<void> {
+  creatingFlag.value = true
+  try {
+    const savedVo = await saveLore({
+      project_ulid: projectUlid.value,
+      lore_name: t('notes.defaultName'),
+      lore_type_code: NW_LORE_TYPE_NOTE,
+      content_text: '',
+    })
+    ElMessage.success(t('notes.createSuccess'))
+    noteList.value.unshift(savedVo)
+    await selectNote(savedVo)
+  } catch {
+    // 失败提示由 http 层统一弹出
+  } finally {
+    creatingFlag.value = false
+  }
+}
+
+/** 删除笔记（二次确认） */
+async function handleDelete(noteVo: NWLoreVo): Promise<void> {
+  try {
+    await ElMessageBox.confirm(t('notes.deleteConfirm'), t('common.confirm'), {
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel'),
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteLore(noteVo.lore_ulid)
+    ElMessage.success(t('notes.deleteSuccess'))
+    if (currentNote.value?.lore_ulid === noteVo.lore_ulid) {
+      cancelScheduledSave()
+      dirtyFlag = false
+      currentNote.value = null
+      noteName.value = ''
+      applyNoteContent('')
+      saveStatus.value = 'idle'
+    }
+    noteList.value = noteList.value.filter((item) => item.lore_ulid !== noteVo.lore_ulid)
+  } catch {
+    // 失败提示由 http 层统一弹出
+  }
+}
+
+function handleNameInput(): void {
+  scheduleSave()
+}
+
+function handleContentChange(): void {
+  if (suppressChangeFlag) {
+    return
+  }
+  scheduleSave()
+}
+
+watch(projectUlid, () => {
+  cancelScheduledSave()
+  dirtyFlag = false
+  currentNote.value = null
+  noteName.value = ''
+  applyNoteContent('')
+  void loadNotes()
+})
+
+onMounted(() => {
+  void loadNotes()
+})
+</script>
+
+<template>
+  <div class="notes-page">
+    <ProjectPageHeader :project-ulid="projectUlid" />
+
+    <NWCard :title="t('notes.title')" :hoverable="false">
+      <div class="notes-page__main">
+        <!-- 左侧笔记列表 -->
+        <aside class="notes-page__list">
+          <div class="notes-page__list-bar">
+            <el-input
+              v-model="searchText"
+              size="small"
+              clearable
+              :placeholder="t('notes.searchPlaceholder')"
+            />
+            <NWButton size="small" type="primary" :loading="creatingFlag" @click="handleCreate">
+              {{ t('notes.create') }}
+            </NWButton>
+          </div>
+          <NWLoading v-if="listLoading && noteList.length === 0" />
+          <NWEmpty
+            v-else-if="filteredNoteList.length === 0"
+            :description_text="t('notes.emptyGuide')"
+          />
+          <ul v-else class="notes-page__items">
+            <li
+              v-for="noteVo in filteredNoteList"
+              :key="noteVo.lore_ulid"
+              class="notes-page__item"
+              :class="{ 'is-active': currentNote?.lore_ulid === noteVo.lore_ulid }"
+              @click="selectNote(noteVo)"
+            >
+              <div class="notes-page__item-info">
+                <span class="notes-page__item-name" :title="noteVo.lore_name">
+                  {{ noteVo.lore_name }}
+                </span>
+                <span class="notes-page__item-time">{{ formatTime(noteVo.updated_at_ms) }}</span>
+              </div>
+              <NWButton size="small" type="danger" @click.stop="handleDelete(noteVo)">
+                {{ t('common.delete') }}
+              </NWButton>
+            </li>
+          </ul>
+        </aside>
+
+        <!-- 右侧编辑区 -->
+        <section class="notes-page__editor">
+          <template v-if="currentNote">
+            <div class="notes-page__editor-bar">
+              <el-input
+                v-model="noteName"
+                class="notes-page__name-input"
+                maxlength="128"
+                :placeholder="t('notes.namePlaceholder')"
+                @input="handleNameInput"
+              />
+              <span class="notes-page__save-state" :class="`is-${saveStatus}`">
+                <template v-if="saveStatus === 'saving'">{{ t('notes.saveStatus.saving') }}</template>
+                <template v-else-if="saveStatus === 'saved'">{{ t('notes.saveStatus.saved') }}</template>
+                <template v-else-if="saveStatus === 'failed'">
+                  {{ t('notes.saveStatus.saveFailed') }}
+                  <NWButton size="small" @click="saveNote">{{ t('notes.saveStatus.retry') }}</NWButton>
+                </template>
+                <template v-else>{{ t('notes.saveStatus.unsaved') }}</template>
+              </span>
+            </div>
+            <NoteEditor
+              v-model="contentHtml"
+              class="notes-page__editor-body"
+              :placeholder="t('notes.contentPlaceholder')"
+              @change="handleContentChange"
+            />
+          </template>
+          <NWEmpty v-else :description_text="t('notes.selectGuide')" />
+        </section>
+      </div>
+    </NWCard>
+  </div>
+</template>
+
+<style scoped src="./notes.css"></style>

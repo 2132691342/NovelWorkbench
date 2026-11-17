@@ -1,0 +1,132 @@
+/* 创作笔记页样式 */
+.notes-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.notes-page__main {
+  display: flex;
+  gap: 16px;
+  height: calc(100vh - 220px);
+  min-height: 480px;
+}
+
+/* 左侧笔记列表 */
+.notes-page__list {
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-base);
+  overflow: hidden;
+  background-color: var(--bg-page);
+}
+
+.notes-page__list-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.notes-page__items {
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.notes-page__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  background-color: var(--bg-card);
+  border: 1px solid transparent;
+  transition: border-color var(--transition-base), background-color var(--transition-base);
+}
+
+.notes-page__item:hover {
+  background-color: var(--bg-hover);
+}
+
+.notes-page__item.is-active {
+  border-color: var(--primary);
+  background-color: var(--primary-light);
+}
+
+.notes-page__item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notes-page__item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-page__item-time {
+  font-size: 12px;
+  color: var(--text-placeholder);
+}
+
+/* 右侧编辑区 */
+.notes-page__editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.notes-page__editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.notes-page__name-input {
+  flex: 1;
+}
+
+.notes-page__editor-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 保存状态（复用写作台保存状态模式） */
+.notes-page__save-state {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-placeholder);
+}
+
+.notes-page__save-state.is-saved {
+  color: var(--success);
+}
+
+.notes-page__save-state.is-saving {
+  color: var(--text-secondary);
+}
+
+.notes-page__save-state.is-failed {
+  color: var(--error);
+}

@@ -1,0 +1,89 @@
+/* 仪表盘样式（views/dashboard/index.vue 以 <style scoped src> 引入） */
+.dashboard-page__title {
+  margin: 0 0 16px;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.dashboard-page__stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.dashboard-page__trend-card {
+  margin-bottom: 16px;
+}
+
+.dashboard-page__trend-chart {
+  width: 100%;
+  height: 320px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+  border-left: 4px solid var(--primary);
+  padding-left: 14px;
+}
+
+.stat-card--slate {
+  border-left-color: var(--text-main);
+}
+
+.stat-card--violet {
+  border-left-color: var(--primary-hover);
+}
+
+.stat-card--blue {
+  border-left-color: var(--info);
+}
+
+.stat-card__label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.stat-card__value {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.dashboard-page__project-card {
+  margin-bottom: 16px;
+}
+
+.dashboard-page__project-table {
+  cursor: pointer;
+}
+
+.project-cover {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 48px;
+  border-radius: 4px;
+  color: var(--text-inverse);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.project-status {
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  background-color: var(--primary-light);
+  color: var(--primary-active);
+  font-size: 12px;
+}
+
+.dashboard-page__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}

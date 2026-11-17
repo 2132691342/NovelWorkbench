@@ -1,0 +1,43 @@
+{
+  "name": "novel-workbench-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@antv/x6": "2.18.1",
+    "@codemirror/autocomplete": "6.20.4",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
+    "@wangeditor/editor": "5.1.23",
+    "@wangeditor/editor-for-vue": "5.1.12",
+    "axios": "1.6.8",
+    "bpmn-js": "16.4.0",
+    "docx-preview": "0.3.4",
+    "echarts": "5.5.0",
+    "element-plus": "2.9.0",
+    "pinia": "2.1.7",
+    "vue": "3.4.34",
+    "vue-i18n": "9.10.2",
+    "vue-pdf-embed": "2.1.7",
+    "vue-router": "4.3.2",
+    "xlsx": "0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "@unocss/preset-uno": "0.58.6",
+    "@unocss/transformer-directives": "0.58.6",
+    "@vitejs/plugin-vue": "5.0.5",
+    "typescript": "5.4.5",
+    "unocss": "0.58.6",
+    "vite": "5.2.12",
+    "vue-tsc": "2.2.10"
+  }
+}

@@ -1,0 +1,168 @@
+package repo
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"gorm.io/gorm"
+
+	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
+)
+
+// KnowledgeRepo 知识库文档与切片持久化仓储（embedding_vec 读写走 pgvector raw SQL）。
+type KnowledgeRepo struct {
+	db *gorm.DB
+}
+
+// NewKnowledgeRepo 构造知识库仓储。
+func NewKnowledgeRepo(db *gorm.DB) *KnowledgeRepo {
+	return &KnowledgeRepo{db: db}
+}
+
+// CreateDocument 插入文档记录。
+func (r *KnowledgeRepo) CreateDocument(ctx context.Context, do *domain.KnowledgeDocumentDO) error {
+	if err := r.db.WithContext(ctx).Create(do).Error; err != nil {
+		return fmt.Errorf("create knowledge document: %w", err)
+	}
+	return nil
+}
+
+// GetDocument 按 ULID 查询文档，不存在时返回 (nil, nil)。
+func (r *KnowledgeRepo) GetDocument(ctx context.Context, docULID string) (*domain.KnowledgeDocumentDO, error) {
+	var do domain.KnowledgeDocumentDO
+	err := r.db.WithContext(ctx).Where("doc_ulid = ?", docULID).First(&do).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get knowledge document: %w", err)
+	}
+	return &do, nil
+}
+
+// UpdateDocument 按列名增量更新文档（map 更新防零值丢失）。
+func (r *KnowledgeRepo) UpdateDocument(ctx context.Context, docULID string, fields map[string]any) error {
+	result := r.db.WithContext(ctx).Model(&domain.KnowledgeDocumentDO{}).
+		Where("doc_ulid = ?", docULID).Updates(fields)
+	if result.Error != nil {
+		return fmt.Errorf("update knowledge document: %w", result.Error)
+	}
+	return nil
+}
+
+// DeleteDocument 删除文档记录。
+func (r *KnowledgeRepo) DeleteDocument(ctx context.Context, docULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("doc_ulid = ?", docULID).Delete(&domain.KnowledgeDocumentDO{}).Error; err != nil {
+		return fmt.Errorf("delete knowledge document: %w", err)
+	}
+	return nil
+}
+
+// ListDocuments 按项目分页查询文档（状态过滤，上传时间倒序），返回列表与总数。
+func (r *KnowledgeRepo) ListDocuments(ctx context.Context, projectULID, docStatusCode string, pageNum, pageSize int) ([]domain.KnowledgeDocumentDO, int64, error) {
+	query := r.db.WithContext(ctx).Model(&domain.KnowledgeDocumentDO{}).
+		Where("project_ulid = ?", projectULID)
+	if docStatusCode != "" {
+		query = query.Where("doc_status_code = ?", docStatusCode)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("count knowledge documents: %w", err)
+	}
+	var dos []domain.KnowledgeDocumentDO
+	err := query.Order("created_at DESC").
+		Offset((pageNum - 1) * pageSize).Limit(pageSize).
+		Find(&dos).Error
+	if err != nil {
+		return nil, 0, fmt.Errorf("list knowledge documents: %w", err)
+	}
+	return dos, total, nil
+}
+
+// DeleteChunksByDoc 删除某文档的全部切片。
+func (r *KnowledgeRepo) DeleteChunksByDoc(ctx context.Context, docULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("doc_ulid = ?", docULID).Delete(&domain.KnowledgeChunkDO{}).Error; err != nil {
+		return fmt.Errorf("delete knowledge chunks: %w", err)
+	}
+	return nil
+}
+
+// InsertChunkWithVector 以 raw SQL 插入切片（embedding_vec 写 pgvector 列）。
+func (r *KnowledgeRepo) InsertChunkWithVector(ctx context.Context, do *domain.KnowledgeChunkDO) error {
+	sql := `INSERT INTO knowledge_chunks (chunk_ulid, doc_ulid, project_ulid, chunk_index, chunk_text, token_count, embedding_vec, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?::vector, NOW(), NOW())`
+	err := r.db.WithContext(ctx).Exec(sql,
+		do.ChunkULID, do.DocULID, do.ProjectULID, do.ChunkIndex, do.ChunkText, do.TokenCount,
+		vectorLiteral(do.EmbeddingVec),
+	).Error
+	if err != nil {
+		return fmt.Errorf("insert knowledge chunk: %w", err)
+	}
+	return nil
+}
+
+// SearchByVector 按 pgvector 余弦距离召回最近切片（向量字面量在仓储内拼接，可限定文档范围）。
+func (r *KnowledgeRepo) SearchByVector(ctx context.Context, projectULID string, vector []float32, limit int, docULIDs []string) ([]domain.KnowledgeChunkVO, error) {
+	sql := `SELECT c.chunk_ulid, c.doc_ulid, d.doc_name, c.chunk_index, c.chunk_text
+		FROM knowledge_chunks c
+		JOIN knowledge_documents d ON d.doc_ulid = c.doc_ulid
+		WHERE c.project_ulid = ?`
+	args := []any{projectULID}
+	if len(docULIDs) > 0 {
+		sql += ` AND c.doc_ulid IN ?`
+		args = append(args, docULIDs)
+	}
+	sql += fmt.Sprintf(` ORDER BY c.embedding_vec <=> '%s' LIMIT %d`, vectorLiteral(vector), limit)
+	var vos []domain.KnowledgeChunkVO
+	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&vos).Error; err != nil {
+		return nil, fmt.Errorf("search knowledge chunks by vector: %w", err)
+	}
+	return vos, nil
+}
+
+// GetChunksByULIDs 按切片 ULID 批量取切片（含文档名，供关键词通道回表）。
+func (r *KnowledgeRepo) GetChunksByULIDs(ctx context.Context, chunkULIDs []string) ([]domain.KnowledgeChunkVO, error) {
+	if len(chunkULIDs) == 0 {
+		return []domain.KnowledgeChunkVO{}, nil
+	}
+	sql := `SELECT c.chunk_ulid, c.doc_ulid, d.doc_name, c.chunk_index, c.chunk_text
+		FROM knowledge_chunks c
+		JOIN knowledge_documents d ON d.doc_ulid = c.doc_ulid
+		WHERE c.chunk_ulid IN ?`
+	var vos []domain.KnowledgeChunkVO
+	if err := r.db.WithContext(ctx).Raw(sql, chunkULIDs).Scan(&vos).Error; err != nil {
+		return nil, fmt.Errorf("get knowledge chunks: %w", err)
+	}
+	return vos, nil
+}
+
+// ListChunksByDoc 按文档分页查询切片（切片序号升序），返回列表与总数。
+func (r *KnowledgeRepo) ListChunksByDoc(ctx context.Context, docULID string, pageNum, pageSize int) ([]domain.KnowledgeChunkDO, int64, error) {
+	query := r.db.WithContext(ctx).Model(&domain.KnowledgeChunkDO{}).Where("doc_ulid = ?", docULID)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("count knowledge chunks: %w", err)
+	}
+	var dos []domain.KnowledgeChunkDO
+	err := query.Select("chunk_ulid", "doc_ulid", "project_ulid", "chunk_index", "chunk_text", "token_count", "created_at", "updated_at").
+		Order("chunk_index ASC").
+		Offset((pageNum - 1) * pageSize).Limit(pageSize).
+		Find(&dos).Error
+	if err != nil {
+		return nil, 0, fmt.Errorf("list knowledge chunks: %w", err)
+	}
+	return dos, total, nil
+}
+
+// vectorLiteral 将向量格式化为 pgvector 字面量（'[0.1,0.2,...]'）。
+func vectorLiteral(vector []float32) string {
+	values := make([]string, len(vector))
+	for i, value := range vector {
+		values[i] = strconv.FormatFloat(float64(value), 'f', -1, 32)
+	}
+	return "[" + strings.Join(values, ",") + "]"
+}

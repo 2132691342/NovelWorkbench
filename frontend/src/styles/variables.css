@@ -1,0 +1,56 @@
+/* ============================================================
+ * 设计系统：品牌五色 + 派生语义变量
+ * 品牌五色以 --saas_dashboard-color-N 命名，语义变量均由五色派生
+ * ============================================================ */
+:root {
+  /* 品牌五色 */
+  --saas_dashboard-color-1: #6366f1;
+  --saas_dashboard-color-2: #818cf8;
+  --saas_dashboard-color-3: #e0e7ff;
+  --saas_dashboard-color-4: #f8fafc;
+  --saas_dashboard-color-5: #1e293b;
+
+  /* 主色系派生 */
+  --primary: var(--saas_dashboard-color-1);
+  --primary-hover: var(--saas_dashboard-color-2);
+  --primary-light: var(--saas_dashboard-color-3);
+  --primary-active: #4f46e5;
+  --primary-disabled: #c7d2fe;
+
+  /* 背景 */
+  --bg-page: var(--saas_dashboard-color-4);
+  --bg-card: #ffffff;
+  --bg-hover: #f1f5f9;
+
+  /* 文字 */
+  --text-main: var(--saas_dashboard-color-5);
+  --text-secondary: #64748b;
+  --text-placeholder: #94a3b8;
+  --text-inverse: #ffffff;
+
+  /* 边框 */
+  --border: #e2e8f0;
+  --border-light: #f1f5f9;
+
+  /* 状态色 */
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --error-hover: #dc2626;
+  --error-active: #b91c1c;
+  --info: #3b82f6;
+
+  /* 阴影 */
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.04);
+  --shadow-card-hover: 0 8px 24px rgba(99, 102, 241, 0.16);
+  --shadow-button-hover: 0 6px 16px rgba(99, 102, 241, 0.25);
+  --shadow-button-pressed: 0 1px 2px rgba(15, 23, 42, 0.12);
+
+  /* 圆角 */
+  --radius-base: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* 动效 */
+  --transition-base: 0.2s ease;
+}

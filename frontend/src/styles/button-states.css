@@ -1,0 +1,234 @@
+/* ============================================================
+ * 全局按钮五态体系
+ * 覆盖 Element Plus 按钮（.el-button）与自定义按钮（.nw-button）
+ *
+ * 五态：DEFAULT 常态 / HOVER 悬停 / PRESSED 按下 / DISABLED 禁用 / LOADING 加载
+ * - HOVER：放大 scale(1.05) + 颜色提亮 + 投影加深
+ * - PRESSED：缩小 scale(0.95) + 颜色加深 + 投影收敛
+ * - DISABLED：降透明、禁交互、无动效
+ * - LOADING：转圈 + 禁点 + 微光扫过
+ * 每态 transition 0.2s ease（DISABLED 无动效除外）
+ * ============================================================ */
+
+/* ===== DEFAULT 常态 ===== */
+.el-button,
+.nw-button {
+  position: relative;
+  transform: scale(1);
+  transition: all 0.2s ease;
+}
+
+/* 自定义按钮基础外观（Element Plus 按钮保留自身主题） */
+.nw-button {
+  --nw-btn-bg: #ffffff;
+  --nw-btn-text: var(--text-main);
+  --nw-btn-border: var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--nw-btn-border);
+  border-radius: var(--radius-base);
+  background-color: var(--nw-btn-bg);
+  color: var(--nw-btn-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.nw-button--large {
+  height: 40px;
+  padding: 0 22px;
+  font-size: 16px;
+}
+
+.nw-button--small {
+  height: 24px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+/* 自定义按钮变体 */
+.nw-button--primary {
+  --nw-btn-bg: var(--primary);
+  --nw-btn-text: var(--text-inverse);
+  --nw-btn-border: var(--primary);
+}
+
+.nw-button--default {
+  --nw-btn-bg: #ffffff;
+  --nw-btn-text: var(--text-main);
+  --nw-btn-border: var(--border);
+}
+
+.nw-button--danger {
+  --nw-btn-bg: var(--error);
+  --nw-btn-text: var(--text-inverse);
+  --nw-btn-border: var(--error);
+}
+
+.nw-button--text {
+  --nw-btn-bg: transparent;
+  --nw-btn-text: var(--primary);
+  --nw-btn-border: transparent;
+}
+
+.nw-button__content {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ===== HOVER 悬停态 ===== */
+.el-button:not(.is-disabled):not(.is-loading):hover,
+.nw-button:not(.nw-button--disabled):not(.nw-button--loading):hover {
+  transform: scale(1.05);
+  box-shadow: var(--shadow-button-hover);
+}
+
+.el-button:not(.is-disabled):not(.is-loading):hover {
+  color: var(--primary);
+  border-color: var(--primary-hover);
+}
+
+.el-button--primary:not(.is-disabled):not(.is-loading):hover {
+  background-color: var(--primary-hover);
+  border-color: var(--primary-hover);
+  color: var(--text-inverse);
+}
+
+.el-button--danger:not(.is-disabled):not(.is-loading):hover {
+  background-color: var(--error-hover);
+  border-color: var(--error-hover);
+  color: var(--text-inverse);
+}
+
+.nw-button--primary:hover,
+.nw-button--primary.nw-button--loading {
+  background-color: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.nw-button--default:hover {
+  background-color: var(--primary-light);
+  border-color: var(--primary-hover);
+  color: var(--primary);
+}
+
+.nw-button--danger:hover {
+  background-color: var(--error-hover);
+  border-color: var(--error-hover);
+}
+
+.nw-button--text:hover {
+  background-color: var(--primary-light);
+}
+
+/* ===== PRESSED 按下态 ===== */
+.el-button:not(.is-disabled):not(.is-loading):active,
+.nw-button:not(.nw-button--disabled):not(.nw-button--loading):active {
+  transform: scale(0.95);
+  box-shadow: var(--shadow-button-pressed);
+}
+
+.el-button--primary:not(.is-disabled):not(.is-loading):active {
+  background-color: var(--primary-active);
+  border-color: var(--primary-active);
+}
+
+.el-button--danger:not(.is-disabled):not(.is-loading):active {
+  background-color: var(--error-active);
+  border-color: var(--error-active);
+}
+
+.nw-button--primary:active {
+  background-color: var(--primary-active);
+  border-color: var(--primary-active);
+}
+
+.nw-button--default:active {
+  background-color: var(--primary-light);
+  color: var(--primary-active);
+}
+
+.nw-button--danger:active {
+  background-color: var(--error-active);
+  border-color: var(--error-active);
+}
+
+.nw-button--text:active {
+  background-color: var(--primary-light);
+  color: var(--primary-active);
+}
+
+/* ===== DISABLED 禁用态（降透明、禁交互、无动效） ===== */
+.el-button.is-disabled,
+.el-button[disabled],
+.nw-button.nw-button--disabled,
+.nw-button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+  transition: none;
+}
+
+/* ===== LOADING 加载态（转圈 + 禁点 + 微光） ===== */
+.el-button.is-loading,
+.nw-button.nw-button--loading {
+  cursor: wait;
+  transform: none;
+  box-shadow: none;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* 转圈：自定义按钮内置 spinner */
+.nw-button__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: nw-btn-spin 0.8s linear infinite;
+}
+
+/* 微光：亮带自左向右扫过 */
+.el-button.is-loading::before,
+.nw-button.nw-button--loading::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.45) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: nw-btn-shimmer 1.2s ease infinite;
+  pointer-events: none;
+}
+
+@keyframes nw-btn-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes nw-btn-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}

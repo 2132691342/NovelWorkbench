@@ -1,0 +1,58 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "debug"            # debug/release/test
+  read_timeout_sec: 30
+  write_timeout_sec: 0     # 0：SSE 长连接不受写超时限制
+
+jwt:
+  secret: "novel-workbench-dev-secret-change-me"
+  expire_hours: 168        # 7 天
+
+postgres:
+  host: "47.108.73.153"
+  port: 5432
+  user: "postgres"
+  password: "admin_public"
+  dbname: "postgres"
+  sslmode: "disable"
+  max_open_conns: 20
+  max_idle_conns: 5
+  conn_max_lifetime_min: 30
+
+redis:
+  addr: "47.108.73.153:6379"
+  password: "admin_public"
+  db: 0
+
+rabbitmq:
+  url: "amqp://admin:admin_public@47.108.73.153:5672/"
+  queue_doc_index: "nw_doc_index"
+
+minio:
+  endpoint: "47.108.73.153:9000"
+  access_key: "minioadmin"
+  secret_key: "minioadminpublic"
+  bucket: "novelworkbench"
+  use_ssl: false
+
+manticore:
+  base_url: "http://47.108.73.153:9308"
+  table_chunks: "nw_chunks"
+
+ai:
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"  # OpenAI 兼容网关
+  api_key: "sk-your-api-key"
+  chat_model: "qwen-plus"
+  embedding_model: "text-embedding-v3"
+  embedding_dim: 1024
+  temperature: 0.7
+  max_tokens: 2048
+  timeout_sec: 120
+  history_count: 5          # @历史引用默认条数（可被请求覆盖）
+
+app:
+  upload_max_mb: 20
+  chunk_size: 800           # 知识库切片字符数
+  chunk_overlap: 120        # 切片重叠字符数
+  rag_top_k: 6              # RAG 默认召回条数
