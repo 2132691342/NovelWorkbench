@@ -33,6 +33,24 @@ const routes: RouteRecordRaw[] = [
         meta: { menu_key: 'slashAdmin' },
       },
       {
+        path: 'admin/users',
+        name: 'AdminUsersView',
+        component: () => import('@/views/admin/users.vue'),
+        meta: { menu_key: 'adminUsers' },
+      },
+      {
+        path: 'admin/roles',
+        name: 'AdminRolesView',
+        component: () => import('@/views/admin/roles.vue'),
+        meta: { menu_key: 'adminRoles' },
+      },
+      {
+        path: 'admin/audit',
+        name: 'AdminAuditView',
+        component: () => import('@/views/admin/audit.vue'),
+        meta: { menu_key: 'adminAudit' },
+      },
+      {
         path: 'workspace/:project_ulid',
         name: 'WorkspaceView',
         component: () => import('@/views/workspace/index.vue'),

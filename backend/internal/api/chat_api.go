@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	"github.com/gin-gonic/gin"
 
@@ -37,7 +36,7 @@ func (a *ChatAPI) Send(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		slog.Error("SSE 流已开始，错误仅能记日志", "op", "chat.send", "request_id", c.GetString(pkg.ContextKeyRequestID), "error", err)
+		pkg.SLogger().Errorw("SSE 流已开始，错误仅能记日志", "op", "chat.send", "request_id", c.GetString(pkg.ContextKeyRequestID), "error", err)
 	}
 }
 

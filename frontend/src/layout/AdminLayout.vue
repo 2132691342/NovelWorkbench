@@ -16,6 +16,9 @@ const { t } = useI18n()
 
 const activeMenuPath = computed(() => route.path)
 
+/** 是否系统管理员（角色编码包含 admin 时展示系统管理入口） */
+const isAdminUser = computed(() => (authStore.user_vo?.role_codes ?? []).includes('admin'))
+
 const avatarText = computed(() => {
   const userName = authStore.user_vo?.user_name ?? ''
   return userName.length > 0 ? userName.slice(0, 1) : '?'
@@ -108,6 +111,66 @@ async function handleUserCommand(command: string | number | object): Promise<voi
           </svg>
           <template #title>{{ t('layout.menu.slashAdmin') }}</template>
         </el-menu-item>
+
+        <el-sub-menu v-if="isAdminUser" index="/admin">
+          <template #title>
+            <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M12 3l7 3v5c0 4.5-2.9 8.3-7 10-4.1-1.7-7-5.5-7-10V6l7-3z"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M9 12l2 2 4-4"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>{{ t('layout.menu.systemAdmin') }}</span>
+          </template>
+
+          <el-menu-item index="/admin/users">
+            <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="8" r="3.5" stroke="currentColor" stroke-width="1.8" />
+              <path
+                d="M5 19c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              />
+            </svg>
+            <template #title>{{ t('layout.menu.adminUsers') }}</template>
+          </el-menu-item>
+
+          <el-menu-item index="/admin/roles">
+            <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="8" cy="12" r="3.5" stroke="currentColor" stroke-width="1.8" />
+              <path
+                d="M11.5 12H20M17 12v3M20 12v2.5"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              />
+            </svg>
+            <template #title>{{ t('layout.menu.adminRoles') }}</template>
+          </el-menu-item>
+
+          <el-menu-item index="/admin/audit">
+            <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="5" y="3.5" width="14" height="17" rx="2" stroke="currentColor" stroke-width="1.8" />
+              <path
+                d="M8.5 8h7M8.5 12h7M8.5 16h4"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              />
+            </svg>
+            <template #title>{{ t('layout.menu.adminAudit') }}</template>
+          </el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </aside>
 

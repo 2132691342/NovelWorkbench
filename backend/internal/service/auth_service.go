@@ -14,13 +14,14 @@ import (
 // AuthService 认证业务：注册、登录、用户信息、登出吊销。
 type AuthService struct {
 	userRepo   *repo.UserRepo
+	roleRepo   *repo.RoleRepo
 	signer     *pkg.JWTSigner
 	tokenStore pkg.TokenStore
 }
 
 // NewAuthService 构造认证服务。
-func NewAuthService(userRepo *repo.UserRepo, signer *pkg.JWTSigner, tokenStore pkg.TokenStore) *AuthService {
-	return &AuthService{userRepo: userRepo, signer: signer, tokenStore: tokenStore}
+func NewAuthService(userRepo *repo.UserRepo, roleRepo *repo.RoleRepo, signer *pkg.JWTSigner, tokenStore pkg.TokenStore) *AuthService {
+	return &AuthService{userRepo: userRepo, roleRepo: roleRepo, signer: signer, tokenStore: tokenStore}
 }
 
 // Register 注册用户（登录名/邮箱唯一，bcrypt 哈希密码）。
@@ -64,6 +65,9 @@ func (s *AuthService) Login(ctx context.Context, req *domain.UserLoginREQ) (doma
 	if do == nil {
 		return domain.UserLoginDTO{}, pkg.NewBizError(domain.RespCodeUnauthorized, "账号或密码错误")
 	}
+	if do.UserStatusCode == domain.UserStatusDisabled {
+		return domain.UserLoginDTO{}, pkg.NewBizError(domain.RespCodeForbidden, "账号已被禁用")
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(do.PasswordHash), []byte(req.PasswordText)); err != nil {
 		return domain.UserLoginDTO{}, pkg.NewBizError(domain.RespCodeUnauthorized, "账号或密码错误")
 	}
@@ -71,10 +75,14 @@ func (s *AuthService) Login(ctx context.Context, req *domain.UserLoginREQ) (doma
 	if err != nil {
 		return domain.UserLoginDTO{}, err
 	}
+	userVO, err := s.withRoleCodes(ctx, toUserVO(do))
+	if err != nil {
+		return domain.UserLoginDTO{}, err
+	}
 	return domain.UserLoginDTO{
 		AccessToken:  token,
 		ExpiresInSec: expiresInSec,
-		UserVO:       toUserVO(do),
+		UserVO:       userVO,
 	}, nil
 }
 
@@ -87,7 +95,17 @@ func (s *AuthService) Profile(ctx context.Context, userULID string) (domain.User
 	if do == nil {
 		return domain.UserVO{}, pkg.NewBizError(domain.RespCodeNotFound, "用户不存在")
 	}
-	return toUserVO(do), nil
+	return s.withRoleCodes(ctx, toUserVO(do))
+}
+
+// withRoleCodes 为用户视图补角色编码列表。
+func (s *AuthService) withRoleCodes(ctx context.Context, vo domain.UserVO) (domain.UserVO, error) {
+	roleCodes, err := s.roleRepo.ListRoleCodesByUserULID(ctx, vo.UserULID)
+	if err != nil {
+		return domain.UserVO{}, err
+	}
+	vo.RoleCodes = roleCodes
+	return vo, nil
 }
 
 // Logout 吊销访问令牌（写入黑名单，TTL 为令牌签发有效期）。
@@ -111,11 +129,17 @@ func (s *AuthService) Logout(ctx context.Context, tokenString string) error {
 
 // toUserVO 组装用户视图对象。
 func toUserVO(do *domain.UserDO) domain.UserVO {
+	statusCode := do.UserStatusCode
+	if statusCode == "" {
+		statusCode = domain.UserStatusActive // 历史数据兜底
+	}
 	return domain.UserVO{
-		UserULID:    do.UserULID,
-		UserName:    do.UserName,
-		UserEmail:   do.UserEmail,
-		AvatarURL:   do.AvatarURL,
-		CreatedAtMs: do.CreatedAt.UnixMilli(),
+		UserULID:       do.UserULID,
+		UserName:       do.UserName,
+		UserEmail:      do.UserEmail,
+		AvatarURL:      do.AvatarURL,
+		UserStatusCode: statusCode,
+		RoleCodes:      []string{},
+		CreatedAtMs:    do.CreatedAt.UnixMilli(),
 	}
 }

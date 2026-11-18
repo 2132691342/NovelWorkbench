@@ -1,0 +1,12 @@
+# NovelWorkbench 后端运行镜像（podman 部署）：仅打包预构建的静态二进制与配置。
+# 构建上下文由 deploy.sh 组装（nw-server 二进制 + config.yaml + 宿主机 CA bundle）。
+ARG BASE_IMAGE=docker.io/library/alpine:3.20
+FROM ${BASE_IMAGE}
+COPY ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY nw-server /app/nw-server
+COPY config.yaml /app/configs/config.yaml
+RUN adduser -D -u 10001 appuser && chown -R appuser /app
+USER appuser
+WORKDIR /app
+EXPOSE 8080
+ENTRYPOINT ["/app/nw-server"]

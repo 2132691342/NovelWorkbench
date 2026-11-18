@@ -1,0 +1,64 @@
+# NovelWorkbench podman 部署：仅应用容器，加入既有中间件网络（liteworkbench_default）。
+# 目标主机为 Podman + podman-compose（无 Docker）；镜像由 deploy.sh 基于预构建产物构建。
+# 凭据与端口一律由 .env 注入，本文件不提供任何可用默认值。
+services:
+  backend:
+    image: ${NW_BACKEND_IMAGE:-localhost/novel-workbench-backend:latest}
+    container_name: nw-backend
+    restart: always
+    networks:
+      - infra
+    mem_limit: 384m
+    environment:
+      NW_SERVER_MODE: "release"
+      NW_SERVER_PORT: "8080"
+      NW_JWT_SECRET: ${NW_JWT_SECRET:?未设置 JWT 密钥}
+      NW_POSTGRES_HOST: postgres
+      NW_POSTGRES_PORT: "5432"
+      NW_POSTGRES_PASSWORD: ${NW_POSTGRES_PASSWORD:?未设置数据库口令}
+      NW_REDIS_ADDR: redis:6379
+      NW_REDIS_PASSWORD: ${NW_REDIS_PASSWORD:?未设置 Redis 口令}
+      NW_RABBITMQ_URL: amqp://${NW_RABBITMQ_USER:-admin}:${NW_RABBITMQ_PASSWORD:?未设置队列口令}@rabbitmq:5672/
+      NW_MINIO_ENDPOINT: minio:9000
+      NW_MINIO_ACCESS_KEY: ${NW_MINIO_ACCESS_KEY:?未设置对象存储账号}
+      NW_MINIO_SECRET_KEY: ${NW_MINIO_SECRET_KEY:?未设置对象存储口令}
+      NW_MANTICORE_BASE_URL: http://manticore:9308
+      NW_AI_BASE_URL: ${NW_AI_BASE_URL:?未设置模型网关地址}
+      NW_AI_API_KEY: ${NW_AI_API_KEY:?未设置模型网关密钥}
+      NW_AI_CHAT_MODEL: ${NW_AI_CHAT_MODEL:?未设置对话模型}
+      NW_AI_EMBEDDING_MODEL: ${NW_AI_EMBEDDING_MODEL:?未设置向量模型}
+      NW_APP_ADMIN_PASSWORD: ${NW_APP_ADMIN_PASSWORD:?未设置引导管理员密码}
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    image: ${NW_FRONTEND_IMAGE:-localhost/novel-workbench-frontend:latest}
+    container_name: nw-frontend
+    restart: always
+    networks:
+      - infra
+    depends_on:
+      - backend
+    environment:
+      # podman aardvark/dnsname 只应答 search 域 FQDN（resolv.conf 的 search dns.podman），
+      # nginx resolver 不做后缀补全，故上游必须写完整域名
+      NGINX_RESOLVER: ${NW_NGINX_RESOLVER:-10.89.0.1}
+      API_UPSTREAM: ${NW_API_UPSTREAM:-http://backend.dns.podman:8080}
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  # 中间件栈的默认网络（目录名 liteworkbench），以 guest 加入，不改动中间件容器。
+  infra:
+    external: true
+    name: ${NW_INFRA_NETWORK:-liteworkbench_default}

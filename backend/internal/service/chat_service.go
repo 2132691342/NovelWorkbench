@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
+
 	"strconv"
 	"strings"
 	"time"
@@ -191,7 +191,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	blocks, instructionText := buildContextBlocks(contextInput)
 	assembledText, droppedKeys := ai.AssembleContext(blocks, ai.ContextBudgetChars)
 	if len(droppedKeys) > 0 {
-		slog.Warn("上下文块超出预算被丢弃", "session_ulid", session.SessionULID, "dropped_keys", droppedKeys)
+		pkg.SLogger().Warnw("上下文块超出预算被丢弃", "session_ulid", session.SessionULID, "dropped_keys", droppedKeys)
 	}
 	userMessage := &domain.ChatMessageDO{
 		MessageULID:    pkg.NewULID(domain.IDPrefixMessage),
@@ -209,7 +209,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	}
 	if session.SessionName == "" {
 		if err := s.chatRepo.UpdateSessionName(ctx, session.SessionULID, firstRunes(req.ContentText, sessionNameRunes)); err != nil {
-			slog.Warn("会话名回填失败", "session_ulid", session.SessionULID, "error", err)
+			pkg.SLogger().Warnw("会话名回填失败", "session_ulid", session.SessionULID, "error", err)
 		}
 	}
 	messages := buildChatMessages(project.StyleText, assembledText, instructionText, historyList)
@@ -241,7 +241,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		}
 		return txChat.UpsertAIWordDelta(ctx, req.ProjectULID, time.Now().Format("2006-01-02"), pkg.CountWords(replyText))
 	}); err != nil {
-		slog.Error("助手消息落库失败", "session_ulid", session.SessionULID, "error", err)
+		pkg.SLogger().Errorw("助手消息落库失败", "session_ulid", session.SessionULID, "error", err)
 		_ = events.emit(domain.StreamEventError, "", "回复保存失败，请重试", nil)
 		return nil
 	}
@@ -254,7 +254,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter, messages []*schema.Message) (string, bool) {
 	stream, err := s.aiClient.ChatStream(ctx, messages)
 	if err != nil {
-		slog.Error("模型流式生成启动失败", "error", err)
+		pkg.SLogger().Errorw("模型流式生成启动失败", "error", err)
 		_ = events.emit(domain.StreamEventError, "", "AI 生成启动失败，请稍后重试", nil)
 		return "", false
 	}
@@ -293,7 +293,7 @@ func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter, m
 				if errors.Is(item.err, io.EOF) {
 					return reply.String(), true
 				}
-				slog.Error("模型流式生成失败", "error", item.err)
+				pkg.SLogger().Errorw("模型流式生成失败", "error", item.err)
 				_ = events.emit(domain.StreamEventError, "", "AI 生成失败，请稍后重试", nil)
 				return "", false
 			}
@@ -302,7 +302,7 @@ func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter, m
 			}
 			reply.WriteString(item.chunk.Content)
 			if err := events.emit(domain.StreamEventChunk, item.chunk.Content, "", nil); err != nil {
-				slog.Warn("SSE 事件写入失败，中止生成", "error", err)
+				pkg.SLogger().Warnw("SSE 事件写入失败，中止生成", "error", err)
 				return "", false
 			}
 			resetTimer(pingTimer)
@@ -415,7 +415,7 @@ func (s *ChatService) resolveHistoryLimit(ctx context.Context, reqCount int) int
 	}
 	setting, err := s.settingRepo.GetByKey(ctx, settingKeyChatHistoryCount)
 	if err != nil {
-		slog.Warn("读取历史条数配置失败，回退全局配置", "error", err)
+		pkg.SLogger().Warnw("读取历史条数配置失败，回退全局配置", "error", err)
 	} else if setting != nil {
 		if value, convErr := strconv.Atoi(setting.SettingValue); convErr == nil && value > 0 {
 			return value

@@ -11,17 +11,20 @@ const (
 	IDPrefixVolume         = "VOL_" // 卷
 	IDPrefixChapter        = "CHP_" // 章节
 	IDPrefixChapterSnapshot = "SNP_" // 章节快照
-	IDPrefixCharacter      = "CHR_" // 角色
-	IDPrefixRelation       = "RLT_" // 角色关系
-	IDPrefixLore           = "LOR_" // 世界观设定
-	IDPrefixDocument       = "DOC_" // 知识库文档
-	IDPrefixChunk          = "CHK_" // 知识库切片
-	IDPrefixSession        = "SES_" // 会话
-	IDPrefixMessage        = "MSG_" // 消息
-	IDPrefixSlashCommand   = "SKL_" // 斜杠命令
-	IDPrefixJob            = "JOB_" // 异步任务
-	IDPrefixSetting        = "SET_" // 应用配置
-	IDPrefixWordStat       = "WCS_" // 字数统计
+	IDPrefixCharacter       = "CHR_" // 角色
+	IDPrefixRelation        = "RLT_" // 角色关系
+	IDPrefixLore            = "LOR_" // 世界观设定
+	IDPrefixDocument        = "DOC_" // 知识库文档
+	IDPrefixChunk           = "CHK_" // 知识库切片
+	IDPrefixSession         = "SES_" // 会话
+	IDPrefixMessage         = "MSG_" // 消息
+	IDPrefixSlashCommand    = "SKL_" // 斜杠命令
+	IDPrefixJob             = "JOB_" // 异步任务
+	IDPrefixSetting         = "SET_" // 应用配置
+	IDPrefixWordStat        = "WCS_" // 字数统计
+	IDPrefixRole            = "ROL_" // 角色
+	IDPrefixUserRole        = "URO_" // 用户-角色关联
+	IDPrefixAudit           = "AUD_" // 审计日志
 )
 
 // 业务响应码（字符串，与 HTTP 状态码 int 区分）：SUCCESS 与 ERR_ 前缀族。

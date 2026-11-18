@@ -9,6 +9,9 @@
 | 表名 | 实体 | 前缀 | 说明 |
 | --- | --- | --- | --- |
 | users | 用户 | USR_ | 账号与凭据 |
+| roles | 角色 | ROL_ | RBAC 角色（权限码 JSON） |
+| user_roles | 用户-角色 | URO_ | 关联表 |
+| audit_logs | 审计日志 | AUD_ | 变更操作留痕 |
 | projects | 小说项目 | PRJ_ | 创作主线根聚合 |
 | volumes | 卷 | VOL_ | 项目下的分卷 |
 | chapters | 章节 | CHP_ | 正文载体 |
@@ -37,6 +40,7 @@
 | password_hash | varchar(128) | | bcrypt 哈希，JSON 不输出 |
 | avatar_url | varchar(256) | | 头像 |
 | remark_text | varchar(256) | | 备注 |
+| user_status_code | varchar(16) | INDEX | active/disabled，DB 默认 active |
 
 ### projects
 
@@ -132,6 +136,30 @@
 | enabled_flag | bool | | 启用开关 |
 | builtin_flag | bool | | 内置（内置不可删） |
 | sort_order | int | | 排序号 |
+
+### roles / user_roles / audit_logs
+
+| 表 | 字段 | 类型 | 约束 | 说明 |
+| --- | --- | --- | --- | --- |
+| roles | role_ulid | varchar(40) | PK | 角色 ULID |
+| roles | role_code | varchar(64) | UNIQUE | 角色编码（admin/user 或自定义） |
+| roles | role_name | varchar(64) | | 角色名称 |
+| roles | remark_text | varchar(256) | | 备注 |
+| roles | perm_codes_json | text | | 权限码 JSON 数组（`["*"]` 通配全部） |
+| roles | builtin_flag | boolean | | 内置角色不可删、编码不可改 |
+| user_roles | user_role_ulid | varchar(40) | PK | 关联 ULID |
+| user_roles | user_ulid | varchar(40) | INDEX | 用户 ULID |
+| user_roles | role_ulid | varchar(40) | INDEX | 角色 ULID |
+| audit_logs | audit_ulid | varchar(40) | PK | 审计 ULID |
+| audit_logs | user_ulid | varchar(40) | INDEX | 操作用户（未登录为空） |
+| audit_logs | user_name | varchar(64) | INDEX | 操作用户登录名（写入时回填） |
+| audit_logs | action_code | varchar(128) | INDEX | 动作码（去前缀接口路径） |
+| audit_logs | target_type | varchar(32) | | 目标类型（user/role/... 白名单） |
+| audit_logs | target_ulid | varchar(40) | INDEX | 目标 ULID |
+| audit_logs | detail_text | varchar(512) | | 补充信息（响应状态） |
+| audit_logs | ip_addr | varchar(64) | | 客户端 IP |
+
+角色授权以 `user_roles` 整体覆盖方式维护（先删后插，事务内）；权限判定按用户角色的权限码并集，`*` 通配。审计由中间件在请求出口同步落库，失败仅告警不阻断业务。
 
 ### jobs / app_settings / word_count_stats
 

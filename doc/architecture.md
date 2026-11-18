@@ -22,6 +22,8 @@ NovelWorkbench 是前后端分离的 AI 小说创作工作台：以"项目—卷
 | 后端语言 | Go 1.24 | `CGO_ENABLED=0` 静态编译，部署无 cgo 依赖 |
 | Web 框架 | gin | 路由分组、绑定校验、统一响应 |
 | ORM | gorm + pgx | PostgreSQL 驱动为纯 Go（jackc/pgx） |
+| 配置 | viper | YAML + `NW_` 前缀环境变量覆盖（`postgres.host` → `NW_POSTGRES_HOST`），启动期 fail fast |
+| 日志 | zap | 生产 JSON 结构化日志，全局唯一日志出口（pkg.Logger） |
 | AI 编排 | eino + eino-ext（OpenAI 兼容组件） | 对话 Generate/Stream、向量 EmbedStrings，可对接任意 OpenAI 兼容网关 |
 | 缓存/黑名单 | Redis（go-redis/v9） | 令牌吊销黑名单，TTL 自然过期 |
 | 消息队列 | RabbitMQ（amqp091-go） | 文档索引任务队列 |
@@ -76,11 +78,13 @@ internal/pkg      叶子工具：ULID、响应包络、业务错误、JWT、中�
 
 ## 5. 中间件链路
 
-顺序：`Recovery → RequestID → Logger → MethodWhitelist(GET/POST) → CORS → JWT 鉴权`。
+顺序：`Recovery → RequestID → Logger → MethodWhitelist(GET/POST) → CORS → JWT 鉴权 → 审计 → 权限（admin 组）`。
 
 - RequestID：透传/生成 `X-Request-ID`（`REQ_` 前缀 ULID），贯穿日志与响应 `trace_id`。
-- 鉴权：`Authorization: Bearer` 解析 JWT 得 `user_ulid` 注入上下文；登出令牌写 Redis 黑名单（`nw:token:blacklist:<sha256>`），TTL 与令牌寿命一致。
-- 免鉴权白名单：`/api/v1/auth/register`、`/api/v1/auth/login`；`/health` 不在鉴权组内。
+- 鉴权：`Authorization: Bearer` 解析 JWT 得 `user_ulid` 注入上下文；登出令牌写 Redis 黑名单（`nw:token:blacklist:<sha256>`），TTL 与令牌寿命一致；禁用账号（`user_status_code=disabled`）登录直接拒绝。
+- 审计：出口层记录全部 `POST /api/v1/*` 变更请求（登录/登出/chat/send 除外），失败仅告警不阻断业务。
+- 权限：`RequirePermMiddleware` 按权限码收口 `/admin/*`（system:user:manage / system:role:manage / system:audit:read），判定走角色权限码并集，`*` 通配。
+- 免鉴权白名单：`/api/v1/auth/register`、`/api/v1/auth/login`；`/health`（存活）与 `/ready`（DB Ping 就绪）不在鉴权组内。
 
 ## 6. 关键链路设计
 
@@ -151,8 +155,9 @@ src/i18n       zh-CN / en-US 文案表
 ## 8. 部署架构
 
 - 后端/前端各一个镜像（多阶段构建；后端 `CGO_ENABLED=0` + alpine + CA 证书）。
-- `docker-compose.yml` 编排应用容器；中间件默认指向云服务器（Postgres/Redis/RabbitMQ/MinIO/Manticore），本地全栈开发可 `--profile infra` 拉起同版本中间件（pgvector:pg16、redis:8.4、minio、rabbitmq:4、manticore）。
-- 前端容器内置 nginx：SPA 回退 + `/api` 反代后端 + SSE 关闭缓冲。
+- **Docker 形态**：根目录 `docker-compose.yml` 编排应用容器；中间件默认指向云服务器（Postgres/Redis/RabbitMQ/MinIO/Manticore），本地全栈开发可 `--profile infra` 拉起同版本中间件（pgvector:pg16、redis:8.4、minio、rabbitmq:4、manticore）。
+- **Podman 形态**（`deploy/podman/`）：云主机运行时为 Podman + podman-compose；应用容器以 guest 加入既有中间件网络（服务名直连 postgres/redis/...），镜像基于预构建产物构建（不在小内存主机上跑语言工具链），`deploy.sh` 负责组装上下文 → 构建 → 重建容器 → `/health` + `/ready` 健康自检。
+- 前端容器内置 nginx：SPA 回退 + `/healthz` 探针 + `/api` 反代后端 + SSE 关闭缓冲。
 - CI：GitHub Actions 做 `go vet/build/test` 与 `npm build` 与镜像构建；打 `v*` tag 触发 Release 构建并推送镜像到 GHCR。
 
 ## 9. 取舍与已知限制
@@ -160,7 +165,8 @@ src/i18n       zh-CN / en-US 文案表
 | 决策 | 收益 | 代价 |
 | --- | --- | --- |
 | 单一 AI 链路（聊天 + 技能）而非多个生成接口 | 上下文装配/容错/审计一处实现 | 部分"一键生成"需前端两步（发问 + 插入） |
-| 配置用 YAML + 集中式环境变量覆盖（未引 Viper） | 依赖树小、敏感项覆盖路径唯一 | 分层配置能力弱于 Viper，当前规模够用 |
+| 审计日志请求出口同步落库 | 实现简单、顺序一致、不丢记录 | 高并发写入下审计表是写热点（当前规模可接受） |
+| 权限判定逐请求查库（未加缓存） | 无缓存失效问题，改角色立即生效 | 管理接口每次多一跳查询（管理面流量极低） |
 | 检索 RRF 固定参数 | 稳定、无需调参 | 极端数据分布下不如加权调优 |
 | 向量维度固定 1024 | 与主流 embedding 模型对齐 | 换模型需重建索引（已有 reindex 入口） |
 | 会话历史按条数裁剪（非 token 预算） | 体感直观、实现简单 | 超长单条消息仍依赖总预算兜底 |

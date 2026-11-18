@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
+
 	"strings"
 	"unicode/utf8"
 
@@ -329,7 +329,7 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 			TopKCount:   s.config.RAGTopK,
 		})
 		if err != nil {
-			slog.Warn("RAG 召回失败，降级为空上下文", "error", err)
+			pkg.SLogger().Warnw("RAG 召回失败，降级为空上下文", "error", err)
 		} else {
 			input.RagList = hits
 		}

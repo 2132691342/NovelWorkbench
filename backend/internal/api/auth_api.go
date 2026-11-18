@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log/slog"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -13,7 +12,7 @@ import (
 
 // respondErr 统一错误出口：记录日志并输出业务失败响应。
 func respondErr(c *gin.Context, op string, err error) {
-	slog.Error("请求处理失败", "op", op, "request_id", c.GetString(pkg.ContextKeyRequestID), "error", err)
+	pkg.SLogger().Errorw("请求处理失败", "op", op, "request_id", c.GetString(pkg.ContextKeyRequestID), "error", err)
 	pkg.FailErr(c, err)
 }
 

@@ -1,0 +1,10 @@
+# NovelWorkbench 前端运行镜像（podman 部署）：仅打包预构建的 dist 与 nginx 配置模板。
+# 构建上下文由 deploy.sh 组装（dist/ + nginx.conf.template）。
+ARG BASE_IMAGE=docker.io/library/nginx:1.27-alpine
+FROM ${BASE_IMAGE}
+# NGINX_RESOLVER 走容器网络 DNS（podman 为网络网关），由 compose 环境变量覆盖
+ENV NGINX_RESOLVER=10.89.0.1 \
+    API_UPSTREAM=http://backend:8080
+COPY dist /usr/share/nginx/html
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+EXPOSE 80

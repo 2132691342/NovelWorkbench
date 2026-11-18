@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
+
 	"path/filepath"
 	"strings"
 
@@ -131,7 +131,7 @@ func (s *KnowledgeService) Delete(ctx context.Context, userULID string, req *dom
 		return pkg.WrapBizError(domain.RespCodeStorageError, "文档原文删除失败", err)
 	}
 	if err := deleteManticoreChunks(ctx, s.manticore, s.config.ManticoreTable, doc.DocULID); err != nil {
-		slog.Warn("Manticore 切片清理失败，全文索引降级", "doc_ulid", doc.DocULID, "error", err)
+		pkg.SLogger().Warnw("Manticore 切片清理失败，全文索引降级", "doc_ulid", doc.DocULID, "error", err)
 	}
 	return repo.WithTx(s.db, func(tx *gorm.DB) error {
 		txKnowledge := repo.NewKnowledgeRepo(tx)
@@ -193,10 +193,10 @@ func (s *KnowledgeService) Search(ctx context.Context, userULID string, req *dom
 			return nil, vectorErr
 		}
 		if vectorErr != nil {
-			slog.Warn("向量通道失败，降级 keyword", "error", vectorErr)
+			pkg.SLogger().Warnw("向量通道失败，降级 keyword", "error", vectorErr)
 		}
 		if keywordErr != nil {
-			slog.Warn("关键词通道失败，降级 vector", "error", keywordErr)
+			pkg.SLogger().Warnw("关键词通道失败，降级 vector", "error", keywordErr)
 		}
 		return fuseSearchResults(vectorHits, keywordHits, topK), nil
 	}

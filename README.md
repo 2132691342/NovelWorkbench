@@ -11,13 +11,13 @@ AI 小说创作工作台：前后端分离、容器化交付。以"项目—卷�
 | 知识库 | 文档上传（txt/md/docx/pdf）、异步切片+向量化+全文索引、RRF 混合检索、召回依据随回复展示 |
 | 设定管理 | 角色卡、角色关系图（AntV X6）、世界观设定条目 |
 | 数据总览 | 人工/AI 双来源字数趋势（ECharts）、项目统计 |
-| 系统 | JWT 认证、运行时配置、斜杠命令管理、中英双语（Vue I18n） |
+| 系统 | JWT 认证、SaaS 管理（用户/角色权限/审计日志）、运行时配置、斜杠命令管理、中英双语（Vue I18n） |
 
 ## 技术栈
 
-- **后端**：Go 1.24 + gin + gorm(pgx) + eino（OpenAI 兼容网关）+ Redis + RabbitMQ + MinIO + Manticore + pgvector，`CGO_ENABLED=0` 静态编译
+- **后端**：Go 1.24 + gin + gorm(pgx) + viper + zap + eino（OpenAI 兼容网关）+ Redis + RabbitMQ + MinIO + Manticore + pgvector，`CGO_ENABLED=0` 静态编译
 - **前端**：Vue 3.4 + TypeScript 5.4 + Vite 5.2 + Element Plus 2.9 + Pinia + Vue Router + Axios + UnoCSS + ECharts + AntV X6 + CodeMirror 6 + WangEditor 5 + Vue I18n
-- **部署**：Docker / docker-compose，GitHub Actions CI/CD（CI 检查 + tag 触发镜像发布 GHCR）
+- **部署**：Docker / docker-compose 与 Podman / podman-compose 双形态，GitHub Actions CI/CD（CI 检查 + tag 触发镜像发布 GHCR）
 
 ## 快速开始
 
@@ -46,7 +46,7 @@ backend/            Go 后端（api → service → repo → domain 分层）
   cmd/server        装配启动
   internal/         api / service / repo / domain / ai / infra / pkg
 frontend/           Vue3 前端（设计系统 + 页面）
-deploy/             nginx 反代配置
+deploy/             部署资产（podman 编排/发布脚本；nginx 配置模板在 frontend/nginx.conf.template）
 doc/                设计文档（架构/数据库/API/AI/前端/部署/测试）
 docker-compose.yml  应用编排（--profile infra 拉起本地中间件）
 .github/workflows   CI（ci.yml）与镜像发布（release.yml）

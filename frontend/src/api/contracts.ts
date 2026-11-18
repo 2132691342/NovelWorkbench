@@ -6,6 +6,10 @@ export interface NWUserVo {
   user_name: string
   user_email: string
   avatar_url: string
+  /** 账号状态编码（active/disabled，登录/用户信息接口返回） */
+  user_status_code?: string
+  /** 角色编码列表（登录/用户信息接口返回，用于菜单入口权限控制） */
+  role_codes?: string[]
   created_at_ms: number
 }
 

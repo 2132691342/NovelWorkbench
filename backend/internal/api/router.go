@@ -4,12 +4,16 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
+	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
 )
 
 // RouterDeps 路由注册的依赖聚合（由 main.go 装配注入）。
 type RouterDeps struct {
 	AuthMW       gin.HandlerFunc // 鉴权中间件（pkg.AuthMiddleware 产物）
+	AuditMW      gin.HandlerFunc // 审计中间件（pkg.AuditMiddleware 产物）
+	PermChecker  pkg.PermChecker // 权限判定（admin 路由收口）
+	ReadyCheck   func() error    // 就绪探针（DB Ping）
 	AuthAPI      *AuthAPI        // 认证模块处理器
 	ProjectAPI   *ProjectAPI     // 项目模块处理器
 	VolumeAPI    *VolumeAPI      // 卷模块处理器
@@ -21,9 +25,12 @@ type RouterDeps struct {
 	SettingAPI   *SettingAPI     // 应用配置模块处理器
 	StatsAPI     *StatsAPI       // 数据总览模块处理器
 	ChatAPI      *ChatAPI        // AI 对话模块处理器
+	UserAdminAPI *UserAdminAPI   // 用户管理模块处理器
+	RoleAPI      *RoleAPI        // 角色管理模块处理器
+	AuditAPI     *AuditAPI       // 审计日志模块处理器
 }
 
-// NewRouter 装配 HTTP 路由；中间件顺序：Recovery → 请求ID → 日志 → 方法白名单 → CORS → 鉴权。
+// NewRouter 装配 HTTP 路由；中间件顺序：Recovery → 请求ID → 日志 → 方法白名单 → CORS → 鉴权 → 审计。
 func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	gin.SetMode(mode)
 	router := gin.New()
@@ -33,9 +40,11 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	router.Use(pkg.MethodWhitelistMiddleware())
 	router.Use(cors.Default())
 	router.GET("/health", healthCheck)
+	router.GET("/ready", readyCheck(deps.ReadyCheck))
 
 	v1 := router.Group("/api/v1")
 	v1.Use(deps.AuthMW)
+	v1.Use(deps.AuditMW)
 	registerAuthRoutes(v1, deps.AuthAPI)
 	registerProjectRoutes(v1, deps.ProjectAPI)
 	registerVolumeRoutes(v1, deps.VolumeAPI)
@@ -47,12 +56,51 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	registerSettingRoutes(v1, deps.SettingAPI)
 	registerStatsRoutes(v1, deps.StatsAPI)
 	registerChatRoutes(v1, deps.ChatAPI)
+	registerAdminRoutes(v1, deps)
 	return router
 }
 
-// healthCheck 容器健康探针。
+// healthCheck 容器健康探针（只回存活，不做依赖检查）。
 func healthCheck(c *gin.Context) {
 	pkg.Ok(c, gin.H{"status": "up"})
+}
+
+// readyCheck 就绪探针（Ping 关键依赖，失败回 503 语义的业务码）。
+func readyCheck(check func() error) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if check != nil {
+			if err := check(); err != nil {
+				pkg.Fail(c, domain.RespCodeStorageError, "依赖未就绪")
+				return
+			}
+		}
+		pkg.Ok(c, gin.H{"status": "ready"})
+	}
+}
+
+// registerAdminRoutes 注册系统管理路由（按权限码收口：用户/角色/审计）。
+func registerAdminRoutes(rg *gin.RouterGroup, deps RouterDeps) {
+	admin := rg.Group("/admin")
+	admin.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermUserManage))
+	{
+		admin.POST("/user/list", deps.UserAdminAPI.List)
+		admin.POST("/user/create", deps.UserAdminAPI.Create)
+		admin.POST("/user/update", deps.UserAdminAPI.Update)
+		admin.POST("/user/delete", deps.UserAdminAPI.Delete)
+		admin.POST("/user/reset_password", deps.UserAdminAPI.ResetPassword)
+	}
+	roleGroup := rg.Group("/admin/role")
+	roleGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermRoleManage))
+	{
+		roleGroup.POST("/list", deps.RoleAPI.List)
+		roleGroup.POST("/save", deps.RoleAPI.Save)
+		roleGroup.POST("/delete", deps.RoleAPI.Delete)
+	}
+	auditGroup := rg.Group("/admin/audit")
+	auditGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermAuditRead))
+	{
+		auditGroup.POST("/list", deps.AuditAPI.List)
+	}
 }
 
 // registerAuthRoutes 注册认证路由（register/login 免鉴权，由中间件白名单放行）。

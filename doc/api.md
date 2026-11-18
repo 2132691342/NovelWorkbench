@@ -56,7 +56,8 @@
 
 ### GET /auth/profile → data=UserVO
 
-UserVO：`user_ulid / user_name / user_email / avatar_url / created_at_ms`。
+UserVO：`user_ulid / user_name / user_email / avatar_url / user_status_code / role_codes[] / created_at_ms`。
+`user_status_code` 为 `active/disabled`（禁用账号登录返回 `ERR_FORBIDDEN`）；`role_codes` 为角色编码列表（前端按 `admin` 控制管理菜单显隐）。
 
 ## 3. 项目 / 卷 / 章节
 
@@ -167,3 +168,33 @@ SSE 事件体（ChatStreamEventDTO）：
 SlashParseDTO：`{ "skill_code": "continue", "remainder_text": "以林澈视角", "placeholder_map": {...} }`；未命中命令时 `skill_code` 为空。
 
 StatsOverviewVO：`project_count / total_word_count / today_word_delta / ai_word_total / trend_list[]`（近 30 天：`stat_date / word_delta / ai_word_delta`）。
+
+## 8. 系统管理（用户 / 角色 / 审计）
+
+全部要求登录态 + 权限码（`RequirePermMiddleware` 收口，缺失返回 `ERR_FORBIDDEN`）：
+
+| 权限码 | 覆盖接口 |
+| --- | --- |
+| system:user:manage | /admin/user/* |
+| system:role:manage | /admin/role/* |
+| system:audit:read | /admin/audit/list |
+
+内置角色：`admin`（权限 `["*"]` 通配全部）、`user`（无管理权限）。业务接口对所有登录用户开放。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | /admin/user/list | 用户分页（UserAdminListREQ：keyword_text / user_status_code 过滤 → PageDTO[UserAdminVO]） |
+| POST | /admin/user/create | 创建用户（UserAdminCreateREQ；role_codes 缺省挂 `user`） |
+| POST | /admin/user/update | 更新资料/状态/角色（UserAdminUpdateREQ；role_codes 整体覆盖；不能禁用自己） |
+| POST | /admin/user/delete | 删除用户（user_ulid；不能删除自己，级联清角色挂载） |
+| POST | /admin/user/reset_password | 重置密码（user_ulid, new_password_text） |
+| POST | /admin/role/list | 角色分页（RoleListREQ → PageDTO[RoleVO]） |
+| POST | /admin/role/save | 创建/更新角色（RoleSaveREQ，role_ulid 空为创建；role_code 唯一） |
+| POST | /admin/role/delete | 删除角色（内置角色不可删；仍有用户挂载 → ERR_CONFLICT） |
+| POST | /admin/audit/list | 审计分页（AuditListREQ：action_code / user_ulid 过滤 → PageDTO[AuditVO]） |
+
+UserAdminVO：`user_ulid / user_name / user_email / avatar_url / remark_text / user_status_code / role_codes[] / created_at_ms / updated_at_ms`。
+RoleVO：`role_ulid / role_code / role_name / remark_text / perm_codes[] / builtin_flag / created_at_ms / updated_at_ms`。
+AuditVO：`audit_ulid / user_ulid / user_name / action_code / target_type / target_ulid / detail_text / ip_addr / created_at_ms`。
+
+审计中间件自动记录全部 `POST /api/v1/*` 变更请求（登录/登出/chat/send 除外），无论成败；`action_code` 为去前缀路径（如 `admin/user/create`），admin 接口额外从 body 提取 `target_type/target_ulid`（user/role/project/chapter/document 白名单键）。

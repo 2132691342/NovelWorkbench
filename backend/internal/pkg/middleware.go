@@ -2,12 +2,13 @@ package pkg
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 )
@@ -36,12 +37,12 @@ func LoggerMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
-		slog.Info("http_request",
-			"request_id", c.GetString(ContextKeyRequestID),
-			"method", c.Request.Method,
-			"path", c.Request.URL.Path,
-			"status", c.Writer.Status(),
-			"latency_ms", time.Since(start).Milliseconds(),
+		Logger().Info("http_request",
+			zap.String("request_id", c.GetString(ContextKeyRequestID)),
+			zap.String("method", c.Request.Method),
+			zap.String("path", c.Request.URL.Path),
+			zap.Int("status", c.Writer.Status()),
+			zap.Int64("latency_ms", time.Since(start).Milliseconds()),
 		)
 	}
 }
@@ -51,7 +52,11 @@ func RecoveryMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				slog.Error("http_panic", "request_id", c.GetString(ContextKeyRequestID), "panic", recovered)
+				Logger().Error("http_panic",
+					zap.String("request_id", c.GetString(ContextKeyRequestID)),
+					zap.Any("panic", recovered),
+					zap.ByteString("stack", debug.Stack()),
+				)
 				c.Abort()
 				Fail(c, domain.RespCodeInternalError, "服务内部错误")
 			}

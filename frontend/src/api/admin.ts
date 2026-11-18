@@ -1,0 +1,164 @@
+// 系统管理接口封装（用户 / 角色 / 审计，字段与路径对齐后端 admin 契约）
+import { post } from '@/api/http'
+import type { NWPageDto } from './contracts'
+
+// ============================================================
+// 视图对象
+// ============================================================
+
+/** 后台用户视图对象（字段对齐后端 UserAdminVO） */
+export interface NWUserAdminVo {
+  user_ulid: string
+  user_name: string
+  user_email: string
+  avatar_url: string
+  remark_text: string
+  user_status_code: string
+  role_codes: string[]
+  created_at_ms: number
+  updated_at_ms: number
+}
+
+/** 角色视图对象（字段对齐后端 RoleVO） */
+export interface NWRoleVo {
+  role_ulid: string
+  role_code: string
+  role_name: string
+  remark_text: string
+  perm_codes: string[]
+  builtin_flag: boolean
+  created_at_ms: number
+  updated_at_ms: number
+}
+
+/** 审计日志视图对象（字段对齐后端 AuditVO） */
+export interface NWAuditVo {
+  audit_ulid: string
+  user_ulid: string
+  user_name: string
+  action_code: string
+  target_type: string
+  target_ulid: string
+  detail_text: string
+  ip_addr: string
+  created_at_ms: number
+}
+
+// ============================================================
+// 请求对象
+// ============================================================
+
+/** 用户分页查询请求（字段对齐后端 UserAdminListREQ） */
+export interface NWUserAdminListReqVo {
+  page_num: number
+  page_size: number
+  keyword_text?: string
+  user_status_code?: string
+}
+
+/** 创建用户请求（字段对齐后端 UserAdminCreateREQ） */
+export interface NWUserAdminCreateReqVo {
+  user_name: string
+  user_email: string
+  password_text: string
+  role_codes?: string[]
+  remark_text?: string
+}
+
+/** 更新用户请求（字段对齐后端 UserAdminUpdateREQ，仅覆盖非空字段） */
+export interface NWUserAdminUpdateReqVo {
+  user_ulid: string
+  user_email?: string
+  avatar_url?: string
+  remark_text?: string
+  user_status_code?: string
+  role_codes?: string[]
+}
+
+/** 重置用户密码请求（字段对齐后端 UserAdminResetPasswordREQ） */
+export interface NWUserAdminResetPasswordReqVo {
+  user_ulid: string
+  new_password_text: string
+}
+
+/** 角色分页查询请求 */
+export interface NWRoleListReqVo {
+  page_num: number
+  page_size: number
+}
+
+/** 保存角色请求（role_ulid 为空表示新建） */
+export interface NWRoleSaveReqVo {
+  role_ulid?: string
+  role_code: string
+  role_name: string
+  remark_text?: string
+  perm_codes?: string[]
+}
+
+/** 审计日志分页查询请求 */
+export interface NWAuditListReqVo {
+  page_num: number
+  page_size: number
+  action_code?: string
+  user_ulid?: string
+}
+
+// ============================================================
+// 用户管理
+// ============================================================
+
+/** 用户分页列表 */
+export function listAdminUsers(req: NWUserAdminListReqVo): Promise<NWPageDto<NWUserAdminVo>> {
+  return post<NWPageDto<NWUserAdminVo>>('/admin/user/list', req)
+}
+
+/** 创建用户 */
+export function createAdminUser(req: NWUserAdminCreateReqVo): Promise<NWUserAdminVo> {
+  return post<NWUserAdminVo>('/admin/user/create', req)
+}
+
+/** 更新用户 */
+export function updateAdminUser(req: NWUserAdminUpdateReqVo): Promise<NWUserAdminVo> {
+  return post<NWUserAdminVo>('/admin/user/update', req)
+}
+
+/** 删除用户 */
+export async function deleteAdminUser(userUlid: string): Promise<void> {
+  await post<null>('/admin/user/delete', { user_ulid: userUlid })
+}
+
+/** 重置用户密码 */
+export function resetAdminUserPassword(
+  req: NWUserAdminResetPasswordReqVo,
+): Promise<null> {
+  return post<null>('/admin/user/reset_password', req)
+}
+
+// ============================================================
+// 角色管理
+// ============================================================
+
+/** 角色分页列表 */
+export function listAdminRoles(req: NWRoleListReqVo): Promise<NWPageDto<NWRoleVo>> {
+  return post<NWPageDto<NWRoleVo>>('/admin/role/list', req)
+}
+
+/** 保存角色（role_ulid 为空新建） */
+export function saveAdminRole(req: NWRoleSaveReqVo): Promise<NWRoleVo> {
+  return post<NWRoleVo>('/admin/role/save', req)
+}
+
+/** 删除角色（内置角色由后端拒绝） */
+export async function deleteAdminRole(roleUlid: string): Promise<void> {
+  await post<null>('/admin/role/delete', { role_ulid: roleUlid })
+}
+
+// ============================================================
+// 审计日志
+// ============================================================
+
+/** 审计日志分页列表 */
+export function listAdminAudits(req: NWAuditListReqVo): Promise<NWPageDto<NWAuditVo>> {
+  return post<NWPageDto<NWAuditVo>>('/admin/audit/list', req)
+}

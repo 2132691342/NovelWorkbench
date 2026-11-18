@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"log/slog"
+
 	"regexp"
 	"strings"
 	"time"
@@ -58,14 +58,14 @@ func NewKnowledgeWorker(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.Obje
 // Run 阻塞消费索引队列直至 ctx 取消（优雅退出）；消费连接中断按固定间隔重连。
 func (w *KnowledgeWorker) Run(ctx context.Context) error {
 	if err := ensureManticoreSchema(ctx, w.manticore, w.config.ManticoreTable); err != nil {
-		slog.Warn("Manticore 切片表初始化失败，keyword 通道降级", "error", err)
+		pkg.SLogger().Warnw("Manticore 切片表初始化失败，keyword 通道降级", "error", err)
 	}
 	for {
 		err := w.mqRepo.ConsumeIndexJobs(ctx, w.handleIndexJob)
 		if err == nil || ctx.Err() != nil {
 			return nil
 		}
-		slog.Warn("索引队列消费中断，稍后重连", "error", err)
+		pkg.SLogger().Warnw("索引队列消费中断，稍后重连", "error", err)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -81,7 +81,7 @@ func (w *KnowledgeWorker) handleIndexJob(ctx context.Context, job domain.Knowled
 	}
 	jobDO, err := w.jobRepo.GetPendingByDoc(ctx, job.DocULID)
 	if err != nil {
-		slog.Warn("任务留痕查询失败", "doc_ulid", job.DocULID, "error", err)
+		pkg.SLogger().Warnw("任务留痕查询失败", "doc_ulid", job.DocULID, "error", err)
 	}
 	markJob := func(status, errorMessage string, retryCount int) {
 		if jobDO == nil {
@@ -89,7 +89,7 @@ func (w *KnowledgeWorker) handleIndexJob(ctx context.Context, job domain.Knowled
 		}
 		fields := map[string]any{"job_status_code": status, "error_message": errorMessage, "retry_count": retryCount}
 		if err := w.jobRepo.Update(ctx, jobDO.JobULID, fields); err != nil {
-			slog.Warn("任务状态更新失败", "job_ulid", jobDO.JobULID, "error", err)
+			pkg.SLogger().Warnw("任务状态更新失败", "job_ulid", jobDO.JobULID, "error", err)
 		}
 	}
 	doc, err := w.knowledgeRepo.GetDocument(ctx, job.DocULID)
@@ -101,7 +101,7 @@ func (w *KnowledgeWorker) handleIndexJob(ctx context.Context, job domain.Knowled
 		return nil // 文档已删除的滞留消息直接 ack
 	}
 	if err := w.knowledgeRepo.UpdateDocument(ctx, doc.DocULID, map[string]any{"doc_status_code": "indexing", "error_message": ""}); err != nil {
-		slog.Warn("文档状态更新失败", "doc_ulid", doc.DocULID, "error", err)
+		pkg.SLogger().Warnw("文档状态更新失败", "doc_ulid", doc.DocULID, "error", err)
 	}
 	var lastErr error
 	for attempt := 0; attempt <= maxIndexRetryCount; attempt++ {
@@ -120,7 +120,7 @@ func (w *KnowledgeWorker) handleIndexJob(ctx context.Context, job domain.Knowled
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		slog.Warn("文档索引失败，将重试", "doc_ulid", doc.DocULID, "attempt", attempt+1, "error", lastErr)
+		pkg.SLogger().Warnw("文档索引失败，将重试", "doc_ulid", doc.DocULID, "attempt", attempt+1, "error", lastErr)
 	}
 	errorMessage := truncateErrorMessage(lastErr)
 	markJob("failed", errorMessage, maxIndexRetryCount)
@@ -180,7 +180,7 @@ func (w *KnowledgeWorker) indexDocument(ctx context.Context, doc *domain.Knowled
 		return pkg.WrapBizError(domain.RespCodeStorageError, "切片入库失败", err)
 	}
 	if err := syncManticoreChunks(ctx, w.manticore, w.config.ManticoreTable, doc.DocULID, chunks); err != nil {
-		slog.Warn("Manticore 同步失败，keyword 通道降级", "doc_ulid", doc.DocULID, "error", err)
+		pkg.SLogger().Warnw("Manticore 同步失败，keyword 通道降级", "doc_ulid", doc.DocULID, "error", err)
 	}
 	if err := w.knowledgeRepo.UpdateDocument(ctx, doc.DocULID, map[string]any{
 		"doc_status_code":   "indexed",

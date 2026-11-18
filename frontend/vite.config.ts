@@ -33,7 +33,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        // 本地无后端时指向远端部署（NW_DEV_PROXY_TARGET=http://主机）联调
+        target: process.env.NW_DEV_PROXY_TARGET || 'http://127.0.0.1:8080',
         changeOrigin: true,
       },
     },
