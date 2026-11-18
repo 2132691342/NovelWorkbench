@@ -5,15 +5,15 @@ import "io"
 // KnowledgeDocumentDO 知识库文档持久化对象（原文存 MinIO，索引存 PG/Manticore）。
 type KnowledgeDocumentDO struct {
 	BaseDO
-	DocULID        string `json:"doc_ulid" gorm:"column:doc_ulid;primaryKey;size:40"`   // 文档 ULID（DOC_ 前缀）
-	ProjectULID    string `json:"project_ulid" gorm:"column:project_ulid;size:40;index"`    // 所属项目（0 表示全局库）
-	DocName        string `json:"doc_name" gorm:"size:128"`             // 文档名
-	DocTypeCode    string `json:"doc_type_code" gorm:"size:16"`         // 类型：txt/md/pdf/docx
-	ObjectKey      string `json:"object_key" gorm:"size:256"`           // MinIO 对象键
-	DocStatusCode  string `json:"doc_status_code" gorm:"size:16;index"` // 状态：pending/indexing/indexed/failed
-	ChunkCount     int    `json:"chunk_count"`                          // 切片数量
-	TotalTokenCount int64 `json:"total_token_count"`                    // 估算 token 总量
-	ErrorMessage   string `json:"error_message" gorm:"size:512"`        // 失败原因
+	DocULID         string `json:"doc_ulid" gorm:"column:doc_ulid;primaryKey;size:40"`    // 文档 ULID（DOC_ 前缀）
+	ProjectULID     string `json:"project_ulid" gorm:"column:project_ulid;size:40;index"` // 所属项目（0 表示全局库）
+	DocName         string `json:"doc_name" gorm:"size:128"`                              // 文档名
+	DocTypeCode     string `json:"doc_type_code" gorm:"size:16"`                          // 类型：txt/md/pdf/docx
+	ObjectKey       string `json:"object_key" gorm:"size:256"`                            // MinIO 对象键
+	DocStatusCode   string `json:"doc_status_code" gorm:"size:16;index"`                  // 状态：pending/indexing/indexed/failed
+	ChunkCount      int    `json:"chunk_count"`                                           // 切片数量
+	TotalTokenCount int64  `json:"total_token_count"`                                     // 估算 token 总量
+	ErrorMessage    string `json:"error_message" gorm:"size:512"`                         // 失败原因
 }
 
 // TableName 指定表名。
@@ -23,12 +23,12 @@ func (KnowledgeDocumentDO) TableName() string { return "knowledge_documents" }
 type KnowledgeChunkDO struct {
 	BaseDO
 	ChunkULID    string    `json:"chunk_ulid" gorm:"column:chunk_ulid;primaryKey;size:40"` // 切片 ULID（CHK_ 前缀）
-	DocULID      string    `json:"doc_ulid" gorm:"column:doc_ulid;size:40;index"`       // 所属文档
-	ProjectULID  string    `json:"project_ulid" gorm:"column:project_ulid;size:40;index"`   // 所属项目
-	ChunkIndex   int       `json:"chunk_index"`                          // 切片序号（文档内升序）
-	ChunkText    string    `json:"chunk_text" gorm:"type:text"`         // 切片文本
-	TokenCount   int       `json:"token_count"`                          // 估算 token 数
-	EmbeddingVec []float32 `json:"-" gorm:"type:vector(1024);column:embedding_vec"` // 语义向量（pgvector）
+	DocULID      string    `json:"doc_ulid" gorm:"column:doc_ulid;size:40;index"`          // 所属文档
+	ProjectULID  string    `json:"project_ulid" gorm:"column:project_ulid;size:40;index"`  // 所属项目
+	ChunkIndex   int       `json:"chunk_index"`                                            // 切片序号（文档内升序）
+	ChunkText    string    `json:"chunk_text" gorm:"type:text"`                            // 切片文本
+	TokenCount   int       `json:"token_count"`                                            // 估算 token 数
+	EmbeddingVec []float32 `json:"-" gorm:"type:vector(1024);column:embedding_vec"`        // 语义向量（pgvector）
 }
 
 // TableName 指定表名。
@@ -36,49 +36,49 @@ func (KnowledgeChunkDO) TableName() string { return "knowledge_chunks" }
 
 // KnowledgeUploadREQ 文档上传请求（multipart/form-data：file 字段 + 本结构）。
 type KnowledgeUploadREQ struct {
-	ProjectULID string `form:"project_ulid" binding:"required"`      // 所属项目
-	DocName     string `form:"doc_name" binding:"required,max=128"`  // 文档名
+	ProjectULID string `form:"project_ulid" binding:"required"`     // 所属项目
+	DocName     string `form:"doc_name" binding:"required,max=128"` // 文档名
 }
 
 // KnowledgeListREQ 文档列表查询。
 type KnowledgeListREQ struct {
 	PageREQ
-	ProjectULID   string `json:"project_ulid" binding:"required"` // 所属项目
+	ProjectULID   string `json:"project_ulid" binding:"required"`                                           // 所属项目
 	DocStatusCode string `json:"doc_status_code" binding:"omitempty,oneof=pending indexing indexed failed"` // 状态过滤
 }
 
 // KnowledgeSearchREQ 知识库检索请求（RAG 召回 / 界面搜索共用）。
 type KnowledgeSearchREQ struct {
-	ProjectULID  string   `json:"project_ulid" binding:"required"`         // 所属项目
-	KeywordText  string   `json:"keyword_text" binding:"omitempty,max=256"` // 关键词（keyword 模式必填）
-	QueryText    string   `json:"query_text" binding:"omitempty,max=2048"`  // 语义查询（vector/hybrid 模式必填）
-	SearchMode   string   `json:"search_mode" binding:"omitempty,oneof=vector keyword hybrid"` // 检索模式，默认 hybrid
-	TopKCount    int      `json:"top_k_count" binding:"omitempty,min=1,max=20"` // 召回条数，默认 6
-	DocULIDList  []string `json:"doc_ulid_list"`                            // 限定文档范围，空为全部
+	ProjectULID string   `json:"project_ulid" binding:"required"`                             // 所属项目
+	KeywordText string   `json:"keyword_text" binding:"omitempty,max=256"`                    // 关键词（keyword 模式必填）
+	QueryText   string   `json:"query_text" binding:"omitempty,max=2048"`                     // 语义查询（vector/hybrid 模式必填）
+	SearchMode  string   `json:"search_mode" binding:"omitempty,oneof=vector keyword hybrid"` // 检索模式，默认 hybrid
+	TopKCount   int      `json:"top_k_count" binding:"omitempty,min=1,max=20"`                // 召回条数，默认 6
+	DocULIDList []string `json:"doc_ulid_list"`                                               // 限定文档范围，空为全部
 }
 
 // KnowledgeDocumentVO 文档视图对象。
 type KnowledgeDocumentVO struct {
-	DocULID         string `json:"doc_ulid"`         // 文档 ULID
-	ProjectULID     string `json:"project_ulid"`     // 所属项目
-	DocName         string `json:"doc_name"`         // 文档名
-	DocTypeCode     string `json:"doc_type_code"`    // 类型
-	DocStatusCode   string `json:"doc_status_code"`  // 状态
-	ChunkCount      int    `json:"chunk_count"`      // 切片数量
+	DocULID         string `json:"doc_ulid"`          // 文档 ULID
+	ProjectULID     string `json:"project_ulid"`      // 所属项目
+	DocName         string `json:"doc_name"`          // 文档名
+	DocTypeCode     string `json:"doc_type_code"`     // 类型
+	DocStatusCode   string `json:"doc_status_code"`   // 状态
+	ChunkCount      int    `json:"chunk_count"`       // 切片数量
 	TotalTokenCount int64  `json:"total_token_count"` // token 总量
-	ErrorMessage    string `json:"error_message"`    // 失败原因
-	CreatedAtMs     int64  `json:"created_at_ms"`    // 上传时间（毫秒时间戳）
+	ErrorMessage    string `json:"error_message"`     // 失败原因
+	CreatedAtMs     int64  `json:"created_at_ms"`     // 上传时间（毫秒时间戳）
 }
 
 // KnowledgeChunkVO 切片视图对象（搜索结果）。
 type KnowledgeChunkVO struct {
-	ChunkULID   string  `json:"chunk_ulid"`   // 切片 ULID
-	DocULID     string  `json:"doc_ulid"`     // 所属文档
-	DocName     string  `json:"doc_name"`     // 文档名（联表得出）
-	ChunkIndex  int     `json:"chunk_index"`  // 切片序号
-	ChunkText   string  `json:"chunk_text"`   // 切片文本
-	ScoreValue  float64 `json:"score_value"`  // 融合得分（RRF）
-	SourceMode  string  `json:"source_mode"`  // 命中通道：vector/keyword/hybrid
+	ChunkULID  string  `json:"chunk_ulid"`  // 切片 ULID
+	DocULID    string  `json:"doc_ulid"`    // 所属文档
+	DocName    string  `json:"doc_name"`    // 文档名（联表得出）
+	ChunkIndex int     `json:"chunk_index"` // 切片序号
+	ChunkText  string  `json:"chunk_text"`  // 切片文本
+	ScoreValue float64 `json:"score_value"` // 融合得分（RRF）
+	SourceMode string  `json:"source_mode"` // 命中通道：vector/keyword/hybrid
 }
 
 // KnowledgeDeleteREQ 删除文档请求（删原文 + 切片 + 索引）。

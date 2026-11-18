@@ -12,7 +12,7 @@ import (
 
 // ManticoreClient Manticore Search 的 HTTP SQL 客户端（POST /sql?mode=raw）。
 type ManticoreClient struct {
-	baseURL    string     // HTTP JSON API 地址
+	baseURL    string       // HTTP JSON API 地址
 	httpClient *http.Client // 复用的 HTTP 客户端（5s 超时）
 }
 

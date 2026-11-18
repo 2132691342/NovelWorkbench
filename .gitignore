@@ -20,3 +20,6 @@ backend/vendor/
 # 日志与临时文件
 *.log
 tmp/
+
+# Go 交叉编译产物
+backend/build/
