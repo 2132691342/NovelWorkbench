@@ -18,6 +18,8 @@ frontend/
 └── uno.config.ts     UnoCSS（presetUno + transformerDirectives）
 ```
 
+页面样式约定：单个 `.vue` 超过约 450 行时，样式抽到同目录 `<page>.css`，在组件里以 `<style scoped src="./<page>.css"></style>` 引用（`character`/`knowledge`/`notes`/`lore`/`models` 均按此约定）。
+
 ## 2. 设计系统
 
 ### 2.1 色彩
