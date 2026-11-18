@@ -62,6 +62,7 @@ export default {
     systemGroup: 'Global',
     noProject: 'No project',
     noProjectTip: 'Create a project on the dashboard first',
+    projectMissing: 'That project does not exist or is not accessible; back to dashboard',
     manageProjects: 'Manage projects',
     toggleSidebar: 'Toggle sidebar',
     language: 'Language',

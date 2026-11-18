@@ -5,6 +5,7 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
@@ -97,12 +98,38 @@ async function handleUserCommand(command: string | number | object): Promise<voi
   void router.push('/login')
 }
 
-// 路由中的项目变化时同步到全局选中态（URL 是项目上下文的最高优先级来源）
-watch(routeProjectUlid, (projectUlid) => {
-  if (projectUlid && projectUlid !== projectStore.current_project_ulid) {
-    projectStore.setCurrentProject(projectUlid)
-  }
-})
+// 路由中的项目变化时同步到全局选中态（URL 是项目上下文的最高优先级来源）；
+// 列表里没有该项目时重新拉取，仍缺失则判定为已删除/无权访问并回到仪表盘
+watch(
+  [routeProjectUlid, () => projectStore.list_loading],
+  ([projectUlid, listLoading]) => {
+    if (!projectUlid) {
+      return
+    }
+    if (projectUlid !== projectStore.current_project_ulid) {
+      projectStore.setCurrentProject(projectUlid)
+    }
+    if (listLoading) {
+      return
+    }
+    if (projectStore.hasProject(projectUlid)) {
+      return
+    }
+    if (projectStore.project_list.length === 0) {
+      // 列表尚未加载（或确实为空）：拉一次再判定，避免空列表误判
+      void projectStore.loadProjectList().then(() => {
+        if (!projectStore.hasProject(projectUlid)) {
+          ElMessage.warning(t('layout.projectMissing'))
+          void router.replace('/')
+        }
+      })
+      return
+    }
+    ElMessage.warning(t('layout.projectMissing'))
+    void router.replace('/')
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   if (!projectStore.project_list.length) {

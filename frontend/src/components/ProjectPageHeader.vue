@@ -7,6 +7,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getProjectDetail } from '@/api/project'
+import { useProjectStore } from '@/stores/project'
 import NWButton from '@/components/NWButton.vue'
 
 const props = defineProps<{
@@ -15,15 +16,23 @@ const props = defineProps<{
 
 const router = useRouter()
 const { t } = useI18n()
+const projectStore = useProjectStore()
 
 const projectName = ref('')
 const loading = ref(false)
 
-/** 加载项目名（失败静默，提示由 http 层统一弹出） */
+/** 加载项目名（失败静默，提示由 http 层统一弹出；已删除项目不再发起请求） */
 async function loadProjectName(): Promise<void> {
   if (!props.projectUlid) {
     projectName.value = ''
     return
+  }
+  if (!projectStore.hasProject(props.projectUlid)) {
+    // 列表已加载但项目不在其中：已删除或无权访问，交由布局守卫跳转
+    if (!projectStore.list_loading) {
+      projectName.value = ''
+      return
+    }
   }
   loading.value = true
   try {

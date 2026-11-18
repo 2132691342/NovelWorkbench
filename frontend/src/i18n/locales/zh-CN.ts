@@ -62,6 +62,7 @@ export default {
     systemGroup: '全局',
     noProject: '未选择项目',
     noProjectTip: '请先在仪表盘创建项目',
+    projectMissing: '该项目不存在或无权访问，已返回仪表盘',
     manageProjects: '管理项目',
     toggleSidebar: '折叠/展开侧边栏',
     language: '界面语言',

@@ -21,6 +21,11 @@ export const useProjectStore = defineStore('project', {
         ) ?? null
       )
     },
+    /** 判断项目是否在已加载列表中（用于避免对已删除项目发起请求） */
+    hasProject(state): (projectUlid: string) => boolean {
+      return (projectUlid: string) =>
+        state.project_list.some((projectItem) => projectItem.project_ulid === projectUlid)
+    },
   },
   actions: {
     /** 拉取项目列表并校正当前选中项（列表变动时自动收敛到第一项） */
