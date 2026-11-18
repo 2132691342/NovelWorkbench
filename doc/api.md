@@ -64,14 +64,14 @@ UserVO：`user_ulid / user_name / user_email / avatar_url / user_status_code / r
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | /project/create | 创建项目（ProjectCreateREQ） |
-| POST | /project/update | 更新项目（ProjectUpdateREQ） |
-| POST | /project/delete | 删除项目（body: project_ulid，级联删卷/章/设定） |
+| POST | /project/update | 更新项目（ProjectUpdateREQ；名称/题材/文风/简介整体覆盖，可清空，状态非空才更新） |
+| POST | /project/delete | 删除项目（body: project_ulid，级联删卷/章/快照/角色/关系/设定/知识库/AI 会话/统计，并清理 MinIO 与 Manticore） |
 | POST | /project/list | 项目分页（ProjectListREQ → PageDTO[ProjectVO]） |
 | GET | /project/detail?project_ulid= | 项目详情 → ProjectVO |
 | GET | /project/tree?project_ulid= | 目录树 → ProjectTreeVO |
 | POST | /volume/create | 建卷（project_ulid, volume_name, summary_text） |
 | POST | /volume/update | 改卷（volume_ulid, volume_name, summary_text） |
-| POST | /volume/delete | 删卷（volume_ulid；级联删卷下章节并回补字数） |
+| POST | /volume/delete | 删卷（volume_ulid；同事务级联删卷下章节/快照并回补项目字数） |
 | POST | /chapter/create | 建章（ChapterCreateREQ） |
 | POST | /chapter/update | 改章（ChapterUpdateREQ；content_text/summary_text 缺省不改、显式空串清空） |
 | POST | /chapter/delete | 删章（chapter_ulid，回补字数） |

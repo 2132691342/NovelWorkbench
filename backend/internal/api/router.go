@@ -1,6 +1,9 @@
 package api
 
 import (
+	"net/http"
+	"time"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
@@ -30,15 +33,21 @@ type RouterDeps struct {
 	AuditAPI     *AuditAPI       // 审计日志模块处理器
 }
 
-// NewRouter 装配 HTTP 路由；中间件顺序：Recovery → 请求ID → 日志 → 方法白名单 → CORS → 鉴权 → 审计。
+// NewRouter 装配 HTTP 路由；中间件顺序：Recovery → 请求ID → 日志 → CORS（先处理预检）→ 方法白名单 → 鉴权 → 审计。
 func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	gin.SetMode(mode)
 	router := gin.New()
 	router.Use(pkg.RecoveryMiddleware())
 	router.Use(pkg.RequestIDMiddleware())
 	router.Use(pkg.LoggerMiddleware())
+	router.Use(cors.New(cors.Config{
+		AllowAllOrigins: true,
+		AllowMethods:    []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowHeaders:    []string{"Origin", "Content-Type", "Authorization", "X-Request-ID"},
+		ExposeHeaders:   []string{"X-Request-ID"},
+		MaxAge:          12 * time.Hour,
+	}))
 	router.Use(pkg.MethodWhitelistMiddleware())
-	router.Use(cors.Default())
 	router.GET("/health", healthCheck)
 	router.GET("/ready", readyCheck(deps.ReadyCheck))
 

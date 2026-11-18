@@ -11,6 +11,8 @@ jobs:
   backend:
     name: Backend Check
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local # 与 Dockerfile 一致：go.mod 版本必须能被 1.24 工具链直接构建
     defaults:
       run:
         working-directory: backend

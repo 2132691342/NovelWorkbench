@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { get } from '@/api/http'
-import { createProject, deleteProject, listProjects } from '@/api/project'
+import { createProject, deleteProject, listProjects, updateProject } from '@/api/project'
 import type { NWProjectVo, NWStatsOverviewVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
 import NWCard from '@/components/NWCard.vue'
@@ -32,6 +32,7 @@ const projectTotal = ref(0)
 const projectPageNum = ref(1)
 const createDialogVisible = ref(false)
 const createSaving = ref(false)
+const editingProjectUlid = ref('')
 const createFormRef = ref<FormInstance>()
 const statsOverview = ref<NWStatsOverviewVo>({
   project_count: 0,
@@ -47,6 +48,7 @@ interface ProjectFormState {
   genre_code: string
   style_text: string
   synopsis_text: string
+  project_status: string
 }
 
 const createForm = reactive<ProjectFormState>({
@@ -54,7 +56,10 @@ const createForm = reactive<ProjectFormState>({
   genre_code: '',
   style_text: '',
   synopsis_text: '',
+  project_status: 'draft',
 })
+
+const projectEditMode = computed(() => editingProjectUlid.value !== '')
 
 const createRules = computed<FormRules>(() => ({
   project_name: [
@@ -213,10 +218,23 @@ function handleProjectRowClick(row: NWProjectVo): void {
 }
 
 function handleCreateProject(): void {
+  editingProjectUlid.value = ''
   createForm.project_name = ''
   createForm.genre_code = ''
   createForm.style_text = ''
   createForm.synopsis_text = ''
+  createForm.project_status = 'draft'
+  createDialogVisible.value = true
+}
+
+/** 编辑项目：复用新建弹窗，回填可编辑字段 */
+function handleEditProject(row: NWProjectVo): void {
+  editingProjectUlid.value = row.project_ulid
+  createForm.project_name = row.project_name
+  createForm.genre_code = row.genre_code
+  createForm.style_text = row.style_text
+  createForm.synopsis_text = row.synopsis_text
+  createForm.project_status = row.project_status || 'draft'
   createDialogVisible.value = true
 }
 
@@ -232,13 +250,25 @@ async function handleCreateSubmit(): Promise<void> {
   }
   createSaving.value = true
   try {
-    await createProject({
-      project_name: createForm.project_name,
-      genre_code: createForm.genre_code || undefined,
-      style_text: createForm.style_text || undefined,
-      synopsis_text: createForm.synopsis_text || undefined,
-    })
-    ElMessage.success(t('dashboard.createSuccess'))
+    if (editingProjectUlid.value) {
+      await updateProject({
+        project_ulid: editingProjectUlid.value,
+        project_name: createForm.project_name,
+        genre_code: createForm.genre_code,
+        style_text: createForm.style_text,
+        synopsis_text: createForm.synopsis_text,
+        project_status: createForm.project_status,
+      })
+      ElMessage.success(t('dashboard.updateSuccess'))
+    } else {
+      await createProject({
+        project_name: createForm.project_name,
+        genre_code: createForm.genre_code || undefined,
+        style_text: createForm.style_text || undefined,
+        synopsis_text: createForm.synopsis_text || undefined,
+      })
+      ElMessage.success(t('dashboard.createSuccess'))
+    }
     createDialogVisible.value = false
     projectPageNum.value = 1
     await loadProjectList()
@@ -346,8 +376,11 @@ onUnmounted(() => {
               {{ formatTimestamp(row.updated_at_ms) }}
             </template>
           </el-table-column>
-          <el-table-column :label="t('common.action')" width="100" fixed="right">
+          <el-table-column :label="t('common.action')" width="160" fixed="right">
             <template #default="{ row }">
+              <NWButton size="small" @click.stop="handleEditProject(row)">
+                {{ t('dashboard.editProject') }}
+              </NWButton>
               <NWButton
                 type="danger"
                 size="small"
@@ -375,7 +408,11 @@ onUnmounted(() => {
     </NWCard>
 
     <!-- 新建项目对话框 -->
-    <el-dialog v-model="createDialogVisible" :title="t('dashboard.createProjectTitle')" width="520px">
+    <el-dialog
+      v-model="createDialogVisible"
+      :title="projectEditMode ? t('dashboard.editProjectTitle') : t('dashboard.createProjectTitle')"
+      width="520px"
+    >
       <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-width="88px">
         <el-form-item :label="t('dashboard.projectName')" prop="project_name">
           <el-input
@@ -383,6 +420,13 @@ onUnmounted(() => {
             maxlength="128"
             :placeholder="t('dashboard.projectNamePlaceholder')"
           />
+        </el-form-item>
+        <el-form-item v-if="projectEditMode" :label="t('dashboard.projectStatus')">
+          <el-select v-model="createForm.project_status">
+            <el-option value="draft" :label="t('dashboard.statusDraft')" />
+            <el-option value="serial" :label="t('dashboard.statusSerial')" />
+            <el-option value="completed" :label="t('dashboard.statusCompleted')" />
+          </el-select>
         </el-form-item>
         <el-form-item :label="t('dashboard.genreCode')" prop="genre_code">
           <el-input

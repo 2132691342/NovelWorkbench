@@ -6,21 +6,34 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
+	"github.com/2132691342/NovelWorkbench/backend/internal/infra"
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
 	"github.com/2132691342/NovelWorkbench/backend/internal/repo"
 )
+
+// ProjectCascadeDeps 项目级联删除依赖（DB 子表仓储 + 外部存储清理客户端）。
+type ProjectCascadeDeps struct {
+	CharacterRepo  *repo.CharacterRepo    // 角色与关系边
+	LoreRepo       *repo.LoreRepo         // 世界观设定
+	ChatRepo       *repo.ChatRepo         // AI 会话与消息
+	KnowledgeRepo  *repo.KnowledgeRepo    // 知识库文档与切片
+	ObjectRepo     *repo.ObjectRepo       // MinIO 原文对象
+	Manticore      *infra.ManticoreClient // Manticore 全文索引
+	ManticoreTable string                 // 全文索引表名
+}
 
 // ProjectService 小说项目业务：项目 CRUD、列表、目录树与级联删除。
 type ProjectService struct {
 	projectRepo *repo.ProjectRepo
 	volumeRepo  *repo.VolumeRepo
 	chapterRepo *repo.ChapterRepo
+	cascade     ProjectCascadeDeps
 	db          *gorm.DB
 }
 
 // NewProjectService 构造项目服务。
-func NewProjectService(projectRepo *repo.ProjectRepo, volumeRepo *repo.VolumeRepo, chapterRepo *repo.ChapterRepo, db *gorm.DB) *ProjectService {
-	return &ProjectService{projectRepo: projectRepo, volumeRepo: volumeRepo, chapterRepo: chapterRepo, db: db}
+func NewProjectService(projectRepo *repo.ProjectRepo, volumeRepo *repo.VolumeRepo, chapterRepo *repo.ChapterRepo, db *gorm.DB, cascade ProjectCascadeDeps) *ProjectService {
+	return &ProjectService{projectRepo: projectRepo, volumeRepo: volumeRepo, chapterRepo: chapterRepo, cascade: cascade, db: db}
 }
 
 // Create 创建项目（状态默认 draft）。
@@ -45,15 +58,11 @@ func (s *ProjectService) Update(ctx context.Context, userULID string, req *domai
 	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID); err != nil {
 		return domain.ProjectVO{}, err
 	}
-	fields := map[string]any{"project_name": req.ProjectName}
-	if req.GenreCode != "" {
-		fields["genre_code"] = req.GenreCode
-	}
-	if req.StyleText != "" {
-		fields["style_text"] = req.StyleText
-	}
-	if req.SynopsisText != "" {
-		fields["synopsis_text"] = req.SynopsisText
+	fields := map[string]any{
+		"project_name":  req.ProjectName,
+		"genre_code":    req.GenreCode,
+		"style_text":    req.StyleText,
+		"synopsis_text": req.SynopsisText,
 	}
 	if req.ProjectStatus != "" {
 		fields["project_status"] = req.ProjectStatus
@@ -64,15 +73,23 @@ func (s *ProjectService) Update(ctx context.Context, userULID string, req *domai
 	return s.projectVOOf(ctx, userULID, req.ProjectULID)
 }
 
-// Delete 级联删除项目及其卷、章节、快照、每日字数统计。
+// Delete 级联删除项目全部从属数据（DB 单事务），事务提交后清理 MinIO/Manticore。
 func (s *ProjectService) Delete(ctx context.Context, userULID string, req *domain.ProjectDeleteREQ) error {
 	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID); err != nil {
 		return err
 	}
-	return repo.WithTx(s.db, func(tx *gorm.DB) error {
+	docs, err := s.cascade.KnowledgeRepo.ListDocumentsByProject(ctx, req.ProjectULID)
+	if err != nil {
+		return err
+	}
+	err = repo.WithTx(s.db, func(tx *gorm.DB) error {
 		txProject := repo.NewProjectRepo(tx)
 		txVolume := repo.NewVolumeRepo(tx)
 		txChapter := repo.NewChapterRepo(tx)
+		txCharacter := repo.NewCharacterRepo(tx)
+		txLore := repo.NewLoreRepo(tx)
+		txChat := repo.NewChatRepo(tx)
+		txKnowledge := repo.NewKnowledgeRepo(tx)
 		if err := txChapter.DeleteSnapshotsByProject(ctx, req.ProjectULID); err != nil {
 			return err
 		}
@@ -82,11 +99,46 @@ func (s *ProjectService) Delete(ctx context.Context, userULID string, req *domai
 		if err := txVolume.DeleteByProject(ctx, req.ProjectULID); err != nil {
 			return err
 		}
+		if err := txCharacter.DeleteByProject(ctx, req.ProjectULID); err != nil {
+			return err
+		}
+		if err := txLore.DeleteByProject(ctx, req.ProjectULID); err != nil {
+			return err
+		}
+		if err := txChat.DeleteByProject(ctx, req.ProjectULID); err != nil {
+			return err
+		}
+		if err := txKnowledge.DeleteChunksByProject(ctx, req.ProjectULID); err != nil {
+			return err
+		}
+		if err := txKnowledge.DeleteDocumentsByProject(ctx, req.ProjectULID); err != nil {
+			return err
+		}
 		if err := txProject.DeleteWordStatsByProject(ctx, req.ProjectULID); err != nil {
 			return err
 		}
 		return txProject.Delete(ctx, req.ProjectULID)
 	})
+	if err != nil {
+		return err
+	}
+	s.cleanupKnowledgeExternal(ctx, docs)
+	return nil
+}
+
+// cleanupKnowledgeExternal 清理项目文档的外部副本；失败仅告警，数据库一致性已由事务保证。
+func (s *ProjectService) cleanupKnowledgeExternal(ctx context.Context, docs []domain.KnowledgeDocumentDO) {
+	for i := range docs {
+		if err := s.cascade.ObjectRepo.RemoveObject(ctx, docs[i].ObjectKey); err != nil {
+			pkg.SLogger().Warnw("项目删除：MinIO 原文清理失败", "doc_ulid", docs[i].DocULID, "error", err)
+		}
+		if s.cascade.Manticore == nil {
+			continue
+		}
+		if err := deleteManticoreChunks(ctx, s.cascade.Manticore, s.cascade.ManticoreTable, docs[i].DocULID); err != nil {
+			pkg.SLogger().Warnw("项目删除：Manticore 切片清理失败", "doc_ulid", docs[i].DocULID, "error", err)
+		}
+	}
 }
 
 // List 分页查询当前用户的项目（名称模糊 + 状态过滤）。

@@ -46,6 +46,19 @@ func (r *CharacterRepo) Delete(ctx context.Context, characterULID string) error 
 	return nil
 }
 
+// DeleteByProject 删除项目下全部角色关系边与角色卡（先边后点）。
+func (r *CharacterRepo) DeleteByProject(ctx context.Context, projectULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.CharacterRelationDO{}).Error; err != nil {
+		return fmt.Errorf("delete character relations by project: %w", err)
+	}
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.CharacterDO{}).Error; err != nil {
+		return fmt.Errorf("delete characters by project: %w", err)
+	}
+	return nil
+}
+
 // GetByULID 按 ULID 查询角色，不存在时返回 (nil, nil)。
 func (r *CharacterRepo) GetByULID(ctx context.Context, characterULID string) (*domain.CharacterDO, error) {
 	var do domain.CharacterDO

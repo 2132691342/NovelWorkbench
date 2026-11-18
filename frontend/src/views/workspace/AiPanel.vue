@@ -100,6 +100,7 @@ async function runStream(
     },
   })
   assistantMessage.streaming_flag = false
+  void loadSessions()
   scrollMessagesToBottom()
 }
 

@@ -19,7 +19,6 @@
     "@wangeditor/editor": "5.1.23",
     "@wangeditor/editor-for-vue": "5.1.12",
     "axios": "1.6.8",
-    "bpmn-js": "16.4.0",
     "docx-preview": "0.3.4",
     "echarts": "5.5.0",
     "element-plus": "2.9.0",

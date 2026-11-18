@@ -19,6 +19,12 @@
   color: var(--text-main);
 }
 
+.workspace-tree__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .workspace-tree__scroll {
   flex: 1;
   overflow-y: auto;

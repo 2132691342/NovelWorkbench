@@ -47,7 +47,7 @@ AI 能力全部收敛到一条链路：`/chat/send`（SSE 流式）+ 斜杠技�
 ## 5. RAG 检索
 
 1. 索引侧：文档上传 → MinIO 原文 → RabbitMQ 异步任务 → 切片（`chunk_size=800`/`chunk_overlap=120`）→ 批量向量化 → pgvector + Manticore 双写。
-2. 检索侧：`hybrid` 模式 = pgvector 余弦 TopK ∪ Manticore 关键词 TopK → RRF 融合（`score = Σ 1/(60+rank)`）→ 重排取 TopK（默认 6）。
+2. 检索侧：`hybrid` 模式 = pgvector 余弦 TopK ∪ Manticore 关键词 TopK → RRF 融合（`score = Σ 1/(60+rank)`）→ 重排取 TopK（默认 6）。Manticore 使用 CJK ngram（`ngram_len=1` + `ngram_chars=cjk`）支持中文子串；请求只给 `query_text` 时关键词通道复用该文本建 MATCH。
 3. 召回依据随 `done` 事件返回 `reference_list`（doc_name/切片文本/得分），前端展示"AI 依据"。
 
 混合的原因：人名/功法名等专有名词靠关键词通道兜底，同义改写靠向量通道兜底；RRF 无权重参数，行为稳定。

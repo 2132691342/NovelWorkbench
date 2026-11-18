@@ -58,11 +58,11 @@ type AuditRecorder interface {
 
 // auditTargetKeys 审计目标提取白名单（body 键 → 目标类型）。
 var auditTargetKeys = map[string]string{
-	"user_ulid":     "user",
-	"role_ulid":     "role",
-	"project_ulid":  "project",
-	"chapter_ulid":  "chapter",
-	"document_ulid": "document",
+	"user_ulid":    "user",
+	"role_ulid":    "role",
+	"project_ulid": "project",
+	"chapter_ulid": "chapter",
+	"doc_ulid":     "document",
 }
 
 // auditBodyLimitBytes 审计 body 采样上限（超出只记动作码）。

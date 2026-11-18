@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 )
@@ -47,14 +48,18 @@ func Fail(c *gin.Context, code string, message string) {
 	})
 }
 
-// FailErr 将 error 转换为业务失败响应；BizError 保留业务码，其余归为内部错误。
+// FailErr 将 error 转换为业务失败响应；BizError 保留业务码，其余记日志并返回通用内部错误。
 func FailErr(c *gin.Context, err error) {
 	var bizErr *BizError
 	if errors.As(err, &bizErr) {
 		Fail(c, bizErr.Code, bizErr.Message)
 		return
 	}
-	Fail(c, domain.RespCodeInternalError, err.Error())
+	Logger().Error("unhandled_error",
+		zap.String("request_id", requestID(c)),
+		zap.Error(err),
+	)
+	Fail(c, domain.RespCodeInternalError, "服务内部错误，请稍后重试")
 }
 
 // requestID 取请求链路 ID（由中间件注入）。

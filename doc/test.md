@@ -20,6 +20,8 @@
 | `backend/internal/service/slash_service_test.go` | 斜杠解析全链路：命中/未命中/参数剥离/禁用命令/非首 token |
 | `backend/internal/service/knowledge_service_test.go` | 切片滑窗（短文本/重叠/边界优先/非法重叠收敛）；RRF 融合（双通道/单通道/TopK 截断/来源标注） |
 | `backend/internal/service/chat_service_test.go` | 对话上下文装配：技能命中/未命中渲染、@引用注入、历史 N 条截断 + 显式引用必注入、预算丢块标注、设定注入（含 note 排除） |
+| `backend/internal/service/knowledge_worker_test.go` | Manticore 中文 ngram 表结构迁移：旧表 `DROP → CREATE → 回灌` 只触发一次，新表启动不重建 |
+| `backend/internal/pkg/middleware_test.go` | 鉴权用户状态：活跃放行、禁用/删除旧令牌 401、状态查询失败 500 |
 
 运行方式：
 
@@ -36,7 +38,7 @@ E2E 在集成环境执行：后端直连中间件（Postgres/Redis/RabbitMQ/MinI
 | 链路 | 验证点 |
 | --- | --- |
 | 认证 | 注册/登录/鉴权/登出拉黑 |
-| 项目→卷→章 | CRUD、目录树、字数账目（含清空正文的字数回补）、快照留档/回滚/列表 |
+| 项目→卷→章 | CRUD、目录树、字数账目（含清空正文与删卷的字数回补）、快照留档/回滚/列表、删除项目/卷后子表零残留 |
 | 角色/设定 | 角色卡、关系边、关系图数据；设定增删查（含 note 类型） |
 | 知识库 | 上传→队列→切片→向量化→落库/建索引→混合检索命中（source_mode 标注）；向量化失败时重试→failed 与检索降级 keyword |
 | 对话 | SSE 流式（chunk seq 递增→done 带召回依据）、技能/引用/历史注入、消息落库、AI 字数落账 |

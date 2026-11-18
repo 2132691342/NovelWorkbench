@@ -1,16 +1,22 @@
 # 后端构建镜像：多阶段构建，CGO_ENABLED=0 静态编译
-FROM golang:1.24-alpine AS builder
+ARG BASE_BUILDER_IMAGE=golang:1.24-alpine
+FROM ${BASE_BUILDER_IMAGE} AS builder
 WORKDIR /src
+
+# 固定本地工具链，禁止构建期拉取其它 Go 版本
+ENV GOTOOLCHAIN=local \
+    CGO_ENABLED=0
 
 # 先拷贝依赖清单利用构建缓存
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags "netgo osusergo" -ldflags="-s -w" -o /out/novel-workbench-server ./cmd/server
+RUN GOOS=linux GOARCH=amd64 go build -tags "netgo osusergo" -ldflags="-s -w" -o /out/novel-workbench-server ./cmd/server
 
 # 运行镜像：alpine + CA 证书（访问 HTTPS 模型网关需要）
-FROM alpine:3.20
+ARG BASE_RUNTIME_IMAGE=alpine:3.20
+FROM ${BASE_RUNTIME_IMAGE}
 RUN apk add --no-cache ca-certificates tzdata && \
     adduser -D -u 10001 appuser
 WORKDIR /app

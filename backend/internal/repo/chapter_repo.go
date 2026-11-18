@@ -82,6 +82,38 @@ func (r *ChapterRepo) MaxOrder(ctx context.Context, projectULID string) (int, er
 	return maxOrder, nil
 }
 
+// SumWordCountByVolume 统计卷内章节字数合计（卷删除时回补项目字数）。
+func (r *ChapterRepo) SumWordCountByVolume(ctx context.Context, volumeULID string) (int64, error) {
+	var total int64
+	err := r.db.WithContext(ctx).Model(&domain.ChapterDO{}).
+		Where("volume_ulid = ?", volumeULID).
+		Select("COALESCE(SUM(word_count), 0)").Scan(&total).Error
+	if err != nil {
+		return 0, fmt.Errorf("sum chapter word count by volume: %w", err)
+	}
+	return total, nil
+}
+
+// DeleteByVolume 删除卷下全部章节。
+func (r *ChapterRepo) DeleteByVolume(ctx context.Context, volumeULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("volume_ulid = ?", volumeULID).Delete(&domain.ChapterDO{}).Error; err != nil {
+		return fmt.Errorf("delete chapters by volume: %w", err)
+	}
+	return nil
+}
+
+// DeleteSnapshotsByVolume 删除卷下全部章节快照（经章节子查询关联）。
+func (r *ChapterRepo) DeleteSnapshotsByVolume(ctx context.Context, volumeULID string) error {
+	subQuery := r.db.WithContext(ctx).Model(&domain.ChapterDO{}).
+		Select("chapter_ulid").Where("volume_ulid = ?", volumeULID)
+	if err := r.db.WithContext(ctx).
+		Where("chapter_ulid IN (?)", subQuery).Delete(&domain.ChapterSnapshotDO{}).Error; err != nil {
+		return fmt.Errorf("delete chapter snapshots by volume: %w", err)
+	}
+	return nil
+}
+
 // DeleteByProject 删除项目下全部章节。
 func (r *ChapterRepo) DeleteByProject(ctx context.Context, projectULID string) error {
 	if err := r.db.WithContext(ctx).

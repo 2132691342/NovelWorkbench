@@ -117,8 +117,16 @@ func main() {
 	roleService := service.NewRoleService(roleRepo, userRepo)
 	userAdminService := service.NewUserAdminService(userRepo, roleRepo)
 	auditService := service.NewAuditService(auditRepo, userRepo)
-	projectService := service.NewProjectService(projectRepo, volumeRepo, chapterRepo, db)
-	volumeService := service.NewVolumeService(volumeRepo, projectRepo)
+	projectService := service.NewProjectService(projectRepo, volumeRepo, chapterRepo, db, service.ProjectCascadeDeps{
+		CharacterRepo:  characterRepo,
+		LoreRepo:       loreRepo,
+		ChatRepo:       chatRepo,
+		KnowledgeRepo:  knowledgeRepo,
+		ObjectRepo:     objectRepo,
+		Manticore:      manticoreClient,
+		ManticoreTable: cfg.Manticore.TableChunks,
+	})
+	volumeService := service.NewVolumeService(volumeRepo, chapterRepo, projectRepo, db)
 	chapterService := service.NewChapterService(chapterRepo, volumeRepo, projectRepo, db)
 	characterService := service.NewCharacterService(characterRepo, projectRepo, db)
 	loreService := service.NewLoreService(loreRepo, projectRepo)
@@ -176,7 +184,13 @@ func main() {
 		}
 	}()
 
-	authMW := pkg.AuthMiddleware(signer, tokenRepo, []string{"/api/v1/auth/register", "/api/v1/auth/login"})
+	authMW := pkg.AuthMiddleware(signer, tokenRepo, func(checkCtx context.Context, userULID string) (bool, error) {
+		user, err := userRepo.GetByULID(checkCtx, userULID)
+		if err != nil {
+			return false, err
+		}
+		return user != nil && user.UserStatusCode != domain.UserStatusDisabled, nil
+	}, []string{"/api/v1/auth/register", "/api/v1/auth/login"})
 	auditMW := pkg.AuditMiddleware(auditService, []string{
 		"/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/chat/send",
 	})

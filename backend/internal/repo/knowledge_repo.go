@@ -82,6 +82,45 @@ func (r *KnowledgeRepo) ListDocuments(ctx context.Context, projectULID, docStatu
 	return dos, total, nil
 }
 
+// ListDocumentsByProject 查询项目下全部文档（项目删除前收集对象键与文档 ULID，供外部存储清理）。
+func (r *KnowledgeRepo) ListDocumentsByProject(ctx context.Context, projectULID string) ([]domain.KnowledgeDocumentDO, error) {
+	var dos []domain.KnowledgeDocumentDO
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list knowledge documents by project: %w", err)
+	}
+	return dos, nil
+}
+
+// DeleteChunksByProject 删除项目下全部文档切片。
+func (r *KnowledgeRepo) DeleteChunksByProject(ctx context.Context, projectULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.KnowledgeChunkDO{}).Error; err != nil {
+		return fmt.Errorf("delete knowledge chunks by project: %w", err)
+	}
+	return nil
+}
+
+// DeleteDocumentsByProject 删除项目下全部文档记录。
+func (r *KnowledgeRepo) DeleteDocumentsByProject(ctx context.Context, projectULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.KnowledgeDocumentDO{}).Error; err != nil {
+		return fmt.Errorf("delete knowledge documents by project: %w", err)
+	}
+	return nil
+}
+
+// ListAllChunksForIndex 查询全部切片的索引字段（Manticore 表结构升级后重建全文索引）。
+func (r *KnowledgeRepo) ListAllChunksForIndex(ctx context.Context) ([]domain.KnowledgeChunkDO, error) {
+	var dos []domain.KnowledgeChunkDO
+	if err := r.db.WithContext(ctx).Model(&domain.KnowledgeChunkDO{}).
+		Select("chunk_ulid", "doc_ulid", "project_ulid", "chunk_text").
+		Order("doc_ulid ASC, chunk_index ASC").Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list all knowledge chunks: %w", err)
+	}
+	return dos, nil
+}
+
 // DeleteChunksByDoc 删除某文档的全部切片。
 func (r *KnowledgeRepo) DeleteChunksByDoc(ctx context.Context, docULID string) error {
 	if err := r.db.WithContext(ctx).

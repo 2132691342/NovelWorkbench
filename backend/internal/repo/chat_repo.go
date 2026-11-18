@@ -83,6 +83,21 @@ func (r *ChatRepo) DeleteSessionWithMessages(ctx context.Context, sessionULID st
 	return err
 }
 
+// DeleteByProject 删除项目下全部会话与消息（消息先删）。
+func (r *ChatRepo) DeleteByProject(ctx context.Context, projectULID string) error {
+	sessionSubQuery := r.db.WithContext(ctx).Model(&domain.ChatSessionDO{}).
+		Select("session_ulid").Where("project_ulid = ?", projectULID)
+	if err := r.db.WithContext(ctx).
+		Where("session_ulid IN (?)", sessionSubQuery).Delete(&domain.ChatMessageDO{}).Error; err != nil {
+		return fmt.Errorf("delete chat messages by project: %w", err)
+	}
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.ChatSessionDO{}).Error; err != nil {
+		return fmt.Errorf("delete chat sessions by project: %w", err)
+	}
+	return nil
+}
+
 // CreateMessage 插入聊天消息。
 func (r *ChatRepo) CreateMessage(ctx context.Context, do *domain.ChatMessageDO) error {
 	if err := r.db.WithContext(ctx).Create(do).Error; err != nil {

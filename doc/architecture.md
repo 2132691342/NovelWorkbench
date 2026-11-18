@@ -81,7 +81,7 @@ internal/pkg      叶子工具：ULID、响应包络、业务错误、JWT、中�
 顺序：`Recovery → RequestID → Logger → MethodWhitelist(GET/POST) → CORS → JWT 鉴权 → 审计 → 权限（admin 组）`。
 
 - RequestID：透传/生成 `X-Request-ID`（`REQ_` 前缀 ULID），贯穿日志与响应 `trace_id`。
-- 鉴权：`Authorization: Bearer` 解析 JWT 得 `user_ulid` 注入上下文；登出令牌写 Redis 黑名单（`nw:token:blacklist:<sha256>`），TTL 与令牌寿命一致；禁用账号（`user_status_code=disabled`）登录直接拒绝。
+- 鉴权：`Authorization: Bearer` 解析 JWT 得 `user_ulid` 注入上下文；登出令牌写 Redis 黑名单（`nw:token:blacklist:<sha256>`），TTL 与令牌寿命一致；每请求按主键校验 `user_status_code`，禁用/删除账号的旧令牌立即失效（不止登录时拒绝）。
 - 审计：出口层记录全部 `POST /api/v1/*` 变更请求（登录/登出/chat/send 除外），失败仅告警不阻断业务。
 - 权限：`RequirePermMiddleware` 按权限码收口 `/admin/*`（system:user:manage / system:role:manage / system:audit:read），判定走角色权限码并集，`*` 通配。
 - 免鉴权白名单：`/api/v1/auth/register`、`/api/v1/auth/login`；`/health`（存活）与 `/ready`（DB Ping 就绪）不在鉴权组内。
@@ -129,7 +129,7 @@ sequenceDiagram
 
 ### 6.3 混合检索（RRF）
 
-向量通道（pgvector 余弦）与关键词通道（Manticore）各取 TopK，用 RRF（`score = Σ 1/(60+rank)`）融合排序取交集并集头部。原因：纯向量对专有名词（人名/功法名）不敏感，纯关键词对同义改写不敏感；RRF 无参数调权，稳定压过精细调参。
+向量通道（pgvector 余弦）与关键词通道（Manticore）各取 TopK，用 RRF（`score = Σ 1/(60+rank)`）融合排序取交集并集头部。Manticore 表使用 CJK ngram（`ngram_len=1` + `ngram_chars=cjk`）解决中文子串匹配；`hybrid` 只给 `query_text` 时关键词通道回退用同一文本建 MATCH。原因：纯向量对专有名词（人名/功法名）不敏感，纯关键词对同义改写不敏感；RRF 无参数调权，稳定压过精细调参。
 
 ## 7. 前端架构
 

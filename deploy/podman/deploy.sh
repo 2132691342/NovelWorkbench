@@ -67,7 +67,8 @@ export NW_BACKEND_IMAGE="$BACKEND_IMAGE" NW_FRONTEND_IMAGE="$FRONTEND_IMAGE"
 COMPOSE_LOG="${COMPOSE_LOG:-/var/log/novelworkbench-compose.log}"
 mkdir -p "$(dirname "$COMPOSE_LOG")"
 # podman-compose 会把含明文口令的 podman run 命令打到 stdout，输出只落服务器本地日志
-if ! podman-compose -f "$SCRIPT_DIR/docker-compose.yml" up -d >"$COMPOSE_LOG" 2>&1; then
+# podman-compose 1.x 不会因镜像 ID 变化自动重建容器，必须显式 --force-recreate
+if ! podman-compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --force-recreate >"$COMPOSE_LOG" 2>&1; then
   tail -40 "$COMPOSE_LOG"
   die "podman-compose up 失败"
 fi

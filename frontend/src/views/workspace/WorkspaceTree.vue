@@ -22,6 +22,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'select-chapter': [chapterUlid: string]
   'tree-changed': []
+  'chapter-created': [chapterUlid: string]
   'chapter-renamed': [chapterUlid: string, chapterName: string]
   'chapter-deleted': [chapterUlid: string]
 }>()
@@ -207,11 +208,12 @@ async function handleChapterSubmit(): Promise<void> {
       })
       emit('chapter-renamed', editingChapterUlid.value, chapterForm.chapter_name)
     } else {
-      await createChapter({
+      const chapterVo = await createChapter({
         project_ulid: props.projectUlid,
         volume_ulid: targetVolumeUlid.value,
         chapter_name: chapterForm.chapter_name,
       })
+      emit('chapter-created', chapterVo.chapter_ulid)
     }
     ElMessage.success(t('workspace.tree.saveSuccess'))
     chapterDialogVisible.value = false
@@ -247,6 +249,47 @@ async function handleDeleteChapter(chapter: NWChapterBriefVo): Promise<void> {
   }
 }
 
+/** 导出项目目录为 XLSX 大纲（卷/章/排序/字数/状态；按需加载 XLSX 控制首屏体积） */
+async function handleExportOutline(): Promise<void> {
+  const treeData = props.treeData
+  if (!treeData || treeData.volume_list.length === 0) {
+    ElMessage.warning(t('workspace.tree.exportEmpty'))
+    return
+  }
+  const rowList: Record<string, string | number>[] = []
+  for (const volumeNode of treeData.volume_list) {
+    if (volumeNode.chapter_list.length === 0) {
+      rowList.push({
+        [t('workspace.tree.exportVolume')]: volumeNode.volume_vo.volume_name,
+        [t('workspace.tree.exportChapter')]: '',
+        [t('workspace.tree.exportOrder')]: 0,
+        [t('workspace.tree.exportWords')]: 0,
+        [t('workspace.tree.exportStatus')]: '',
+      })
+      continue
+    }
+    for (const chapter of volumeNode.chapter_list) {
+      rowList.push({
+        [t('workspace.tree.exportVolume')]: volumeNode.volume_vo.volume_name,
+        [t('workspace.tree.exportChapter')]: chapter.chapter_name,
+        [t('workspace.tree.exportOrder')]: chapter.chapter_order,
+        [t('workspace.tree.exportWords')]: chapter.word_count,
+        [t('workspace.tree.exportStatus')]: chapterStatusText(chapter.chapter_status),
+      })
+    }
+  }
+  try {
+    const XLSX = await import('xlsx')
+    const worksheet = XLSX.utils.json_to_sheet(rowList)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, t('workspace.tree.exportSheetName'))
+    XLSX.writeFile(workbook, `${treeData.project_vo.project_name}-${t('workspace.tree.exportFileName')}.xlsx`)
+    ElMessage.success(t('workspace.tree.exportSuccess'))
+  } catch {
+    ElMessage.error(t('workspace.tree.exportFailed'))
+  }
+}
+
 /** 章节下拉命令分发 */
 function handleChapterCommand(
   command: string | number | object,
@@ -268,9 +311,14 @@ function handleChapterCommand(
   <div class="workspace-tree">
     <div class="workspace-tree__toolbar">
       <span class="workspace-tree__title">{{ t('workspace.tree.title') }}</span>
-      <NWButton size="small" type="primary" @click="openCreateVolume">
-        {{ t('workspace.tree.addVolume') }}
-      </NWButton>
+      <div class="workspace-tree__actions">
+        <NWButton size="small" @click="handleExportOutline">
+          {{ t('workspace.tree.exportOutline') }}
+        </NWButton>
+        <NWButton size="small" type="primary" @click="openCreateVolume">
+          {{ t('workspace.tree.addVolume') }}
+        </NWButton>
+      </div>
     </div>
 
     <NWEmpty

@@ -174,7 +174,7 @@
 | 存储 | 内容 | 键/表设计 |
 | --- | --- | --- |
 | MinIO | 文档原文 | 桶 `novelworkbench`，对象键 = `doc_ulid`（`GET /knowledge/content` 按需取回） |
-| Manticore | 切片全文索引 | 表 `nw_chunks`（chunk_ulid string 主键、doc_ulid/project_ulid string 属性、chunk_text text） |
+| Manticore | 切片全文索引 | 表 `nw_chunks`（chunk_ulid string 主键、doc_ulid/project_ulid string 属性、chunk_text text）；`charset_table=non_cjk,...` + `ngram_len=1` + `ngram_chars=cjk` 支持中文子串检索；旧结构启动时自动重建并从 PG 切片回灌 |
 | Redis | 令牌黑名单 | `nw:token:blacklist:<sha256(token)>` = "1"，TTL = 令牌剩余寿命 |
 
 列命名约定：所有 `XxxULID` 字段显式 `column:xxx_ulid`（并由 `infra.ULIDNamingStrategy` 兜底归一），与手写 SQL、JSON 命名严格一致。
@@ -184,3 +184,12 @@
 - 章节字数变更（创建/更新/删除/快照回滚）与 `projects.total_word_count`、`word_count_stats` 同事务写入（`repo.WithTx`），杜绝字数漂移。
 - 归属校验在 service 层统一做：用户 → 项目（user_ulid）→ 卷/章/角色/设定/文档（project_ulid），违规返回 `ERR_FORBIDDEN`，不存在返回 `ERR_NOT_FOUND`。
 - 文档索引状态机单向流转：`pending → indexing → indexed/failed`；`reindex` 仅对 `indexed/failed` 开放，重复投递幂等（切片按 doc_ulid 先清后写）。
+- 级联删除矩阵（`repo.WithTx` 单事务；外部存储在事务提交后 best-effort 清理并告警）：
+
+| 触发 | 同事务删除 | 外部清理 |
+| --- | --- | --- |
+| 删除项目 | 快照 → 章节 → 卷 → 角色关系 → 角色 → 设定 → 聊天消息 → 会话 → 切片 → 文档 → 每日统计 → 项目 | MinIO 原文 + Manticore 切片 |
+| 删除卷 | 快照 → 章节 → 卷，并按章节字数合计回补项目字数 | 无 |
+| 删除章节 | 快照 → 章节，并回补项目字数 | 无 |
+| 删除文档 | 切片 → 文档 | MinIO 原文 + Manticore 切片 |
+| 删除会话 | 消息 → 会话 | 无 |

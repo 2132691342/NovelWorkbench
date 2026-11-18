@@ -52,8 +52,7 @@ type chatContextInput struct {
 }
 
 // buildContextBlocks 组装上下文块并返回最终指令文本（纯函数）。
-// 技能命中时渲染 {{user_input}}/{{chapter_content}}/{{context}}（context 为其余块先装配文本），
-// 最终指令为渲染后的模板；未命中时最终指令为用户正文原文。
+// 技能命中时渲染 {{user_input}}/{{chapter_content}}/{{context}}（context 为其余块先装配文本）；
 // 块顺序即同优先级稳定顺序：章节 → 文档 → 召回 → 梗概 → 角色 → 设定 → 历史。
 func buildContextBlocks(input chatContextInput) ([]ai.ContextBlock, string) {
 	blocks := make([]ai.ContextBlock, 0, len(input.ChapterList)+len(input.DocList)+6)

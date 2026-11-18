@@ -94,6 +94,9 @@ func (s *KnowledgeService) Upload(ctx context.Context, userULID string, req *dom
 		DocStatusCode: "pending",
 	}
 	if err := s.knowledgeRepo.CreateDocument(ctx, do); err != nil {
+		if removeErr := s.objectRepo.RemoveObject(ctx, docULID); removeErr != nil {
+			pkg.SLogger().Warnw("文档记录创建失败，MinIO 原文回滚失败", "doc_ulid", docULID, "error", removeErr)
+		}
 		return domain.KnowledgeDocumentVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "文档记录创建失败", err)
 	}
 	if err := s.enqueueIndexJob(ctx, "doc_index", docULID); err != nil {
@@ -265,8 +268,17 @@ func (s *KnowledgeService) searchVectorChannel(ctx context.Context, req *domain.
 }
 
 // searchKeywordChannel 关键词通道：Manticore 全文命中后回表取切片原文。
+// hybrid/vector 请求可能只给 query_text，此时关键词通道回退用 query_text 建 MATCH。
 func (s *KnowledgeService) searchKeywordChannel(ctx context.Context, req *domain.KnowledgeSearchREQ, topK int) ([]domain.KnowledgeChunkVO, error) {
-	chunkULIDs, err := queryManticoreChunkIDs(ctx, s.manticore, s.config.ManticoreTable, req, topK)
+	keywordReq := req
+	if strings.TrimSpace(keywordReq.KeywordText) == "" {
+		keywordReq = &domain.KnowledgeSearchREQ{
+			ProjectULID: req.ProjectULID,
+			KeywordText: req.QueryText,
+			DocULIDList: req.DocULIDList,
+		}
+	}
+	chunkULIDs, err := queryManticoreChunkIDs(ctx, s.manticore, s.config.ManticoreTable, keywordReq, topK)
 	if err != nil {
 		return nil, pkg.WrapBizError(domain.RespCodeStorageError, "全文检索失败", err)
 	}

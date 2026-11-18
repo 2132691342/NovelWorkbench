@@ -6,17 +6,17 @@ AI 小说创作工作台：前后端分离、容器化交付。以"项目—卷�
 
 | 模块 | 说明 |
 | --- | --- |
-| 写作工作台 | 卷/章目录树、正文编辑（CodeMirror）、字数统计、快照留档与回滚 |
+| 写作工作台 | 卷/章目录树、正文编辑（CodeMirror）、字数实时统计、快照留档与回滚、XLSX 大纲导出 |
 | AI 助手 | SSE 流式对话；内置 9 个斜杠技能（续写/大纲/润色/扩写/缩写/梗概/审稿/取名/设定问答）+ 自定义技能；@引用文档与章节；最近 N 条历史注入（可配置） |
-| 知识库 | 文档上传（txt/md/docx/pdf）、异步切片+向量化+全文索引、RRF 混合检索、召回依据随回复展示 |
+| 知识库 | 文档上传（txt/md/docx/pdf）、异步切片+向量化+全文索引（Manticore CJK ngram）、RRF 混合检索、原文预览、召回依据随回复展示 |
 | 设定管理 | 角色卡、角色关系图（AntV X6）、世界观设定条目 |
 | 数据总览 | 人工/AI 双来源字数趋势（ECharts）、项目统计 |
-| 系统 | JWT 认证、SaaS 管理（用户/角色权限/审计日志）、运行时配置、斜杠命令管理、中英双语（Vue I18n） |
+| 系统 | JWT 认证（禁用账号旧令牌立即失效）、SaaS 管理（用户/角色权限/审计日志）、项目新建/编辑/删除、运行时配置、斜杠命令管理、中英双语（Vue I18n） |
 
 ## 技术栈
 
 - **后端**：Go 1.24 + gin + gorm(pgx) + viper + zap + eino（OpenAI 兼容网关）+ Redis + RabbitMQ + MinIO + Manticore + pgvector，`CGO_ENABLED=0` 静态编译
-- **前端**：Vue 3.4 + TypeScript 5.4 + Vite 5.2 + Element Plus 2.9 + Pinia + Vue Router + Axios + UnoCSS + ECharts + AntV X6 + CodeMirror 6 + WangEditor 5 + Vue I18n
+- **前端**：Vue 3.4 + TypeScript 5.4 + Vite 5.2 + Element Plus 2.9 + Pinia + Vue Router + Axios + UnoCSS + ECharts + AntV X6 + CodeMirror 6 + WangEditor 5 + XLSX + Vue I18n
 - **部署**：Docker / docker-compose 与 Podman / podman-compose 双形态，GitHub Actions CI/CD（CI 检查 + tag 触发镜像发布 GHCR）
 
 ## 快速开始

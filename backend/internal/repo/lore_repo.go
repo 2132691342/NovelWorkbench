@@ -46,6 +46,15 @@ func (r *LoreRepo) Delete(ctx context.Context, loreULID string) error {
 	return nil
 }
 
+// DeleteByProject 删除项目下全部设定条目。
+func (r *LoreRepo) DeleteByProject(ctx context.Context, projectULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.LoreDO{}).Error; err != nil {
+		return fmt.Errorf("delete lores by project: %w", err)
+	}
+	return nil
+}
+
 // GetByULID 按 ULID 查询设定，不存在时返回 (nil, nil)。
 func (r *LoreRepo) GetByULID(ctx context.Context, loreULID string) (*domain.LoreDO, error) {
 	var do domain.LoreDO

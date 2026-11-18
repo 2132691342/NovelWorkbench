@@ -57,8 +57,13 @@ func NewKnowledgeWorker(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.Obje
 
 // Run 阻塞消费索引队列直至 ctx 取消（优雅退出）；消费连接中断按固定间隔重连。
 func (w *KnowledgeWorker) Run(ctx context.Context) error {
-	if err := ensureManticoreSchema(ctx, w.manticore, w.config.ManticoreTable); err != nil {
+	rebuilt, err := ensureManticoreSchema(ctx, w.manticore, w.config.ManticoreTable)
+	if err != nil {
 		pkg.SLogger().Warnw("Manticore 切片表初始化失败，keyword 通道降级", "error", err)
+	} else if rebuilt {
+		if err := w.rebuildManticoreIndex(ctx); err != nil {
+			pkg.SLogger().Warnw("Manticore 全文索引重建失败，keyword 通道降级", "error", err)
+		}
 	}
 	for {
 		err := w.mqRepo.ConsumeIndexJobs(ctx, w.handleIndexJob)
@@ -313,11 +318,50 @@ func lastBoundary(window []rune) int {
 	return 0
 }
 
-// ensureManticoreSchema 建切片全文表（幂等；morphology=none + min_infix_len 支持子串匹配）。
-func ensureManticoreSchema(ctx context.Context, client *infra.ManticoreClient, table string) error {
-	ddl := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(chunk_ulid string, doc_ulid string, project_ulid string, chunk_text text) morphology='none' min_infix_len='3'", manticoreTableName(table))
-	_, err := client.Exec(ctx, ddl)
-	return err
+// ensureManticoreSchema 确保全文表存在且使用 CJK ngram 分词；旧结构重建并返回 true（需回灌索引）。
+func ensureManticoreSchema(ctx context.Context, client *infra.ManticoreClient, table string) (bool, error) {
+	tableName := manticoreTableName(table)
+	ddl := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(chunk_ulid string, doc_ulid string, project_ulid string, chunk_text text) charset_table='non_cjk,0..9,A..Z->a..z,a..z' ngram_len='1' ngram_chars='cjk'", tableName)
+	if _, err := client.Exec(ctx, ddl); err != nil {
+		return false, err
+	}
+	body, err := client.Exec(ctx, "SHOW CREATE TABLE "+tableName)
+	if err != nil {
+		return false, err
+	}
+	if strings.Contains(string(body), "ngram_len") {
+		return false, nil
+	}
+	if _, err := client.Exec(ctx, "DROP TABLE "+tableName); err != nil {
+		return false, err
+	}
+	if _, err := client.Exec(ctx, ddl); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// rebuildManticoreIndex 从 PG 切片回灌全文索引（表结构升级后一次性执行）。
+func (w *KnowledgeWorker) rebuildManticoreIndex(ctx context.Context) error {
+	chunks, err := w.knowledgeRepo.ListAllChunksForIndex(ctx)
+	if err != nil {
+		return err
+	}
+	byDoc := make(map[string][]domain.KnowledgeChunkDO, 16)
+	docOrder := make([]string, 0, 16)
+	for i := range chunks {
+		docULID := chunks[i].DocULID
+		if _, ok := byDoc[docULID]; !ok {
+			docOrder = append(docOrder, docULID)
+		}
+		byDoc[docULID] = append(byDoc[docULID], chunks[i])
+	}
+	for _, docULID := range docOrder {
+		if err := syncManticoreChunks(ctx, w.manticore, w.config.ManticoreTable, docULID, byDoc[docULID]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // syncManticoreChunks 先删后插全量同步某文档的切片全文行。

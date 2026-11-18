@@ -77,8 +77,11 @@ func MethodWhitelistMiddleware() gin.HandlerFunc {
 	}
 }
 
-// AuthMiddleware 校验 Bearer 令牌并注入用户 ULID；skipPaths 为免鉴权白名单。
-func AuthMiddleware(signer *JWTSigner, tokenStore TokenStore, skipPaths []string) gin.HandlerFunc {
+// UserStateChecker 校验用户当前是否可用（禁用/删除后立即失效，而非等令牌自然过期）。
+type UserStateChecker func(ctx context.Context, userULID string) (bool, error)
+
+// AuthMiddleware 校验 Bearer 令牌、用户状态并注入用户 ULID；skipPaths 为免鉴权白名单。
+func AuthMiddleware(signer *JWTSigner, tokenStore TokenStore, userStateChecker UserStateChecker, skipPaths []string) gin.HandlerFunc {
 	skipSet := make(map[string]bool, len(skipPaths))
 	for _, path := range skipPaths {
 		skipSet[path] = true
@@ -104,6 +107,24 @@ func AuthMiddleware(signer *JWTSigner, tokenStore TokenStore, skipPaths []string
 			c.Abort()
 			Fail(c, domain.RespCodeUnauthorized, "登录已失效")
 			return
+		}
+		if userStateChecker != nil {
+			active, err := userStateChecker(c.Request.Context(), userULID)
+			if err != nil {
+				Logger().Error("user_state_check_failed",
+					zap.String("request_id", c.GetString(ContextKeyRequestID)),
+					zap.String("user_ulid", userULID),
+					zap.Error(err),
+				)
+				c.Abort()
+				Fail(c, domain.RespCodeInternalError, "用户状态校验失败")
+				return
+			}
+			if !active {
+				c.Abort()
+				Fail(c, domain.RespCodeUnauthorized, "账号不存在或已被禁用")
+				return
+			}
 		}
 		c.Set(ContextKeyUserULID, userULID)
 		c.Next()

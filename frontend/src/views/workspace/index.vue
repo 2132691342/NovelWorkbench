@@ -99,6 +99,11 @@ function handleChapterRenamed(chapterUlid: string, chapterName: string): void {
   }
 }
 
+/** 新建章节后自动打开编辑器（创建成功即可拉取详情，无需等待目录重载） */
+function handleChapterCreated(chapterUlid: string): void {
+  void selectChapter(chapterUlid)
+}
+
 /** 删除的是当前章节时清空编辑器 */
 function handleChapterDeleted(chapterUlid: string): void {
   if (currentChapterDetail.value?.chapter_ulid === chapterUlid) {
@@ -119,9 +124,13 @@ function handleSaveSuccess(payload: {
       (item) => item.chapter_ulid === payload.chapter_ulid,
     )
     if (chapterItem) {
+      const wordDelta = payload.word_count - chapterItem.word_count
       chapterItem.chapter_name = payload.chapter_name
       chapterItem.word_count = payload.word_count
       chapterItem.chapter_status = payload.chapter_status
+      if (treeData.value) {
+        treeData.value.project_vo.total_word_count += wordDelta
+      }
       break
     }
   }
@@ -222,6 +231,7 @@ onMounted(() => {
           :current-chapter-ulid="currentChapterDetail?.chapter_ulid ?? ''"
           @select-chapter="selectChapter"
           @tree-changed="handleTreeChanged"
+          @chapter-created="handleChapterCreated"
           @chapter-renamed="handleChapterRenamed"
           @chapter-deleted="handleChapterDeleted"
         />

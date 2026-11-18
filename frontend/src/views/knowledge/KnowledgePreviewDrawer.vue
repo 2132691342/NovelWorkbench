@@ -106,7 +106,13 @@ async function loadPreview(): Promise<void> {
   previewLoading.value = true
   try {
     if (previewKind.value === 'text') {
-      previewText.value = await loadTextPreview(docUlid)
+      const blob = await loadOriginalBlob()
+      if (blob) {
+        previewText.value = await blob.text()
+      }
+      if (!previewText.value) {
+        previewText.value = await loadTextPreview(docUlid)
+      }
       previewError.value = previewText.value.length === 0
       return
     }

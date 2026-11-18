@@ -17,7 +17,15 @@
 docker build -t novel-workbench-backend:latest ./backend
 ```
 
-要点：`CGO_ENABLED=0` + `-tags "netgo osusergo"` 静态编译；运行层 alpine + CA 证书（访问 HTTPS 模型网关）+ 非 root 用户 `appuser`。
+要点：`CGO_ENABLED=0` + `-tags "netgo osusergo"` 静态编译；构建层固定 `GOTOOLCHAIN=local`，`go.mod` 声明 `go 1.24`，依赖下界必须全部 ≤ go1.24（gin v1.11 / gin-contrib-cors v1.7.6 / pgx v5.5 / minio-go v7.0.9 / go-redis v9.7 / x/crypto v0.40），勿升回 1.25+ 版本，否则镜像构建期报 `go.mod requires go >= 1.25`。运行层 alpine + CA 证书（访问 HTTPS 模型网关）+ 非 root 用户 `appuser`。
+
+基础镜像可用构建参数覆盖（适配国内镜像仓库）：
+
+```bash
+docker build --build-arg BASE_BUILDER_IMAGE=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/golang:1.24-alpine \
+           --build-arg BASE_RUNTIME_IMAGE=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/alpine:3.20 \
+           -t novel-workbench-backend:latest ./backend
+```
 
 前端：
 
@@ -51,7 +59,7 @@ docker compose --profile infra up -d --build
 | NW_APP_ADMIN_PASSWORD | 引导管理员初始密码（仅用户表为空时生效，首登后改密） |
 | NW_SERVER_PORT | 监听端口 |
 
-启动顺序：后端启动时 AutoMigrate 建表（含 `CREATE EXTENSION IF NOT EXISTS vector`），播种内置斜杠技能/默认配置/内置角色（admin/user），用户表为空时引导创建管理员（`admin` + `NW_APP_ADMIN_PASSWORD`）；并确保 MinIO 桶存在、Manticore 切片表存在；中间件不可达时 PG 失败即退出（fail fast），其余中间件降级为告警日志（上传/检索等功能返回 `ERR_STORAGE`，主链路不受影响）。
+启动顺序：后端启动时 AutoMigrate 建表（含 `CREATE EXTENSION IF NOT EXISTS vector`），播种内置斜杠技能/默认配置/内置角色（admin/user），用户表为空时引导创建管理员（`admin` + `NW_APP_ADMIN_PASSWORD`）；并确保 MinIO 桶存在、Manticore 切片表存在。Manticore 表结构含 CJK ngram（`ngram_len=1` + `ngram_chars=cjk`）；检测到旧结构时自动重建并从 PG 切片回灌全文索引。中间件不可达时 PG 失败即退出（fail fast），其余中间件降级为告警日志（上传/检索等功能返回 `ERR_STORAGE`，主链路不受影响）。
 
 ## 4. podman 部署（云主机）
 
@@ -91,7 +99,7 @@ bash deploy.sh
 
 | 工作流 | 触发 | 内容 |
 | --- | --- | --- |
-| .github/workflows/ci.yml | push/PR 到 main | 后端 `go vet` + `go build`(CGO_ENABLED=0) + `go test -short`；前端 `npm ci` + `vue-tsc` + `vite build`；两端镜像构建验证 |
+| .github/workflows/ci.yml | push/PR 到 main | 后端 `GOTOOLCHAIN=local` + `go vet` + `go build`(CGO_ENABLED=0) + `go test -short`；前端 `npm ci` + `vue-tsc` + `vite build`；两端镜像构建验证（与 `go.mod` 的 1.24.1 工具链一致，禁止构建期自动升级） |
 | .github/workflows/release.yml | 推送 `v*` tag | 构建前后端镜像并推送 GHCR（`ghcr.io/<repo>/backend|frontend:<tag>`） |
 
 发布步骤：
