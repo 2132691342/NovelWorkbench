@@ -80,9 +80,10 @@ type ManticoreConfig struct {
 	TableChunks string `yaml:"table_chunks" mapstructure:"table_chunks"` // 切片全文表名
 }
 
-// AIConfig 模型网关配置（OpenAI 兼容）。
+// AIConfig 模型网关配置（仅作为供应商表的出厂默认：为空时播种一条默认供应商）。
 type AIConfig struct {
-	BaseURL        string  `yaml:"base_url" mapstructure:"base_url"`               // OpenAI 兼容网关地址
+	ProtocolCode   string  `yaml:"protocol_code" mapstructure:"protocol_code"`     // 协议：openai/anthropic
+	BaseURL        string  `yaml:"base_url" mapstructure:"base_url"`               // 网关地址（OpenAI 含 /v1；Anthropic 为根地址）
 	APIKey         string  `yaml:"api_key" mapstructure:"api_key"`                 // API Key
 	ChatModel      string  `yaml:"chat_model" mapstructure:"chat_model"`           // 对话模型名
 	EmbeddingModel string  `yaml:"embedding_model" mapstructure:"embedding_model"` // 向量模型名
@@ -100,6 +101,7 @@ type AppConfig struct {
 	ChunkOverlap  int    `yaml:"chunk_overlap" mapstructure:"chunk_overlap"`   // 切片重叠字符数
 	RAGTopK       int    `yaml:"rag_top_k" mapstructure:"rag_top_k"`           // RAG 默认召回条数
 	AdminPassword string `yaml:"admin_password" mapstructure:"admin_password"` // 引导管理员初始密码（仅用户表为空时生效）
+	BuildVersion  string `yaml:"build_version" mapstructure:"build_version"`   // 构建版本（发布时注入，缺省 dev）
 }
 
 // LoadConfig 加载 YAML 配置并施加 NW_ 前缀环境变量覆盖（如 postgres.host → NW_POSTGRES_HOST）。
@@ -139,6 +141,12 @@ func (c *Config) validate() error {
 	}
 	if c.AI.BaseURL == "" || c.AI.ChatModel == "" {
 		return fmt.Errorf("ai.base_url/chat_model is required")
+	}
+	if c.AI.ProtocolCode == "" {
+		c.AI.ProtocolCode = "openai" // 默认 OpenAI 兼容协议
+	}
+	if c.App.BuildVersion == "" {
+		c.App.BuildVersion = "dev" // 未注入构建版本时的兜底
 	}
 	if c.Server.Port == 0 {
 		c.Server.Port = 8080 // 默认端口

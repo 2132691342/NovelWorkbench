@@ -3,7 +3,7 @@
   发送走 SSE（composables/useSSE），done 后消息展示 AI 依据与插入到章节。
 -->
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import {
@@ -12,6 +12,7 @@ import {
   getChatHistory,
   listChatSessions,
 } from '@/api/chat'
+import { getChatOptions, type NWModelCapabilityVo, type NWModelProviderVo } from '@/api/model'
 import { useSSE } from '@/composables/useSSE'
 import type {
   NWChapterBriefVo,
@@ -46,6 +47,14 @@ const sessionList = ref<NWChatSessionVo[]>([])
 const currentSessionUlid = ref('')
 const messageList = ref<NWChatDisplayMessage[]>([])
 const historyLoading = ref(false)
+const providerList = ref<NWModelProviderVo[]>([])
+const capabilityVo = ref<NWModelCapabilityVo | null>(null)
+const selectedProviderUlid = ref('')
+
+/** 可选对话供应商（仅启用的） */
+const chatProviderOptions = computed(() =>
+  providerList.value.filter((providerItem) => providerItem.enabled_flag),
+)
 
 /** 组装 /chat/send 请求体 */
 function buildStreamRequest(payload: NWChatSendPayload): NWChatSendReqVo {
@@ -64,7 +73,25 @@ function buildStreamRequest(payload: NWChatSendPayload): NWChatSendReqVo {
   if (payload.ref_chapter_ulid_list.length > 0) {
     request.ref_chapter_ulid_list = payload.ref_chapter_ulid_list
   }
+  if (selectedProviderUlid.value) {
+    request.provider_ulid = selectedProviderUlid.value
+  }
   return request
+}
+
+/** 加载模型供应商与能力（失败降级为空，面板照常可用） */
+async function loadModelOptions(): Promise<void> {
+  try {
+    const options = await getChatOptions()
+    providerList.value = Array.isArray(options.provider_list) ? options.provider_list : []
+    capabilityVo.value = options.capability_vo
+    if (!selectedProviderUlid.value && options.capability_vo.default_provider_ulid) {
+      selectedProviderUlid.value = options.capability_vo.default_provider_ulid
+    }
+  } catch {
+    providerList.value = []
+    capabilityVo.value = null
+  }
 }
 
 /**
@@ -260,16 +287,48 @@ watch(
     scrollMessagesToBottom()
   },
 )
+
+onMounted(() => {
+  void loadModelOptions()
+})
 </script>
 
 <template>
   <div class="ai-panel">
     <header class="ai-panel__header">
       <span class="ai-panel__title">{{ t('workspace.ai.title') }}</span>
+      <el-select
+        v-if="chatProviderOptions.length > 0"
+        v-model="selectedProviderUlid"
+        size="small"
+        class="ai-panel__model-select"
+        :placeholder="t('workspace.ai.modelPlaceholder')"
+      >
+        <el-option
+          v-for="providerItem in chatProviderOptions"
+          :key="providerItem.provider_ulid"
+          :value="providerItem.provider_ulid"
+          :label="`${providerItem.provider_name} / ${providerItem.chat_model_name}`"
+        />
+      </el-select>
       <NWButton size="small" type="primary" @click="handleCreateSession">
         {{ t('workspace.ai.sessionCreate') }}
       </NWButton>
     </header>
+
+    <!-- 能力提示：未配置供应商 / 无向量模型时给出可操作指引 -->
+    <div v-if="capabilityVo && !capabilityVo.chat_ready" class="ai-panel__notice is-down">
+      {{ t('workspace.ai.noProviderTip') }}
+      <router-link to="/models" class="ai-panel__notice-link">
+        {{ t('workspace.ai.goConfigure') }}
+      </router-link>
+    </div>
+    <div
+      v-else-if="capabilityVo && capabilityVo.chat_ready && !capabilityVo.embedding_ready"
+      class="ai-panel__notice is-degraded"
+    >
+      {{ t('workspace.ai.noEmbeddingTip') }}
+    </div>
 
     <!-- 会话列表 -->
     <div class="ai-panel__sessions">
@@ -349,6 +408,38 @@ watch(
   font-size: 14px;
   font-weight: 600;
   color: var(--text-main);
+}
+
+.ai-panel__model-select {
+  width: 150px;
+}
+
+.ai-panel__notice {
+  padding: 8px 10px;
+  border-radius: var(--radius-base);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ai-panel__notice.is-down {
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+
+.ai-panel__notice.is-degraded {
+  background-color: #fffbeb;
+  color: #b45309;
+}
+
+.ai-panel__notice-link {
+  margin-left: 6px;
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.ai-panel__notice-link:hover {
+  text-decoration: underline;
 }
 
 .ai-panel__sessions {

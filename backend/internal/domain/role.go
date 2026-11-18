@@ -6,6 +6,9 @@ const (
 	PermUserManage = "system:user:manage" // 用户管理
 	PermRoleManage = "system:role:manage" // 角色管理
 	PermAuditRead  = "system:audit:read"  // 审计日志查看
+	PermModelManage = "system:model:manage" // 模型供应商管理
+	PermUsageRead   = "system:usage:read"   // 用量分析查看
+	PermSystemRead  = "system:status:read"  // 运行状态查看
 )
 
 // 内置角色编码常量。

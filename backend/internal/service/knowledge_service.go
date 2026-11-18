@@ -46,13 +46,14 @@ type KnowledgeService struct {
 	jobRepo       *repo.JobRepo
 	projectRepo   *repo.ProjectRepo
 	aiClient      *ai.Client
+	providerSvc   *ModelProviderService
 	manticore     *infra.ManticoreClient
 	db            *gorm.DB
 	config        KnowledgeIndexConfig
 }
 
 // NewKnowledgeService 构造知识库服务。
-func NewKnowledgeService(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo, jobRepo *repo.JobRepo, projectRepo *repo.ProjectRepo, aiClient *ai.Client, manticore *infra.ManticoreClient, db *gorm.DB, config KnowledgeIndexConfig) *KnowledgeService {
+func NewKnowledgeService(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo, jobRepo *repo.JobRepo, projectRepo *repo.ProjectRepo, aiClient *ai.Client, providerSvc *ModelProviderService, manticore *infra.ManticoreClient, db *gorm.DB, config KnowledgeIndexConfig) *KnowledgeService {
 	return &KnowledgeService{
 		knowledgeRepo: knowledgeRepo,
 		objectRepo:    objectRepo,
@@ -60,6 +61,7 @@ func NewKnowledgeService(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.Obj
 		jobRepo:       jobRepo,
 		projectRepo:   projectRepo,
 		aiClient:      aiClient,
+		providerSvc:   providerSvc,
 		manticore:     manticore,
 		db:            db,
 		config:        config,
@@ -248,9 +250,17 @@ func (s *KnowledgeService) GetContent(ctx context.Context, userULID string, req 
 	return domain.KnowledgeContentDTO{DocName: doc.DocName, DocTypeCode: doc.DocTypeCode, ContentBytes: contentBytes}, nil
 }
 
-// searchVectorChannel 向量通道：查询文本向量化后按 pgvector 余弦距离召回。
+// searchVectorChannel 向量通道：按可用向量供应商把查询文本向量化后，用 pgvector 余弦距离召回。
+// 未配置向量模型时返回明确错误，由上层按模式降级（hybrid 自动退回关键词通道）。
 func (s *KnowledgeService) searchVectorChannel(ctx context.Context, req *domain.KnowledgeSearchREQ, topK int) ([]domain.KnowledgeChunkVO, error) {
-	vectors, err := s.aiClient.Embed(ctx, []string{req.QueryText})
+	spec, available, err := s.providerSvc.EmbeddingSpec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !available {
+		return nil, pkg.NewBizError(domain.RespCodeAIProviderError, "未配置可用的向量模型，暂时无法使用语义检索")
+	}
+	vectors, err := s.aiClient.Embed(ctx, spec, []string{req.QueryText})
 	if err != nil {
 		return nil, pkg.WrapBizError(domain.RespCodeAIProviderError, "查询向量化失败", err)
 	}

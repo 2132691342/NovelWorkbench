@@ -74,6 +74,7 @@ type ChatService struct {
 	settingRepo      *repo.SettingRepo
 	slashService     *SlashService
 	knowledgeService *KnowledgeService
+	providerSvc      *ModelProviderService
 	aiClient         *ai.Client
 	db               *gorm.DB
 	config           ChatConfig
@@ -82,12 +83,13 @@ type ChatService struct {
 // NewChatService 构造对话服务。
 func NewChatService(chatRepo *repo.ChatRepo, projectRepo *repo.ProjectRepo, chapterRepo *repo.ChapterRepo,
 	characterRepo *repo.CharacterRepo, knowledgeRepo *repo.KnowledgeRepo, settingRepo *repo.SettingRepo,
-	slashService *SlashService, knowledgeService *KnowledgeService, aiClient *ai.Client,
-	db *gorm.DB, config ChatConfig) *ChatService {
+	slashService *SlashService, knowledgeService *KnowledgeService, providerSvc *ModelProviderService,
+	aiClient *ai.Client, db *gorm.DB, config ChatConfig) *ChatService {
 	return &ChatService{
 		chatRepo: chatRepo, projectRepo: projectRepo, chapterRepo: chapterRepo,
 		characterRepo: characterRepo, knowledgeRepo: knowledgeRepo, settingRepo: settingRepo,
-		slashService: slashService, knowledgeService: knowledgeService, aiClient: aiClient,
+		slashService: slashService, knowledgeService: knowledgeService,
+		providerSvc: providerSvc, aiClient: aiClient,
 		db: db, config: config,
 	}
 }
@@ -213,12 +215,16 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		}
 	}
 	messages := buildChatMessages(project.StyleText, assembledText, instructionText, historyList)
+	providerSpec, err := s.providerSvc.ChatSpecOf(ctx, req.ProviderULID)
+	if err != nil {
+		return err // 供应商不可用：流未开始，api 层输出 JSON 包络
+	}
 	events := &chatEventWriter{
 		writer:      writer,
 		sessionULID: session.SessionULID,
 		messageULID: pkg.NewULID(domain.IDPrefixMessage),
 	}
-	replyText, completed := s.streamChat(ctx, events, messages)
+	replyText, completed := s.streamChat(ctx, events, messages, providerSpec, countMessagesRunes(messages))
 	if !completed {
 		return nil // 客户端断开或生成失败：不落 assistant 消息，用户消息保留对话痕迹
 	}
@@ -251,11 +257,13 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 
 // streamChat 消费模型流并转发 chunk 事件（15s 无输出发心跳，客户端断开即中止）。
 // completed=false 表示客户端断开或生成失败（生成失败已发 error 事件）。
-func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter, messages []*schema.Message) (string, bool) {
-	stream, err := s.aiClient.ChatStream(ctx, messages)
+func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter,
+	messages []*schema.Message, providerSpec ai.ProviderSpec, promptRunes int) (string, bool) {
+	startedAt := time.Now()
+	stream, err := s.aiClient.Stream(ctx, providerSpec, messages)
 	if err != nil {
 		pkg.SLogger().Errorw("模型流式生成启动失败", "error", err)
-		_ = events.emit(domain.StreamEventError, "", "AI 生成启动失败，请稍后重试", nil)
+		_ = events.emit(domain.StreamEventError, "", "AI 生成启动失败："+err.Error(), nil)
 		return "", false
 	}
 	defer stream.Close()
@@ -279,36 +287,57 @@ func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter, m
 		}
 	}()
 	var reply strings.Builder
+	var lastChunk *schema.Message
 	pingTimer := time.NewTimer(chatPingInterval)
 	defer pingTimer.Stop()
+	finish := func(completed bool) (string, bool) {
+		// 流结束补记 token 用量（首包已按成功调用计次）
+		usage := &schema.TokenUsage{
+			PromptTokens:     promptRunes,
+			CompletionTokens: utf8.RuneCountInString(reply.String()),
+		}
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+		if lastChunk != nil && lastChunk.ResponseMeta != nil && lastChunk.ResponseMeta.Usage != nil {
+			usage = lastChunk.ResponseMeta.Usage
+		}
+		s.aiClient.RecordStreamUsage(providerSpec, usage, time.Since(startedAt))
+		if !completed {
+			return "", false
+		}
+		return reply.String(), true
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return "", false // 客户端断开：中止生成并停止落库
+			return finish(false) // 客户端断开：中止生成并停止落库
 		case item, ok := <-items:
 			if !ok {
-				return "", false
+				return finish(false)
 			}
 			if item.err != nil {
 				if errors.Is(item.err, io.EOF) {
-					return reply.String(), true
+					return finish(true)
 				}
 				pkg.SLogger().Errorw("模型流式生成失败", "error", item.err)
 				_ = events.emit(domain.StreamEventError, "", "AI 生成失败，请稍后重试", nil)
-				return "", false
+				return finish(false)
 			}
-			if item.chunk == nil || item.chunk.Content == "" {
+			if item.chunk == nil {
+				continue
+			}
+			lastChunk = item.chunk
+			if item.chunk.Content == "" {
 				continue
 			}
 			reply.WriteString(item.chunk.Content)
 			if err := events.emit(domain.StreamEventChunk, item.chunk.Content, "", nil); err != nil {
 				pkg.SLogger().Warnw("SSE 事件写入失败，中止生成", "error", err)
-				return "", false
+				return finish(false)
 			}
 			resetTimer(pingTimer)
 		case <-pingTimer.C:
 			if err := events.writer.Ping(); err != nil {
-				return "", false
+				return finish(false)
 			}
 			pingTimer.Reset(chatPingInterval)
 		}

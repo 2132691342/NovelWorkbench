@@ -144,6 +144,19 @@ func (r *KnowledgeRepo) InsertChunkWithVector(ctx context.Context, do *domain.Kn
 	return nil
 }
 
+// InsertChunkTextOnly 插入不含向量的切片（未配置向量模型时仅建关键词索引）。
+func (r *KnowledgeRepo) InsertChunkTextOnly(ctx context.Context, do *domain.KnowledgeChunkDO) error {
+	sql := `INSERT INTO knowledge_chunks (chunk_ulid, doc_ulid, project_ulid, chunk_index, chunk_text, token_count, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`
+	err := r.db.WithContext(ctx).Exec(sql,
+		do.ChunkULID, do.DocULID, do.ProjectULID, do.ChunkIndex, do.ChunkText, do.TokenCount,
+	).Error
+	if err != nil {
+		return fmt.Errorf("insert knowledge chunk without vector: %w", err)
+	}
+	return nil
+}
+
 // SearchByVector 按 pgvector 余弦距离召回最近切片（向量字面量在仓储内拼接，可限定文档范围）。
 func (r *KnowledgeRepo) SearchByVector(ctx context.Context, projectULID string, vector []float32, limit int, docULIDs []string) ([]domain.KnowledgeChunkVO, error) {
 	sql := `SELECT c.chunk_ulid, c.doc_ulid, d.doc_name, c.chunk_index, c.chunk_text
@@ -155,6 +168,7 @@ func (r *KnowledgeRepo) SearchByVector(ctx context.Context, projectULID string, 
 		sql += ` AND c.doc_ulid IN ?`
 		args = append(args, docULIDs)
 	}
+	sql += ` AND c.embedding_vec IS NOT NULL`
 	sql += fmt.Sprintf(` ORDER BY c.embedding_vec <=> '%s' LIMIT %d`, vectorLiteral(vector), limit)
 	var vos []domain.KnowledgeChunkVO
 	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&vos).Error; err != nil {

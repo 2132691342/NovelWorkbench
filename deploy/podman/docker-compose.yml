@@ -23,11 +23,13 @@ services:
       NW_MINIO_ACCESS_KEY: ${NW_MINIO_ACCESS_KEY:?未设置对象存储账号}
       NW_MINIO_SECRET_KEY: ${NW_MINIO_SECRET_KEY:?未设置对象存储口令}
       NW_MANTICORE_BASE_URL: http://manticore:9308
+      NW_AI_PROTOCOL_CODE: ${NW_AI_PROTOCOL_CODE:-openai}
       NW_AI_BASE_URL: ${NW_AI_BASE_URL:?未设置模型网关地址}
       NW_AI_API_KEY: ${NW_AI_API_KEY:?未设置模型网关密钥}
       NW_AI_CHAT_MODEL: ${NW_AI_CHAT_MODEL:?未设置对话模型}
-      NW_AI_EMBEDDING_MODEL: ${NW_AI_EMBEDDING_MODEL:?未设置向量模型}
+      NW_AI_EMBEDDING_MODEL: ${NW_AI_EMBEDDING_MODEL:-}
       NW_APP_ADMIN_PASSWORD: ${NW_APP_ADMIN_PASSWORD:?未设置引导管理员密码}
+      NW_APP_BUILD_VERSION: ${NW_APP_BUILD_VERSION:-dev}
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:

@@ -41,7 +41,10 @@ manticore:
   table_chunks: "nw_chunks"
 
 ai:
-  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"  # OpenAI 兼容网关
+  # 以下为"出厂默认供应商"：仅在 model_providers 表为空时播种一条记录，
+  # 之后请在「模型供应商」页面维护（支持 OpenAI 兼容 / Anthropic 双协议、多供应商、连通性测试）。
+  protocol_code: "openai"   # openai / anthropic
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"  # OpenAI 兼容需含 /v1；Anthropic 填根地址
   api_key: "sk-your-api-key"
   chat_model: "qwen-plus"
   embedding_model: "text-embedding-v3"
@@ -53,6 +56,7 @@ ai:
 
 app:
   upload_max_mb: 20
+  build_version: "dev"      # 运行状态页展示的构建版本（发布时用 NW_APP_BUILD_VERSION 注入）
   chunk_size: 800           # 知识库切片字符数
   chunk_overlap: 120        # 切片重叠字符数
   rag_top_k: 6              # RAG 默认召回条数

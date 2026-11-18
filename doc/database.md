@@ -27,6 +27,8 @@
 | jobs | 异步任务 | JOB_ | 队列任务落库凭据 |
 | app_settings | 应用配置 | SET_ | 运行时 KV 配置 |
 | word_count_stats | 字数统计 | WCS_ | 每日字数增量 |
+| model_providers | 模型供应商 | MPR_ | 协议/网关/密钥密文/模型名 |
+| model_usage_stats | 模型用量 | MUS_ | 日 × 供应商 × 模型 × 调用类型聚合 |
 
 ## 2. 核心表结构
 
@@ -168,6 +170,45 @@
 | jobs | job_ulid(PK)、job_type_code(INDEX)、payload_json、job_status_code(INDEX)、retry_count、error_message | 队列任务留痕（queued/running/success/failed） |
 | app_settings | setting_ulid(PK)、setting_key(UNIQUE)、setting_value、setting_desc | 运行时配置（如历史注入条数） |
 | word_count_stats | word_stat_ulid(PK)、project_ulid(INDEX)、stat_date(INDEX)、word_delta、ai_word_delta | 每日字数增量，ECharts 数据源 |
+
+### model_providers
+
+| 字段 | 类型 | 约束 | 说明 |
+| --- | --- | --- | --- |
+| provider_ulid | varchar(40) | PK | 供应商 ULID（MPR_） |
+| provider_name | varchar(64) | | 供应商名称（展示） |
+| protocol_code | varchar(16) | INDEX | openai / anthropic |
+| base_url | varchar(256) | | OpenAI 兼容含 `/v1`；Anthropic 为根地址 |
+| api_key_cipher | varchar(512) | | AES-256-GCM 密文（`json:"-"`，永不输出） |
+| chat_model_name | varchar(128) | | 对话模型名 |
+| embedding_model_name | varchar(128) | | 向量模型名（空 = 不提供向量） |
+| embedding_dim | int | | 向量维度（默认 1024，与 `knowledge_chunks.embedding_vec` 一致） |
+| temperature / max_tokens | float8 / int | | 采样温度、输出上限 |
+| enabled_flag | boolean | | 是否启用 |
+| default_flag | boolean | INDEX | 默认供应商（服务层保证全局唯一） |
+| sort_order | int | | 排序号 |
+| remark_text | varchar(256) | | 备注 |
+| last_test_status_code | varchar(16) | | untested/success/failed |
+| last_test_message | varchar(512) | | 最近测试结论（含向量通道结论） |
+| last_test_at_ms | bigint | | 最近测试时间（毫秒） |
+
+启动期若供应商表为空，按 `ai.*` 配置播种一条默认供应商（"出厂默认"，之后全在页面上管理）。
+
+### model_usage_stats
+
+| 字段 | 类型 | 约束 | 说明 |
+| --- | --- | --- | --- |
+| usage_stat_ulid | varchar(40) | PK | 统计 ULID（MUS_） |
+| stat_date | varchar(10) | 联合唯一 | 统计日期 YYYY-MM-DD |
+| provider_ulid | varchar(40) | 联合唯一 | 供应商 ULID |
+| provider_name | varchar(64) | | 供应商名称快照（防改名丢历史） |
+| model_name | varchar(128) | 联合唯一 | 模型名 |
+| call_type_code | varchar(16) | 联合唯一 | chat / embedding |
+| call_count / success_count / fail_count | bigint | | 调用、成功、失败计数 |
+| prompt_tokens / completion_tokens / total_tokens | bigint | | token 累计（流式结束后补记真实 usage，缺省按字数估算） |
+| latency_ms_sum | bigint | | 耗时累计（查询时除以 call_count 得均值） |
+
+唯一索引 `uk_mus_dim(stat_date, provider_ulid, model_name, call_type_code)`；写入为内存缓冲 5 秒聚合后 `ON CONFLICT DO UPDATE` 累加，避免高频小请求写放大。
 
 ## 3. 非关系存储
 

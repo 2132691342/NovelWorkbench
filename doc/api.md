@@ -137,6 +137,7 @@ ProjectTreeVO：`project_vo + volume_list[]`，每个卷节点含 `volume_vo + c
 | ref_chapter_ulid_list | []string | @引用章节 |
 | ref_message_ulid_list | []string | 显式引用历史消息 |
 | history_count | int | 历史注入条数，0 用全局配置（默认 5） |
+| provider_ulid | string | 指定供应商，空用默认供应商 |
 
 SSE 事件体（ChatStreamEventDTO）：
 
@@ -169,7 +170,36 @@ SlashParseDTO：`{ "skill_code": "continue", "remainder_text": "以林澈视角"
 
 StatsOverviewVO：`project_count / total_word_count / today_word_delta / ai_word_total / trend_list[]`（近 30 天：`stat_date / word_delta / ai_word_delta`）。
 
-## 8. 系统管理（用户 / 角色 / 审计）
+## 8. 模型生态（供应商 / 能力 / 用量 / 运行状态）
+
+模型调用一律按「供应商」解析：一个供应商 = 协议 + 网关地址 + 密钥 + 对话模型 +（可选）向量模型。
+支持两种协议：`openai`（OpenAI 兼容，含 embeddings）与 `anthropic`（Anthropic 原生，仅对话）。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | /model/capability | 登录即可 | 当前 AI 能力探测 → ModelCapabilityVO |
+| GET | /model/chat_options | 登录即可 | AI 面板选项：`{ capability_vo, provider_list }` |
+| POST | /model/provider/list | 登录即可 | 供应商列表 → []ModelProviderVO（密钥仅掩码） |
+| POST | /model/provider/save | system:model:manage | 新建/更新供应商（ModelProviderREQ） |
+| POST | /model/provider/delete | system:model:manage | 删除供应商（默认供应商需先切换） |
+| POST | /model/provider/test | system:model:manage | 连通性测试 → ModelProviderTestDTO（结果回写记录） |
+| GET | /model/usage/overview?from_date=&to_date= | system:usage:read | 用量总览 → ModelUsageOverviewVO（缺省近 14 天） |
+| GET | /system/status | system:status:read | 运行状态 → SystemStatusVO（依赖并发探测） |
+
+ModelProviderREQ 关键字段：`provider_ulid? / provider_name / protocol_code / base_url / api_key_text?（空=保持原密钥） / chat_model_name / embedding_model_name? / embedding_dim? / temperature? / max_tokens? / enabled_flag? / default_flag? / sort_order? / remark_text?`。
+
+- 密钥以 AES-256-GCM 封存（材料由 JWT 密钥派生），落库只存密文；VO 仅返回 `api_key_masked` 与 `api_key_configured`。
+- `default_flag` 全局唯一：设为默认时服务层先清除其他记录的默认标记。
+- Anthropic 协议的 `base_url` 填根地址（SDK 自行拼 `/v1/messages`）；保存时若带 `/v1` 后缀会被自动去除。
+- 向量能力判定：仅 `protocol_code=openai` 且 `embedding_model_name` 非空可用；无可用向量供应商时知识库降级为关键词检索（不伪造向量）。
+
+ModelProviderTestDTO：`status_code（success/failed） / message_text / latency_ms / reply_text / embedding_status（ready/not_configured/failed）`。
+
+ModelUsageOverviewVO：`call_count_total / fail_count_total / total_tokens_total / avg_latency_ms / success_rate_value / daily_list[] / provider_list[] / model_list[]`；趋势缺日自动补零。用量在内存缓冲 5 秒聚合后落库（`model_usage_stats` 唯一维度：日期 × 供应商 × 模型 × 调用类型）。
+
+SystemStatusVO：`server_started_at_ms / server_uptime_sec / go_version_text / build_version_text / chat_ready / embedding_ready / hint_text / dependency_list[]`，依赖项状态取 `up/down/degraded`（未配置的依赖为 degraded）。
+
+## 9. 系统管理（用户 / 角色 / 审计）
 
 全部要求登录态 + 权限码（`RequirePermMiddleware` 收口，缺失返回 `ERR_FORBIDDEN`）：
 
@@ -178,6 +208,9 @@ StatsOverviewVO：`project_count / total_word_count / today_word_delta / ai_word
 | system:user:manage | /admin/user/* |
 | system:role:manage | /admin/role/* |
 | system:audit:read | /admin/audit/list |
+| system:model:manage | /model/provider/save、/model/provider/delete、/model/provider/test |
+| system:usage:read | /model/usage/overview |
+| system:status:read | /system/status |
 
 内置角色：`admin`（权限 `["*"]` 通配全部）、`user`（无管理权限）。业务接口对所有登录用户开放。
 

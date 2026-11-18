@@ -23,11 +23,13 @@ services:
       NW_MINIO_ACCESS_KEY: ${NW_MINIO_ACCESS_KEY:-minioadmin}
       NW_MINIO_SECRET_KEY: ${NW_MINIO_SECRET_KEY:-minioadminpublic}
       NW_MANTICORE_BASE_URL: ${NW_MANTICORE_BASE_URL:-http://47.108.73.153:9308}
+      NW_AI_PROTOCOL_CODE: ${NW_AI_PROTOCOL_CODE:-openai}
       NW_AI_BASE_URL: ${NW_AI_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       NW_AI_API_KEY: ${NW_AI_API_KEY:-sk-your-api-key}
       NW_AI_CHAT_MODEL: ${NW_AI_CHAT_MODEL:-qwen-plus}
       NW_AI_EMBEDDING_MODEL: ${NW_AI_EMBEDDING_MODEL:-text-embedding-v3}
       NW_APP_ADMIN_PASSWORD: ${NW_APP_ADMIN_PASSWORD:-Admin@123456}
+      NW_APP_BUILD_VERSION: ${NW_APP_BUILD_VERSION:-dev}
     ports:
       - "8080:8080"
     healthcheck:

@@ -36,19 +36,21 @@ type KnowledgeWorker struct {
 	mqRepo        *repo.MQRepo
 	jobRepo       *repo.JobRepo
 	aiClient      *ai.Client
+	providerSvc   *ModelProviderService
 	manticore     *infra.ManticoreClient
 	db            *gorm.DB
 	config        KnowledgeIndexConfig
 }
 
 // NewKnowledgeWorker 构造知识库索引 worker。
-func NewKnowledgeWorker(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo, jobRepo *repo.JobRepo, aiClient *ai.Client, manticore *infra.ManticoreClient, db *gorm.DB, config KnowledgeIndexConfig) *KnowledgeWorker {
+func NewKnowledgeWorker(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo, jobRepo *repo.JobRepo, aiClient *ai.Client, providerSvc *ModelProviderService, manticore *infra.ManticoreClient, db *gorm.DB, config KnowledgeIndexConfig) *KnowledgeWorker {
 	return &KnowledgeWorker{
 		knowledgeRepo: knowledgeRepo,
 		objectRepo:    objectRepo,
 		mqRepo:        mqRepo,
 		jobRepo:       jobRepo,
 		aiClient:      aiClient,
+		providerSvc:   providerSvc,
 		manticore:     manticore,
 		db:            db,
 		config:        config,
@@ -148,27 +150,41 @@ func (w *KnowledgeWorker) indexDocument(ctx context.Context, doc *domain.Knowled
 	if len(pieces) == 0 {
 		return fmt.Errorf("文档内容为空，无法建立索引")
 	}
-	vectors, err := w.aiClient.Embed(ctx, pieces)
-	if err != nil {
-		return pkg.WrapBizError(domain.RespCodeAIProviderError, "切片向量化失败", err)
-	}
-	if len(vectors) != len(pieces) {
-		return fmt.Errorf("向量数量与切片数量不一致: %d != %d", len(vectors), len(pieces))
+	// 向量模型缺失或调用失败时只建关键词索引：文档仍可被全文检索，语义通道待配置后重投即可
+	embeddingSpec, embeddingAvailable, specErr := w.providerSvc.EmbeddingSpec(ctx)
+	var vectors [][]float32
+	if specErr != nil {
+		pkg.SLogger().Warnw("向量供应商解析失败，本次仅建关键词索引", "doc_ulid", doc.DocULID, "error", specErr)
+	} else if !embeddingAvailable {
+		pkg.SLogger().Warnw("未配置向量模型，本次仅建关键词索引", "doc_ulid", doc.DocULID)
+	} else {
+		embedded, embedErr := w.aiClient.Embed(ctx, embeddingSpec, pieces)
+		if embedErr != nil {
+			pkg.SLogger().Warnw("切片向量化失败，本次仅建关键词索引", "doc_ulid", doc.DocULID, "error", embedErr)
+		} else if len(embedded) != len(pieces) {
+			pkg.SLogger().Warnw("向量数量与切片数量不一致，本次仅建关键词索引",
+				"doc_ulid", doc.DocULID, "vector_count", len(embedded), "chunk_count", len(pieces))
+		} else {
+			vectors = embedded
+		}
 	}
 	chunks := make([]domain.KnowledgeChunkDO, 0, len(pieces))
 	var totalTokenCount int64
 	for i, piece := range pieces {
 		tokenCount := int(pkg.CountWords(piece))
 		totalTokenCount += int64(tokenCount)
-		chunks = append(chunks, domain.KnowledgeChunkDO{
-			ChunkULID:    pkg.NewULID(domain.IDPrefixChunk),
-			DocULID:      doc.DocULID,
-			ProjectULID:  doc.ProjectULID,
-			ChunkIndex:   i,
-			ChunkText:    piece,
-			TokenCount:   tokenCount,
-			EmbeddingVec: vectors[i],
-		})
+		chunkDO := domain.KnowledgeChunkDO{
+			ChunkULID:   pkg.NewULID(domain.IDPrefixChunk),
+			DocULID:     doc.DocULID,
+			ProjectULID: doc.ProjectULID,
+			ChunkIndex:  i,
+			ChunkText:   piece,
+			TokenCount:  tokenCount,
+		}
+		if vectors != nil {
+			chunkDO.EmbeddingVec = vectors[i]
+		}
+		chunks = append(chunks, chunkDO)
 	}
 	if err := repo.WithTx(w.db, func(tx *gorm.DB) error {
 		txKnowledge := repo.NewKnowledgeRepo(tx)
@@ -176,6 +192,12 @@ func (w *KnowledgeWorker) indexDocument(ctx context.Context, doc *domain.Knowled
 			return err
 		}
 		for i := range chunks {
+			if vectors == nil {
+				if err := txKnowledge.InsertChunkTextOnly(ctx, &chunks[i]); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := txKnowledge.InsertChunkWithVector(ctx, &chunks[i]); err != nil {
 				return err
 			}

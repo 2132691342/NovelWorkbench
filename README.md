@@ -7,15 +7,18 @@ AI 小说创作工作台：前后端分离、容器化交付。以"项目—卷�
 | 模块 | 说明 |
 | --- | --- |
 | 写作工作台 | 卷/章目录树、正文编辑（CodeMirror）、字数实时统计、快照留档与回滚、XLSX 大纲导出 |
-| AI 助手 | SSE 流式对话；内置 9 个斜杠技能（续写/大纲/润色/扩写/缩写/梗概/审稿/取名/设定问答）+ 自定义技能；@引用文档与章节；最近 N 条历史注入（可配置） |
-| 知识库 | 文档上传（txt/md/docx/pdf）、异步切片+向量化+全文索引（Manticore CJK ngram）、RRF 混合检索、原文预览、召回依据随回复展示 |
-| 设定管理 | 角色卡、角色关系图（AntV X6）、世界观设定条目 |
+| AI 助手 | SSE 流式对话；内置 9 个斜杠技能（续写/大纲/润色/扩写/缩写/梗概/审稿/取名/设定问答）+ 自定义技能；@引用文档与章节；最近 N 条历史注入（可配置）；可按供应商切换模型 |
+| 模型生态 | 多供应商管理（OpenAI 兼容 / Anthropic 双协议）；密钥 AES-256-GCM 加密存储、仅回显掩码；一键连通性测试（对话 + 向量通道）；默认供应商唯一；AI 能力就绪提示 |
+| 知识库 | 文档上传（txt/md/docx/pdf）、异步切片+向量化+全文索引（Manticore CJK ngram）、RRF 混合检索、原文预览、召回依据随回复展示；无向量模型时自动降级为关键词检索 |
+| 设定管理 | 角色卡、角色关系图（AntV X6）、世界观设定（分类/搜索/编辑）、创作笔记 |
+| 项目导航 | 侧边栏项目切换器 + 项目内直达（写作台/角色/设定/知识库/笔记），登录后无需回仪表盘找入口 |
 | 数据总览 | 人工/AI 双来源字数趋势（ECharts）、项目统计 |
-| 系统 | JWT 认证（禁用账号旧令牌立即失效）、SaaS 管理（用户/角色权限/审计日志）、项目新建/编辑/删除、运行时配置、斜杠命令管理、中英双语（Vue I18n） |
+| 运维管理 | 用量分析（调用/token/延迟/成功率，按供应商与模型分布）、运行状态（PG/Redis/RabbitMQ/MinIO/Manticore/模型健康）、用户/角色/审计 |
+| 系统 | JWT 认证（禁用账号旧令牌立即失效）、SaaS 管理（用户/角色权限/审计日志）、项目 CRUD、运行时配置、斜杠命令管理、中英双语（Vue I18n） |
 
 ## 技术栈
 
-- **后端**：Go 1.24 + gin + gorm(pgx) + viper + zap + eino（OpenAI 兼容网关）+ Redis + RabbitMQ + MinIO + Manticore + pgvector，`CGO_ENABLED=0` 静态编译
+- **后端**：Go 1.24 + gin + gorm(pgx) + viper + zap + eino（OpenAI 兼容 + Anthropic 双协议）+ Redis + RabbitMQ + MinIO + Manticore + pgvector，`CGO_ENABLED=0` 静态编译
 - **前端**：Vue 3.4 + TypeScript 5.4 + Vite 5.2 + Element Plus 2.9 + Pinia + Vue Router + Axios + UnoCSS + ECharts + AntV X6 + CodeMirror 6 + WangEditor 5 + XLSX + Vue I18n
 - **部署**：Docker / docker-compose 与 Podman / podman-compose 双形态，GitHub Actions CI/CD（CI 检查 + tag 触发镜像发布 GHCR）
 
@@ -25,8 +28,10 @@ AI 小说创作工作台：前后端分离、容器化交付。以"项目—卷�
 # 1. 启动（中间件默认指向云服务器；本地全栈加 --profile infra）
 docker compose up -d --build
 
-# 2. 配置 AI 网关（OpenAI 兼容）
-#    修改 .env 或环境变量 NW_AI_BASE_URL / NW_AI_API_KEY / NW_AI_CHAT_MODEL
+# 2. 配置模型供应商（二选一）
+#    A. 环境变量给出"出厂默认"供应商：NW_AI_PROTOCOL_CODE / NW_AI_BASE_URL / NW_AI_API_KEY /
+#       NW_AI_CHAT_MODEL / NW_AI_EMBEDDING_MODEL（供应商表为空时播种一次）
+#    B. 登录后进「模型供应商」页添加（推荐：可测连通、可切默认、可加多个）
 
 # 3. 访问
 #    前端 http://localhost        后端 http://localhost:8080/health

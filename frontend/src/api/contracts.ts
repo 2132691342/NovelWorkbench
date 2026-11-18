@@ -292,6 +292,7 @@ export interface NWChatSendReqVo {
   ref_chapter_ulid_list?: string[]
   ref_message_ulid_list?: string[]
   history_count?: number
+  provider_ulid?: string
 }
 
 /** 创建 AI 会话请求 */

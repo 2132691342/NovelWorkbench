@@ -2,12 +2,19 @@
 
 AI 能力全部收敛到一条链路：`/chat/send`（SSE 流式）+ 斜杠技能 + 可见的上下文装配。编辑器里的"续写/润色"等动作也走这条链路，只是预置了技能码与 @引用。
 
-## 1. 模型接入（eino）
+## 1. 模型接入（eino + 供应商表）
 
-- 对话与向量均通过 eino 的 OpenAI 兼容组件接入（`internal/ai/client.go`）：
-  - 对话：`ChatModel.Generate`（非流式）/ `ChatModel.Stream`（流式，`StreamReader` 逐块消费）。
-  - 向量：`Embedder.EmbedStrings` 批量转 `[][]float32` 直写 pgvector。
-- 网关地址/模型名/Key 全部配置化（`ai` 配置段），可对接任意 OpenAI 兼容服务；超时统一 `timeout_sec`，外层再包 context 取消（SSE 客户端断开即取消生成）。
+模型不再硬编码为单一网关，而是按「供应商」解析（`model_providers` 表 + `internal/ai/client.go` 网关）：
+
+| 协议 | 组件 | 能力 |
+| --- | --- | --- |
+| `openai` | `eino-ext/components/model/openai` + `embedding/openai` | 对话（Generate/Stream）+ 向量（EmbedStrings） |
+| `anthropic` | `eino-ext/components/model/claude` | 对话（Generate/Stream） |
+
+- 每个供应商 = `协议 + base_url + api_key + chat_model_name +（可选）embedding_model_name`，支持多供应商与全局唯一默认供应商；页面上可测试连通性、切默认、启停。
+- 网关 `ai.Client` 只接收 `ProviderSpec`（service 解密密钥后传入），**不接触存储层**；模型实例按「供应商 + 密钥摘要 + 参数」缓存，改密钥自动失效重建。
+- 对话/向量调用统一路由：`Generate` / `Stream` / `Embed` / `Probe`，每次调用自动上报用量（`ai.UsageRecorder`），流式在结束时补记真实 token usage（缺省按字数估算）。
+- 配置文件的 `ai.*` 只在供应商表为空时播种一条"出厂默认"供应商，之后全部由页面管理。
 
 ## 2. 提示词装配（internal/ai/prompt.go）
 
@@ -49,6 +56,7 @@ AI 能力全部收敛到一条链路：`/chat/send`（SSE 流式）+ 斜杠技�
 1. 索引侧：文档上传 → MinIO 原文 → RabbitMQ 异步任务 → 切片（`chunk_size=800`/`chunk_overlap=120`）→ 批量向量化 → pgvector + Manticore 双写。
 2. 检索侧：`hybrid` 模式 = pgvector 余弦 TopK ∪ Manticore 关键词 TopK → RRF 融合（`score = Σ 1/(60+rank)`）→ 重排取 TopK（默认 6）。Manticore 使用 CJK ngram（`ngram_len=1` + `ngram_chars=cjk`）支持中文子串；请求只给 `query_text` 时关键词通道复用该文本建 MATCH。
 3. 召回依据随 `done` 事件返回 `reference_list`（doc_name/切片文本/得分），前端展示"AI 依据"。
+4. 降级策略：未配置向量模型（或为 Anthropic 协议）时，`hybrid`/`vector` 自动只用关键词通道；索引侧同样降级为"仅关键词索引"（切片不写向量列），配置向量模型后对该文档 `reindex` 即补齐语义能力。**绝不写入伪造向量。**
 
 混合的原因：人名/功法名等专有名词靠关键词通道兜底，同义改写靠向量通道兜底；RRF 无权重参数，行为稳定。
 

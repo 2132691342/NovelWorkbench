@@ -45,6 +45,30 @@ const routes: RouteRecordRaw[] = [
         meta: { menu_key: 'adminRoles' },
       },
       {
+        path: 'lore/:project_ulid',
+        name: 'LoreView',
+        component: () => import('@/views/lore/index.vue'),
+        meta: { menu_key: 'lore' },
+      },
+      {
+        path: 'models',
+        name: 'ModelProviderView',
+        component: () => import('@/views/models/index.vue'),
+        meta: { menu_key: 'models' },
+      },
+      {
+        path: 'admin/usage',
+        name: 'AdminUsageView',
+        component: () => import('@/views/admin/usage.vue'),
+        meta: { menu_key: 'adminUsage' },
+      },
+      {
+        path: 'admin/status',
+        name: 'AdminStatusView',
+        component: () => import('@/views/admin/status.vue'),
+        meta: { menu_key: 'adminStatus' },
+      },
+      {
         path: 'admin/audit',
         name: 'AdminAuditView',
         component: () => import('@/views/admin/audit.vue'),

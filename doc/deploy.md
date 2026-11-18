@@ -55,11 +55,15 @@ docker compose --profile infra up -d --build
 | NW_RABBITMQ_URL | amqp 连接串 |
 | NW_MINIO_ENDPOINT / NW_MINIO_ACCESS_KEY / NW_MINIO_SECRET_KEY | 对象存储 |
 | NW_MANTICORE_BASE_URL | 全文检索 HTTP 地址 |
-| NW_AI_BASE_URL / NW_AI_API_KEY / NW_AI_CHAT_MODEL / NW_AI_EMBEDDING_MODEL | OpenAI 兼容网关 |
+| NW_AI_PROTOCOL_CODE | 出厂默认供应商协议：openai / anthropic |
+| NW_AI_BASE_URL / NW_AI_API_KEY / NW_AI_CHAT_MODEL / NW_AI_EMBEDDING_MODEL | 出厂默认供应商（表为空时播种一次，之后在页面管理） |
 | NW_APP_ADMIN_PASSWORD | 引导管理员初始密码（仅用户表为空时生效，首登后改密） |
+| NW_APP_BUILD_VERSION | 运行状态页展示的构建版本（发布时注入 tag 或 commit） |
 | NW_SERVER_PORT | 监听端口 |
 
-启动顺序：后端启动时 AutoMigrate 建表（含 `CREATE EXTENSION IF NOT EXISTS vector`），播种内置斜杠技能/默认配置/内置角色（admin/user），用户表为空时引导创建管理员（`admin` + `NW_APP_ADMIN_PASSWORD`）；并确保 MinIO 桶存在、Manticore 切片表存在。Manticore 表结构含 CJK ngram（`ngram_len=1` + `ngram_chars=cjk`）；检测到旧结构时自动重建并从 PG 切片回灌全文索引。中间件不可达时 PG 失败即退出（fail fast），其余中间件降级为告警日志（上传/检索等功能返回 `ERR_STORAGE`，主链路不受影响）。
+> 供应商密钥在库中为 AES-256-GCM 密文，封存材料由 `NW_JWT_SECRET` 派生：**更换 JWT 密钥后需在「模型供应商」页重新填写 API Key**（否则解密失败并提示）。
+
+启动顺序：后端启动时 AutoMigrate 建表（含 `CREATE EXTENSION IF NOT EXISTS vector`），播种内置斜杠技能/默认配置/内置角色（admin/user）/默认模型供应商（表为空时取 `ai.*` 配置），用户表为空时引导创建管理员（`admin` + `NW_APP_ADMIN_PASSWORD`）；并确保 MinIO 桶存在、Manticore 切片表存在。Manticore 表结构含 CJK ngram（`ngram_len=1` + `ngram_chars=cjk`）；检测到旧结构时自动重建并从 PG 切片回灌全文索引。中间件不可达时 PG 失败即退出（fail fast），其余中间件降级为告警日志（上传/检索等功能返回 `ERR_STORAGE`，主链路不受影响；模型供应商未配置时 AI 生成返回 `ERR_AI_PROVIDER` 并在页面提示）。
 
 ## 4. podman 部署（云主机）
 

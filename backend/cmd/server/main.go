@@ -59,6 +59,8 @@ func main() {
 		&domain.RoleDO{},
 		&domain.UserRoleDO{},
 		&domain.AuditLogDO{},
+		&domain.ModelProviderDO{},
+		&domain.ModelUsageStatDO{},
 	); err != nil {
 		pkg.SLogger().Errorw("数据库迁移失败", "error", err)
 		os.Exit(1)
@@ -138,10 +140,27 @@ func main() {
 	if aiTimeoutSec <= 0 {
 		aiTimeoutSec = 60 // 默认模型调用超时（秒）
 	}
-	aiClient, err := ai.NewClient(cfg.AI.BaseURL, cfg.AI.APIKey, cfg.AI.ChatModel, cfg.AI.EmbeddingModel, time.Duration(aiTimeoutSec)*time.Second)
-	if err != nil {
-		pkg.SLogger().Errorw("构造 AI 客户端失败", "error", err)
-		os.Exit(1)
+	aiClient := ai.NewClient()
+	providerRepo := repo.NewModelProviderRepo(db)
+	usageRepo := repo.NewModelUsageRepo(db)
+	usageService := service.NewModelUsageService(usageRepo, ctx)
+	aiClient.SetUsageRecorder(usageService)
+	providerService := service.NewModelProviderService(providerRepo, aiClient, cfg.JWT.Secret,
+		time.Duration(aiTimeoutSec)*time.Second)
+	// 供应商表为空时按配置播种默认供应商（配置文件即"出厂默认"，之后在页面上管理）。
+	if err := providerService.SeedDefault(ctx, service.ProviderSeed{
+		ProviderName:       "默认模型网关",
+		ProtocolCode:       cfg.AI.ProtocolCode,
+		BaseURL:            cfg.AI.BaseURL,
+		APIKey:             cfg.AI.APIKey,
+		ChatModelName:      cfg.AI.ChatModel,
+		EmbeddingModelName: cfg.AI.EmbeddingModel,
+		EmbeddingDim:       cfg.AI.EmbeddingDim,
+		Temperature:        cfg.AI.Temperature,
+		MaxTokens:          cfg.AI.MaxTokens,
+		TimeoutSec:         aiTimeoutSec,
+	}); err != nil {
+		pkg.SLogger().Warnw("默认模型供应商播种失败，可在页面手工添加", "error", err)
 	}
 	knowledgeConfig := service.KnowledgeIndexConfig{
 		UploadMaxMB:    cfg.App.UploadMaxMB,
@@ -150,9 +169,10 @@ func main() {
 		RAGTopK:        cfg.App.RAGTopK,
 		ManticoreTable: cfg.Manticore.TableChunks,
 	}
-	knowledgeService := service.NewKnowledgeService(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo, aiClient, manticoreClient, db, knowledgeConfig)
+	knowledgeService := service.NewKnowledgeService(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
+		aiClient, providerService, manticoreClient, db, knowledgeConfig)
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, knowledgeRepo,
-		settingRepo, slashService, knowledgeService, aiClient, db,
+		settingRepo, slashService, knowledgeService, providerService, aiClient, db,
 		service.ChatConfig{HistoryCount: cfg.AI.HistoryCount, RAGTopK: cfg.App.RAGTopK})
 
 	// 内置技能与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
@@ -175,7 +195,7 @@ func main() {
 	}
 
 	// 知识库索引 worker：消费 RabbitMQ 完成文档索引，随 ctx 取消优雅退出。
-	knowledgeWorker := service.NewKnowledgeWorker(knowledgeRepo, objectRepo, mqRepo, jobRepo, aiClient, manticoreClient, db, knowledgeConfig)
+	knowledgeWorker := service.NewKnowledgeWorker(knowledgeRepo, objectRepo, mqRepo, jobRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
@@ -194,6 +214,44 @@ func main() {
 	auditMW := pkg.AuditMiddleware(auditService, []string{
 		"/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/chat/send",
 	})
+	statusService := service.NewSystemStatusService(service.SystemProbeDeps{
+		PostgresProbe: func(probeCtx context.Context) error {
+			sqlDB, err := db.DB()
+			if err != nil {
+				return err
+			}
+			return sqlDB.PingContext(probeCtx)
+		},
+		RedisProbe: func(probeCtx context.Context) error {
+			if rdb == nil {
+				return errors.New("redis 未配置")
+			}
+			return rdb.Ping(probeCtx).Err()
+		},
+		RabbitMQProbe: func(probeCtx context.Context) error {
+			if mqConn == nil || mqConn.IsClosed() {
+				return errors.New("rabbitmq 连接不可用")
+			}
+			return mqRepo.DeclareQueue(probeCtx)
+		},
+		MinIOProbe: func(probeCtx context.Context) error {
+			if minioClient == nil {
+				return errors.New("minio 客户端未初始化")
+			}
+			exists, err := minioClient.BucketExists(probeCtx, cfg.MinIO.Bucket)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return errors.New("对象存储桶不存在")
+			}
+			return nil
+		},
+		ManticoreProbe: func(probeCtx context.Context) error {
+			return manticoreClient.Ping(probeCtx)
+		},
+		BuildVersion: cfg.App.BuildVersion,
+	}, providerService)
 	router := api.NewRouter(cfg.Server.Mode, api.RouterDeps{
 		AuthMW:      authMW,
 		AuditMW:     auditMW,
@@ -221,6 +279,9 @@ func main() {
 		UserAdminAPI: api.NewUserAdminAPI(userAdminService),
 		RoleAPI:      api.NewRoleAPI(roleService),
 		AuditAPI:     api.NewAuditAPI(auditService),
+		ProviderAPI:  api.NewModelProviderAPI(providerService),
+		UsageAPI:     api.NewModelUsageAPI(usageService),
+		StatusAPI:    api.NewSystemStatusAPI(statusService),
 	})
 
 	server := &http.Server{

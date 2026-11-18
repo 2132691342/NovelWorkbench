@@ -22,6 +22,8 @@
 | `backend/internal/service/chat_service_test.go` | 对话上下文装配：技能命中/未命中渲染、@引用注入、历史 N 条截断 + 显式引用必注入、预算丢块标注、设定注入（含 note 排除） |
 | `backend/internal/service/knowledge_worker_test.go` | Manticore 中文 ngram 表结构迁移：旧表 `DROP → CREATE → 回灌` 只触发一次，新表启动不重建 |
 | `backend/internal/pkg/middleware_test.go` | 鉴权用户状态：活跃放行、禁用/删除旧令牌 401、状态查询失败 500 |
+| `backend/internal/pkg/secret_test.go` | 供应商密钥封存链路：同材料可解、换材料/坏密文必须失败、每次 nonce 随机、空材料拒绝 |
+| `backend/internal/service/model_usage_service_test.go` | 用量区间解析（缺省近 14 天/非法回退/起止倒置纠正）与趋势补零（缺失日零值、已有数据不改写） |
 
 运行方式：
 
@@ -41,8 +43,10 @@ E2E 在集成环境执行：后端直连中间件（Postgres/Redis/RabbitMQ/MinI
 | 项目→卷→章 | CRUD、目录树、字数账目（含清空正文与删卷的字数回补）、快照留档/回滚/列表、删除项目/卷后子表零残留 |
 | 角色/设定 | 角色卡、关系边、关系图数据；设定增删查（含 note 类型） |
 | 知识库 | 上传→队列→切片→向量化→落库/建索引→混合检索命中（source_mode 标注）；向量化失败时重试→failed 与检索降级 keyword |
-| 对话 | SSE 流式（chunk seq 递增→done 带召回依据）、技能/引用/历史注入、消息落库、AI 字数落账 |
-| 前端 | 登录守卫、仪表盘统计、工作台（目录树/编辑器自动保存/SSE 面板/插入章节）、X6 关系图、知识库上传/检索/预览、WangEditor 笔记，浏览器实测 |
+| 对话 | SSE 流式（chunk seq 递增→done 带召回依据）、技能/引用/历史注入、消息落库、AI 字数落账、指定供应商生效 |
+| 模型生态 | 供应商 CRUD 与密钥掩码、连通性测试（成功/失败均回写）、默认切换唯一性、用量聚合（调用/失败/token/延迟）随真实调用增长 |
+| 运行状态 | 依赖健康探测（正常/未配置降级/不可用）、AI 能力结论与供应商配置一致 |
+| 前端 | 登录守卫、侧边栏项目切换与项目内导航（写作台/角色/设定/知识库/笔记直达）、仪表盘统计、工作台（目录树/编辑器自动保存/SSE 面板/模型选择/插入章节）、X6 关系图、世界观设定 CRUD、知识库上传/检索/预览、WangEditor 笔记、模型供应商页、用量分析与运行状态页，浏览器实测 |
 
 集成阶段发现并已修复的典型问题（说明这些链路测试有效）：GORM 列名推导 `XxxULID→xxx_ul_id` 与手写 SQL 不一致（显式 column 标签 + NamingStrategy 双保险）、向量列扫描类型不匹配、章节空串无法清空（指针语义）、关系图挂载竞态导致不适配。
 

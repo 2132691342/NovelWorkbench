@@ -31,6 +31,9 @@ type RouterDeps struct {
 	UserAdminAPI *UserAdminAPI   // 用户管理模块处理器
 	RoleAPI      *RoleAPI        // 角色管理模块处理器
 	AuditAPI     *AuditAPI       // 审计日志模块处理器
+	ProviderAPI  *ModelProviderAPI // 模型供应商模块处理器
+	UsageAPI     *ModelUsageAPI    // 模型用量模块处理器
+	StatusAPI    *SystemStatusAPI  // 系统运行状态模块处理器
 }
 
 // NewRouter 装配 HTTP 路由；中间件顺序：Recovery → 请求ID → 日志 → CORS（先处理预检）→ 方法白名单 → 鉴权 → 审计。
@@ -65,8 +68,34 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	registerSettingRoutes(v1, deps.SettingAPI)
 	registerStatsRoutes(v1, deps.StatsAPI)
 	registerChatRoutes(v1, deps.ChatAPI)
+	registerModelRoutes(v1, deps)
 	registerAdminRoutes(v1, deps)
 	return router
+}
+
+// registerModelRoutes 注册模型生态路由（供应商管理与能力探测对所有登录用户开放，写操作收口到管理权限）。
+func registerModelRoutes(rg *gin.RouterGroup, deps RouterDeps) {
+	modelGroup := rg.Group("/model")
+	modelGroup.GET("/capability", deps.ProviderAPI.Capability)
+	modelGroup.GET("/chat_options", deps.ProviderAPI.ChatOptions)
+	modelGroup.POST("/provider/list", deps.ProviderAPI.List)
+	providerWrite := modelGroup.Group("/provider")
+	providerWrite.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermModelManage))
+	{
+		providerWrite.POST("/save", deps.ProviderAPI.Save)
+		providerWrite.POST("/delete", deps.ProviderAPI.Delete)
+		providerWrite.POST("/test", deps.ProviderAPI.Test)
+	}
+	usageGroup := rg.Group("/model/usage")
+	usageGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermUsageRead))
+	{
+		usageGroup.GET("/overview", deps.UsageAPI.Overview)
+	}
+	systemGroup := rg.Group("/system")
+	systemGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermSystemRead))
+	{
+		systemGroup.GET("/status", deps.StatusAPI.Status)
+	}
 }
 
 // healthCheck 容器健康探针（只回存活，不做依赖检查）。
