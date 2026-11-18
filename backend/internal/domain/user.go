@@ -30,7 +30,7 @@ type UserRegisterREQ struct {
 
 // UserLoginREQ 登录请求。
 type UserLoginREQ struct {
-	AccountText  string `json:"account_text" form:"account_text" binding:"required"`    // 登录名或邮箱
+	AccountText  string `json:"account_text" form:"account_text" binding:"required"`   // 登录名或邮箱
 	PasswordText string `json:"password_text" form:"password_text" binding:"required"` // 明文密码，仅入参
 }
 
@@ -91,7 +91,7 @@ type UserResetPasswordREQ struct {
 
 // UserLoginDTO 登录结果（含令牌）。
 type UserLoginDTO struct {
-	AccessToken  string `json:"access_token"`  // JWT 访问令牌
+	AccessToken  string `json:"access_token"`   // JWT 访问令牌
 	ExpiresInSec int64  `json:"expires_in_sec"` // 有效期（秒）
 	UserVO       UserVO `json:"user_vo"`        // 用户信息
 }

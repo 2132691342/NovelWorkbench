@@ -6,10 +6,10 @@ import "time"
 
 // ULID 业务前缀常量：所有主键形如 PRJ_01HXXX，便于肉眼识别与日志排错。
 const (
-	IDPrefixUser           = "USR_" // 用户
-	IDPrefixProject        = "PRJ_" // 小说项目
-	IDPrefixVolume         = "VOL_" // 卷
-	IDPrefixChapter        = "CHP_" // 章节
+	IDPrefixUser            = "USR_" // 用户
+	IDPrefixProject         = "PRJ_" // 小说项目
+	IDPrefixVolume          = "VOL_" // 卷
+	IDPrefixChapter         = "CHP_" // 章节
 	IDPrefixChapterSnapshot = "SNP_" // 章节快照
 	IDPrefixCharacter       = "CHR_" // 角色
 	IDPrefixRelation        = "RLT_" // 角色关系
@@ -29,16 +29,16 @@ const (
 
 // 业务响应码（字符串，与 HTTP 状态码 int 区分）：SUCCESS 与 ERR_ 前缀族。
 const (
-	RespCodeSuccess         = "SUCCESS"              // 成功
-	RespCodeInvalidParam    = "ERR_INVALID_PARAM"    // 参数校验失败
-	RespCodeUnauthorized    = "ERR_UNAUTHORIZED"     // 未登录或登录失效
-	RespCodeForbidden       = "ERR_FORBIDDEN"        // 无权限
-	RespCodeNotFound        = "ERR_NOT_FOUND"        // 资源不存在
-	RespCodeConflict        = "ERR_CONFLICT"         // 资源冲突（重名/重复提交）
-	RespCodeBizFailed       = "ERR_BIZ_FAILED"       // 通用业务失败
-	RespCodeAIProviderError = "ERR_AI_PROVIDER"      // AI 模型调用失败
-	RespCodeStorageError    = "ERR_STORAGE"          // 对象存储/搜索/队列等基础设施错误
-	RespCodeInternalError   = "ERR_INTERNAL"         // 服务内部错误
+	RespCodeSuccess         = "SUCCESS"           // 成功
+	RespCodeInvalidParam    = "ERR_INVALID_PARAM" // 参数校验失败
+	RespCodeUnauthorized    = "ERR_UNAUTHORIZED"  // 未登录或登录失效
+	RespCodeForbidden       = "ERR_FORBIDDEN"     // 无权限
+	RespCodeNotFound        = "ERR_NOT_FOUND"     // 资源不存在
+	RespCodeConflict        = "ERR_CONFLICT"      // 资源冲突（重名/重复提交）
+	RespCodeBizFailed       = "ERR_BIZ_FAILED"    // 通用业务失败
+	RespCodeAIProviderError = "ERR_AI_PROVIDER"   // AI 模型调用失败
+	RespCodeStorageError    = "ERR_STORAGE"       // 对象存储/搜索/队列等基础设施错误
+	RespCodeInternalError   = "ERR_INTERNAL"      // 服务内部错误
 )
 
 // BaseDO 持久化对象公共字段。
