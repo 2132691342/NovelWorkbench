@@ -13,9 +13,9 @@ import (
 
 // Client 模型网关客户端：对话走 eino ChatModel，向量走 eino Embedder。
 type Client struct {
-	chatModel *einoOpenAI.ChatModel // 对话模型
+	chatModel *einoOpenAI.ChatModel   // 对话模型
 	embedder  *einoEmbedding.Embedder // 向量模型
-	timeout   time.Duration          // 单次调用超时
+	timeout   time.Duration           // 单次调用超时
 }
 
 // NewClient 按配置构造对话与向量客户端。
