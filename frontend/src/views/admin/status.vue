@@ -197,19 +197,20 @@ onMounted(() => {
 }
 
 .status-ai__item.is-up {
-  background-color: #ecfdf5;
-  color: #047857;
+  background-color: var(--success-bg);
+  color: var(--success-text);
 }
 
 .status-ai__item.is-degraded {
-  background-color: #fffbeb;
-  color: #b45309;
+  background-color: var(--warning-bg);
+  color: var(--warning-text);
 }
 
 .status-ai__item.is-down {
-  background-color: #fef2f2;
-  color: #b91c1c;
+  background-color: var(--error-bg);
+  color: var(--error-text);
 }
+
 
 .status-ai__hint {
   margin: 0;
@@ -227,18 +228,18 @@ onMounted(() => {
 }
 
 .status-badge.is-up {
-  background-color: #d1fae5;
-  color: #047857;
+  background-color: var(--success-border);
+  color: var(--success-text);
 }
 
 .status-badge.is-degraded {
-  background-color: #fef3c7;
-  color: #b45309;
+  background-color: var(--warning-border);
+  color: var(--warning-text);
 }
 
 .status-badge.is-down {
-  background-color: #fee2e2;
-  color: #b91c1c;
+  background-color: var(--error-border);
+  color: var(--error-text);
 }
 
 .status-page__error {

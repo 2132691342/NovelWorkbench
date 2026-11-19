@@ -262,12 +262,12 @@ async function handleSearch(): Promise<void> {
   font-size: 12px;
   border-radius: var(--radius-pill);
   color: var(--info);
-  background-color: #dbeafe;
+  background-color: var(--info-border);
 }
 
 .knowledge-search__source.is-keyword {
   color: var(--warning);
-  background-color: #fef3c7;
+  background-color: var(--warning-border);
 }
 
 

@@ -160,6 +160,7 @@ func main() {
 		ProviderName:  "默认模型网关",
 		ProtocolCode:  cfg.AI.ProtocolCode,
 		BaseURL:       cfg.AI.BaseURL,
+		APIKey:        cfg.AI.APIKey,
 		ChatModelName: cfg.AI.ChatModel,
 		Temperature:   cfg.AI.Temperature,
 		MaxTokens:     cfg.AI.MaxTokens,
@@ -175,10 +176,10 @@ func main() {
 		ManticoreTable: cfg.Manticore.TableChunks,
 	}
 	knowledgeService := service.NewKnowledgeService(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
-		aiClient, providerService, manticoreClient, db, knowledgeConfig)
+		settingRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, knowledgeRepo,
 		settingRepo, slashService, knowledgeService, providerService, aiClient, db,
-		service.ChatConfig{HistoryCount: cfg.AI.HistoryCount, RAGTopK: cfg.App.RAGTopK})
+		service.ChatConfig{HistoryCount: cfg.AI.HistoryCount})
 
 	// 内置技能与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
 	if err := slashService.SeedBuiltin(ctx); err != nil {
@@ -295,7 +296,7 @@ func main() {
 		Addr:         cfg.ServerAddr(),
 		Handler:      router,
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeoutSec) * time.Second,
-		WriteTimeout: 0, // SSE 长连接不受写超时限制
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeoutSec) * time.Second, // 0 表示不限（SSE 长连接）
 	}
 	serveErr := make(chan error, 1)
 	go func() {

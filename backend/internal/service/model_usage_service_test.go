@@ -1,3 +1,7 @@
+// 本文件覆盖用量分析链路：查询区间解析（缺省近 14 天 / 非法回退 / 起止倒置纠正）→
+// 缺日补零保证图表连续 → 按调用数加权的平均延迟。
+// 用量页面的数字全部来自这三个环节，任一环节算错都会直接误导用户，因此合并为一条用例。
+
 package service
 
 import (
@@ -6,9 +10,7 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 )
 
-// TestUsageAggregationChain 覆盖用量分析链路：查询区间解析（缺省近 14 天 / 非法回退 / 起止倒置纠正）→
-// 缺日补零保证图表连续 → 按调用数加权的平均延迟。
-// 用量页面的数字全部来自这三个环节，任一环节算错都会直接误导用户，因此合并为一条用例。
+// TestUsageAggregationChain 覆盖用量分析链路的全部环节。
 func TestUsageAggregationChain(t *testing.T) {
 	// ---- 环节一：区间解析 ----
 	toDate, fromDate := resolveUsageRange("", "")

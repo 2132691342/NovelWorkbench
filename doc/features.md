@@ -1,301 +1,987 @@
 # 功能实现说明
 
-本文按"用户能做什么 → 系统怎么实现 → 验收点"描述 NovelWorkbench 的每一个功能域，
-可从产品功能追溯到具体文件。接口契约见 `doc/api.md`，数据结构见 `doc/database.md`。
+本文按「用户能力 → 系统怎么实现 → 验收点」描述 NovelWorkbench 的每一个功能域。
+每条实现都标注具体文件与函数，可直接对照代码验证。接口契约见 `doc/api.md`，
+数据结构见 `doc/database.md`，部署与配置见 `doc/deploy.md`。
+
+约定：
+
+- 后端路径以 `backend/internal/` 为根，前端路径以 `frontend/src/` 为根。
+- 「实现」条目写明文件与函数名；函数行为以代码为准。
+- 「验收点」只写可观察的结果（响应内容、状态码、界面表现），不写实现细节。
+- 所有写操作都有项目归属校验，越权返回 `ERR_FORBIDDEN`（`pkg.NewBizError(domain.RespCodeForbidden, ...)`）。
+
+---
 
 ## 1. 系统管理
 
 ### 1.1 认证与会话
 
-用户能力：注册、登录、查看个人信息、退出登录。
+**用户能力**
 
-实现：
+- 注册账号（登录名 + 邮箱 + 密码）。
+- 用登录名或邮箱登录。
+- 查看当前登录用户信息与角色编码。
+- 退出登录，令牌立即失效。
 
-- `api/auth_api.go` 绑定 `UserRegisterREQ` / `UserLoginREQ`，输出 `UserVO` / `UserLoginDTO`。
-- `service/auth_service.go` 校验登录名/邮箱唯一性、bcrypt 哈希密码、签发 JWT、查询角色码。
-- `pkg/jwt.go` 负责令牌生成与解析（HS256，默认 7 天）；`pkg/middleware.go` 注入当前用户。
-- 登出把令牌写入 Redis 黑名单（`repo/token_repo.go`）；每次请求检查用户状态，
-  禁用账号的旧令牌立即失效。
+**实现**
 
-验收点：禁用账号的旧 token 不能再访问；登出后 token 立即失效；密码哈希不出现在响应中。
+- `api/auth_api.go` 的 `Register` / `Login` / `Profile` / `Logout` 只做参数绑定与包络输出。
+- `service/auth_service.go` 的 `Register`：登录名、邮箱分别查重（`userRepo.GetByUserName` / `GetByEmail`），
+  密码用 `bcrypt.GenerateFromPassword(..., bcrypt.DefaultCost)` 哈希，落库前不写明文。
+- `service/auth_service.go` 的 `Login`：`userRepo.GetByAccount` 同时匹配登录名或邮箱；
+  账号状态为 `disabled` 时返回 `ERR_FORBIDDEN`，密码不匹配返回 `ERR_UNAUTHORIZED`。
+- `service/auth_service.go` 的 `withRoleCodes`：登录与个人信息都带出 `role_codes`（`roleRepo.ListRoleCodesByUserULID`）。
+- `pkg/jwt.go` 的 `NewJWTSigner` / `SignToken` / `ParseToken`：HS256 签名，令牌载荷含 `user_ulid` 与有效期。
+- `service/auth_service.go` 的 `Logout`：解析令牌有效期后调用 `tokenStore.Revoke` 写黑名单，TTL 为令牌剩余寿命。
+- `repo/token_repo.go` 的 `tokenBlacklistKey`：黑名单键为 `nw:token:blacklist:<sha256hex(token)>`。
+- `pkg/middleware.go` 的 `AuthMiddleware`：校验 Bearer 令牌 → 查黑名单 → 查用户状态，注入 `user_ulid`。
+- `cmd/server/main.go`：`AuthMiddleware` 的用户状态检查函数查 `userRepo.GetByULID`，
+  账号不存在或 `disabled` 即判不可用；`/api/v1/auth/register` 与 `/api/v1/auth/login` 在免鉴权白名单内。
 
-### 1.2 用户与角色
+**验收点**
 
-用户能力：管理端创建/编辑/删除用户、重置密码、分配角色；创建/编辑/删除角色与权限码。
+- 登录名重复注册返回 `ERR_CONFLICT`；邮箱重复注册同样返回 `ERR_CONFLICT`。
+- 密码错误与账号不存在都返回 `ERR_UNAUTHORIZED`，提示文案不区分二者。
+- 账号被禁用后登录返回 `ERR_FORBIDDEN`；该账号已签发的旧令牌再访问业务接口返回 `ERR_UNAUTHORIZED`。
+- 登出后原令牌立即失效；被吊销的令牌不写库、不入业务表。
+- 响应中不出现 `password_hash` 字段。
 
-实现：
+### 1.2 用户管理
 
-- `domain/user.go`、`domain/role.go` 定义 DO/REQ/VO。
-- `service/user_admin_service.go`、`service/role_service.go` 处理分页、唯一性校验与角色覆盖。
-- `api/user_admin_api.go`、`api/role_api.go` 只做绑定与响应。
-- 路由按 `system:user:manage` / `system:role:manage` 收口；权限逐请求查库，改角色立即生效。
+**用户能力**
 
-验收点：内置角色不可删；删除用户后关联角色清理；权限码变更立即生效。
+- 分页检索用户（按关键词与状态过滤）。
+- 新建用户并指定角色。
+- 修改用户资料、状态与角色。
+- 重置用户密码。
+- 删除用户。
 
-### 1.3 审计与配置
+**实现**
 
-用户能力：查看写操作审计日志；查看/修改白名单内的运行时配置。
+- `api/user_admin_api.go` 的 `List` / `Create` / `Update` / `Delete` / `ResetPassword` 做绑定与输出。
+- `service/user_admin_service.go` 的 `ListPage`：分页取用户后用 `roleCodeMap` 批量组装角色编码（两查防 N+1）。
+- `service/user_admin_service.go` 的 `Create`：登录名、邮箱查重，`bcrypt` 哈希密码；
+  角色为空时默认挂 `user`（`domain.RoleCodeUser`）；`roleRepo.ReplaceUserRoles` 覆盖挂载。
+- `service/user_admin_service.go` 的 `Update`：邮箱变更需查重；`user_status_code=disabled` 且操作人等于目标用户时
+  返回「不能禁用自己」；角色列表非 `nil` 时整体覆盖。
+- `service/user_admin_service.go` 的 `Delete`：禁止删除自己；先 `roleRepo.DeleteUserRoles` 再删用户。
+- `service/user_admin_service.go` 的 `ResetPassword`：`bcrypt` 重哈希后覆盖 `password_hash`。
+- `service/user_admin_service.go` 的 `BootstrapAdmin`：仅当 `userRepo.Count` 为 0 时创建管理员 `admin`
+  并挂 `admin` 角色；表非空时不动作。
 
-实现：
+**验收点**
 
-- `pkg/access_middleware.go` 的 `AuditMiddleware` 记录 POST 请求的操作者、动作码、目标类型与 ULID、
-  响应状态与客户端 IP；目标 ULID 从 body 的白名单键（`user_ulid`/`role_ulid`/`project_ulid`/
-  `chapter_ulid`/`doc_ulid`）提取，仅限 `/api/v1/admin/` 路径且 body 不超过 64 KiB。
-- `service/setting_service.go` 管理 `app_settings` 表，白名单为 `chat_history_count`、`rag_top_k`，
-  值必须为正整数；修改后立即影响对应 service 行为。
+- 重复登录名/邮箱创建用户返回 `ERR_CONFLICT`。
+- 不能禁用或删除自己（返回 `ERR_BIZ_FAILED`）。
+- 删除用户后其角色关联被清理。
+- 用户列表项带出角色编码列表。
+- 用户表非空时重启服务不再创建引导管理员。
 
-验收点：写操作有审计记录；配置修改后对应行为变化；非法配置键与非正整数被拒绝。
+### 1.3 角色与权限
+
+**用户能力**
+
+- 分页查看角色与权限码。
+- 新建/编辑角色并配置权限码。
+- 删除角色。
+
+**实现**
+
+- `api/role_api.go` 的 `List` / `Save` / `Delete`。
+- `service/role_service.go` 的 `SeedDefaults`：启动播种内置角色 `admin`（权限码 `["*"]`）与 `user`（权限码 `[]`），
+  按 `role_code` 查缺补插。
+- `service/role_service.go` 的 `Save`：角色编码唯一；内置角色改编码被拒；
+  权限码列表序列化为 JSON 存入 `perm_codes_json`（空列表存 `[]`）。
+- `service/role_service.go` 的 `Delete`：内置角色拒删；`roleRepo.CountUsersByRoleULID` 大于 0 时拒删。
+- `service/role_service.go` 的 `HasPerm`：逐请求查库，权限码含 `domain.PermAdminAll`（`*`）即放行。
+- `pkg/access_middleware.go` 的 `RequirePermMiddleware`：无权限返回 `ERR_FORBIDDEN`，未登录返回 `ERR_UNAUTHORIZED`。
+- `domain/role.go` 定义权限码：`system:user:manage`、`system:role:manage`、`system:audit:read`、
+  `system:model:manage`、`system:usage:read`、`system:status:read`。
+- `api/router.go` 的 `registerAdminRoutes`：用户组收口到 `system:user:manage`，角色组到 `system:role:manage`，
+  审计组到 `system:audit:read`。
+
+**验收点**
+
+- 内置角色 `admin` / `user` 不可删除，`admin` 的编码不可修改。
+- 角色下仍有用户时删除返回 `ERR_CONFLICT`。
+- 普通用户访问管理接口返回 `ERR_FORBIDDEN`；权限码改动后下一次请求即生效（逐请求查库）。
+- `admin` 角色持有 `*`，可访问全部管理接口。
+
+### 1.4 审计日志
+
+**用户能力**
+
+- 按操作者、动作、目标、时间分页查看写操作审计记录。
+
+**实现**
+
+- `pkg/access_middleware.go` 的 `AuditMiddleware`：记录所有 POST 请求（除跳过名单外）的
+  操作者 ULID、动作码（路径去掉 `/api/v1/` 前缀）、目标类型与目标 ULID、HTTP 状态与客户端 IP。
+- `pkg/access_middleware.go` 的 `extractAuditTarget`：仅 `/api/v1/admin/` 路径读 body，
+  body 上限 64 KiB；从 `user_ulid` / `role_ulid` / `project_ulid` / `chapter_ulid` / `doc_ulid`
+  五个白名单键提取目标，读后还原 body 供 handler 绑定。
+- `cmd/server/main.go`：`AuditMiddleware` 跳过名单为注册、登录、登出与 `/api/v1/chat/send`。
+- `service/audit_service.go` 的 `Record`：自动补全操作用户登录名；落库失败不阻断业务，仅记 warn 日志。
+- `api/audit_api.go` 的 `List` 分页输出审计记录。
+
+**验收点**
+
+- 每次管理端 POST 都留下一条审计记录，含动作码与目标 ULID。
+- 非 `/api/v1/admin/` 路径的写操作不产生目标类型/目标 ULID。
+- 审计写入失败不影响业务响应。
+- 审计查询按权限码 `system:audit:read` 收口。
+
+### 1.5 应用配置
+
+**用户能力**
+
+- 查看运行时配置项。
+- 修改白名单内配置的值。
+
+**实现**
+
+- `service/setting_service.go` 的 `settingDefaultList`：配置键白名单的唯一来源，
+  默认 `chat_history_count=5`（AI 对话历史注入条数）、`rag_top_k=6`（知识库默认召回条数）。
+- `service/setting_service.go` 的 `SeedDefaults`：按 `setting_key` 查缺补插。
+- `service/setting_service.go` 的 `Update`：键必须在白名单内（否则 `ERR_INVALID_PARAM`），
+  值必须为正整数；键不存在返回 `ERR_NOT_FOUND`。
+- `service/chat_service.go` 的 `resolveHistoryLimit`：请求 `history_count` 大于 0 时用请求值，
+  否则读 `chat_history_count` 配置，配置缺失或非法时回退 `ChatConfig.HistoryCount`。
+- `service/knowledge_service.go` 的 `resolveRAGTopK`：请求 `top_k_count` 大于 0 时用请求值，
+  否则读 `rag_top_k` 配置，配置缺失或非法时回退 `KnowledgeIndexConfig.RAGTopK`。
+- `api/setting_api.go` 的 `List` / `Update`。
+
+**验收点**
+
+- 非白名单配置键返回 `ERR_INVALID_PARAM`；非正整数配置值同样被拒。
+- 修改 `chat_history_count` 后，下一次 AI 对话注入的历史条数随之变化。
+- 修改 `rag_top_k` 后，下一次知识库检索的默认召回条数随之变化。
+- 配置项说明（`setting_desc`）随查询返回。
+
+---
 
 ## 2. 创作主线
 
-### 2.1 项目管理
+### 2.1 项目
 
-用户能力：新建、编辑、删除项目；切换当前项目；查看项目详情与统计。
+**用户能力**
 
-实现：
+- 新建、编辑、删除项目。
+- 分页查看自己的项目（按名称关键词与状态过滤）。
+- 查看项目详情（卷数、章节数、累计字数）。
+- 查看项目目录树（卷 + 每卷章节）。
 
-- `domain/project.go` 定义 `ProjectDO`/`VolumeDO` 及 REQ/VO。
-- `service/project_service.go` 处理归属校验、状态更新、目录树组装与级联删除。
-- 删除项目在单事务内清理快照、章节、卷、角色、设定、会话、知识库切片与文档、字数统计，
-  事务提交后再清理 MinIO 对象与 Manticore 行（外部存储无法参与数据库事务）。
-- 前端 `stores/project.ts` 保存当前项目；侧栏切换器列出全部项目。
+**实现**
 
-验收点：所有子资源查询都带项目条件；删除项目不波及其他项目数据；URL 中的项目 ULID 与 store 同步。
+- `api/project_api.go` 的 `Create` / `Update` / `Delete` / `List` / `Detail` / `Tree`。
+- `service/project_service.go` 的 `mustOwnProject`：按 `project_ulid` 取项目并比对 `user_ulid`，
+  不存在返回 `ERR_NOT_FOUND`，非本人返回 `ERR_FORBIDDEN`。
+- `service/project_service.go` 的 `Create`：新项目状态固定为 `draft`。
+- `service/project_service.go` 的 `List`：`projectRepo.CountVolumesByProject` 与 `CountChaptersByProject`
+  批量统计，避免逐项目查询。
+- `service/project_service.go` 的 `Tree`：`volumeRepo.ListByProject` + `chapterRepo.ListByProject`，
+  按 `volume_ulid` 分组挂到卷节点下。
+- `service/project_service.go` 的 `Delete`：`repo.WithTx` 单事务内依次删除章节快照、章节、卷、
+  角色、关系、设定、会话、消息、知识库切片与文档、字数统计、项目主表；事务提交后再清理
+  MinIO 原文对象与 Manticore 切片行（`cleanupKnowledgeExternal`，失败仅告警）。
 
-### 2.2 卷与章节
+**验收点**
 
-用户能力：创建/编辑/删除卷与章节；调整顺序；编辑正文；实时字数；创建/回滚快照。
+- 他人项目一律返回 `ERR_FORBIDDEN`。
+- 项目列表项带出卷数与章节数。
+- 删除项目后，其卷、章、角色、设定、会话、知识库文档与切片在库中零残留。
+- 删除项目后 MinIO 桶内对应对象与 Manticore 对应行被清理（清理失败只记日志，不影响删除结果）。
 
-实现：
+### 2.2 卷
 
-- `domain/chapter.go` 定义章节与快照结构。
-- `service/chapter_service.go` 在事务内更新正文、按字数差维护项目累计字数与当日统计、
-  处理快照回滚；`service/volume_service.go` 删除卷时连带删章节与快照并回补字数。
-- 字数由 `pkg.CountWords` 计算：汉字逐字计数，其余按空白分词。
-- 前端 `views/workspace` 使用 CodeMirror 编辑，自动保存，字数本地即时统计后以服务端结果为准。
+**用户能力**
 
-验收点：章节正文整体覆盖；快照能完整回滚（回滚前自动留档当前正文）；字数统计与正文一致；
-删除卷时其章节一并删除且字数回补。
+- 在项目下新建卷。
+- 修改卷名、排序号与摘要。
+- 删除卷（含其下章节）。
 
-### 2.3 大纲导出
+**实现**
 
-用户能力：从写作台导出 XLSX 大纲。
+- `api/volume_api.go` 的 `Create` / `Update` / `Delete`。
+- `service/volume_service.go` 的 `Create`：`volume_order` 缺省时取项目内 `volumeRepo.MaxOrder` + 1。
+- `service/volume_service.go` 的 `Update`：仅覆盖非空字段（名称、排序号、摘要）。
+- `service/volume_service.go` 的 `Delete`：`repo.WithTx` 内先 `SumWordCountByVolume` 取该卷总字数，
+  删章节快照、删章节、删卷，最后 `applyWordDelta` 把字数从项目累计值中扣回。
 
-实现：前端按 `ProjectTreeVO` 组装卷/章行，XLSX 库生成工作簿，字段为卷名、章名、顺序、字数、状态。
+**验收点**
 
-验收点：导出顺序与目录树一致；中文不乱码；空项目导出表头完整。
+- 新建卷默认排在项目末尾。
+- 删除卷后项目累计字数减少该卷原有字数，不出现负值或残留。
+- 删除卷同时删除其下章节与章节快照。
+
+### 2.3 章节
+
+**用户能力**
+
+- 在卷下新建章节。
+- 编辑章节名称、摘要、状态、正文，可换卷。
+- 删除章节。
+- 查看章节详情（含正文）。
+- 为章节生成快照、查看快照列表、回滚到快照。
+
+**实现**
+
+- `api/chapter_api.go` 的 `Create` / `Update` / `Delete` / `Detail` / `SnapshotList` /
+  `SnapshotCreate` / `SnapshotRestore`。
+- `service/chapter_service.go` 的 `Create`：校验卷存在且 `volume.ProjectULID == req.ProjectULID`
+  （否则 `ERR_INVALID_PARAM`）；`chapter_order` 取项目内 `chapterRepo.MaxOrder` + 1；状态默认 `draft`。
+- `service/chapter_service.go` 的 `Update`：`repo.WithTx` 内更新；正文变更时用 `pkg.CountWords`
+  重算 `word_count`，并按差值 `applyWordDelta` 维护项目累计字数与当日统计。
+- `service/chapter_service.go` 的 `Delete`：事务内删快照、删章节、按章节字数回补项目累计值。
+- `service/chapter_service.go` 的 `SnapshotCreate`：以当前正文生成 `snapshot_type=manual` 的快照，
+  快照字数按快照正文重算。
+- `service/chapter_service.go` 的 `SnapshotRestore`：事务内先把当前正文另存一条
+  `change_note="restore 自动留档"` 的快照，再用快照正文覆盖章节正文并按差值回补字数。
+- `service/chapter_service.go` 的 `mustOwnChapter`：经所属项目校验归属。
+
+**验收点**
+
+- 卷与项目不匹配时创建章节返回 `ERR_INVALID_PARAM`。
+- 新建章节排在项目末尾，顺序号连续递增。
+- 编辑正文后章节 `word_count` 与项目 `total_word_count` 同步变化；把正文清空后字数回落到 0。
+- 快照列表按生成时间倒序；回滚后正文等于快照正文，且回滚前内容已被自动留档。
+- 删除章节后项目累计字数同步扣减。
+
+### 2.4 目录树导出
+
+**用户能力**
+
+- 把项目目录（卷 / 章节 / 排序 / 字数 / 状态）导出为 XLSX 文件。
+
+**实现**
+
+- `frontend/src/views/workspace/WorkspaceTree.vue` 的 `handleExportOutline`：
+  按 `treeData.volume_list` 逐卷逐章拼行，`xlsx` 库按需 `import('xlsx')` 动态加载，
+  `XLSX.utils.json_to_sheet` 生成工作表并 `XLSX.writeFile` 落盘。
+- 空目录（`volume_list` 为空）时不导出，界面提示。
+
+**验收点**
+
+- 导出文件名形如 `<项目名>-<文件名>.xlsx`，内容含卷名、章节名、排序号、字数与状态。
+- 空卷在表中保留一行仅含卷名的记录。
+- 项目无卷时不产生文件。
+
+---
 
 ## 3. 设定生态
 
 ### 3.1 角色卡
 
-用户能力：创建/编辑/删除角色，填写姓名、别名、角色类型、性格、背景经历、外貌、目标动机等字段。
+**用户能力**
 
-实现：`domain/character.go` + `service/character_service.go` + `repo/character_repo.go`。
-字段全部带明确后缀，列表按项目过滤。
+- 新建/编辑角色卡（姓名、别名、定位、性格、背景、外貌、目标）。
+- 删除角色。
+- 按类型与关键词筛选角色列表。
 
-验收点：角色字段完整保存；删除角色时关系边同步清理；角色列表按项目隔离。
+**实现**
 
-### 3.2 角色关系图
+- `api/character_api.go` 的 `Save` / `Delete` / `List`。
+- `service/character_service.go` 的 `Save`：`character_ulid` 为空则新建，否则更新；
+  更新时校验 `existing.ProjectULID == req.ProjectULID`（否则 `ERR_INVALID_PARAM`）。
+- `service/character_service.go` 的 `Delete`：`repo.WithTx` 内先
+  `characterRepo.DeleteRelationsByCharacter` 再删角色，关系边随角色一起清理。
+- `service/character_service.go` 的 `List`：`characterRepo.ListByProject` 按类型与关键词过滤。
 
-用户能力：在 X6 画布上查看/编辑角色关系，拖拽节点，保存关系边。
+**验收点**
 
-实现：`GET /character/graph` 返回节点与边；`POST /character/relation/save|delete` 写回。
-前端 `CharacterGraphTab.vue` 负责渲染与交互。
+- 角色归属项目不符时更新返回 `ERR_INVALID_PARAM`。
+- 删除角色后其关系边在库中清零，关系图不再出现该节点。
+- 列表按 `role_type_code` 与关键词过滤生效。
 
-验收点：节点与角色一一对应；关系边保存后刷新仍在；删除角色后无悬空边。
+### 3.2 关系图
+
+**用户能力**
+
+- 查看项目角色关系图（节点=角色，边=关系）。
+- 新建/删除角色之间的关系边。
+
+**实现**
+
+- `api/character_api.go` 的 `Graph` / `RelationSave` / `RelationDelete`。
+- `service/character_service.go` 的 `Graph`：返回节点列表与边列表，节点只带角色 ULID、姓名与定位。
+- `service/character_service.go` 的 `RelationSave`：两端角色必须存在、必须同项目、不允许自环，
+  否则返回 `ERR_INVALID_PARAM`。
+- `service/character_service.go` 的 `RelationDelete`：按 `relation_ulid` 删边并校验项目归属。
+- `frontend/src/views/character/CharacterGraphTab.vue` 的 `renderGraph`：用 `@antv/x6` 的 `Graph`
+  按节点列表布局并连边，边上标注关系类型文本；`loadGraph` 拉取 `GET /character/graph`。
+
+**验收点**
+
+- 自环或跨项目关系被拒绝，返回 `ERR_INVALID_PARAM`。
+- 关系图节点数等于角色数，边数等于关系边数。
+- 删除角色后关系图不再有该节点及其相关边。
 
 ### 3.3 世界观设定
 
-用户能力：按分类维护世界背景、规则、地点、物品、事件；关键词搜索；编辑抽屉保存。
+**用户能力**
 
-实现：`domain/lore.go` + `service/lore_service.go`；分类是 `lore_type_code`
-（world/rule/item/place/event/note），前端分类栏显示计数。
+- 新建/编辑设定条目（名称、类型、内容、排序）。
+- 删除设定条目。
+- 按类型与关键词筛选设定列表。
 
-验收点：分类与搜索组合正确；设定可编辑；私人笔记不进入 AI 上下文。
+**实现**
+
+- `api/lore_api.go` 的 `Save` / `Delete` / `List`。
+- `service/lore_service.go` 的 `Save`：新建走 `loreRepo.Create`，更新走 `loreRepo.Update`，
+  更新时校验设定归属项目。
+- `service/lore_service.go` 的 `List`：`loreRepo.ListByProject` 按 `lore_type_code` 与关键词过滤。
+- `domain/lore.go`：设定类型枚举 `world` / `rule` / `item` / `place` / `event` / `note`，
+  其中 `note` 为创作笔记类型。
+
+**验收点**
+
+- 设定类型只接受枚举内取值，非法类型在参数绑定阶段被拒。
+- 更新他人项目的设定返回 `ERR_INVALID_PARAM`。
+- 类型过滤与关键词过滤同时生效。
 
 ### 3.4 创作笔记
 
-用户能力：用 WangEditor 编辑富文本笔记。
+**用户能力**
 
-实现：笔记复用设定表，`lore_type_code='note'`，前端 `views/notes` 局部编辑并 debounce 2 秒自动保存。
-笔记不参与检索与 AI 上下文装配。
+- 在项目下新建创作笔记（标题 + 正文）。
+- 编辑笔记并自动保存。
+- 切换笔记、新建笔记、删除笔记。
+- 按标题搜索笔记。
 
-验收点：富文本格式保留；不污染 AI 证据链。
+**实现**
 
-### 3.5 创作规划
+- `frontend/src/views/notes/index.vue`：笔记列表来自 `listLoreNotes`（`api/lore.ts`，
+  固定 `lore_type_code='note'`）；正文编辑用 WangEditor（`rich`）或 MavonEditor（`markdown`）两种模式。
+- `frontend/src/views/notes/index.vue` 的 `scheduleSave` / `saveNote` / `flushSave`：
+  标题与正文走 2 秒防抖自动保存，调用 `POST /lore/save`（带 `lore_ulid` 为更新）；
+  切换笔记前先 `flushSave` 落盘。
+- `service/lore_service.go` 的 `Save`：笔记与设定共用同一条存储链路，`lore_type_code='note'`。
+- `service/chat_context.go` 的 `formatLoreBlock`：注入 AI 上下文时跳过 `note` 类型条目。
 
-用户能力：维护卷/幕/故事块/章节的多层级大纲树；为任一节点维护多个场景卡，
-记录出场角色、地点、冲突、节奏、入场状态、目标、关键选择、结果与出场状态。
+**验收点**
 
-实现：
+- 笔记内容改动后自动保存，界面显示「保存中 / 已保存 / 未保存 / 失败可重试」状态。
+- 切换笔记时未落盘内容先保存，不丢内容。
+- 笔记不出现在 AI 对话的设定注入块中（私人笔记不进入提示词）。
 
-- `domain/outline.go` 定义大纲节点与场景卡的 DO/REQ/VO。
-- `service/outline_service.go` 校验项目归属；含子节点的节点不可删除；
-  `validateParent` 回溯父链阻止把节点挂到自身或后代上。
-- 前端 `/outline/:project_ulid` 提供左树右场景卡编辑界面。
+---
 
-验收点：节点层级与排序可完整保存；有子节点的节点不可直接删除；父节点不能成环；
-场景卡与节点绑定且按项目隔离。
+## 4. 创作规划
 
-### 3.6 连续性看板
+### 4.1 大纲树
 
-用户能力：登记与审核时序事实（候选/确认/取代/失效）；跟踪伏笔状态
-（计划/埋设/呼应/回收/放弃）；保存章节摘要与内容哈希。
+**用户能力**
 
-实现：
+- 新建/编辑大纲节点（标题、摘要、类型、状态、排序、父节点）。
+- 删除大纲节点。
+- 查看项目大纲树（父子层级）。
 
-- `domain/continuity.go` 定义事实、伏笔、摘要结构。
-- `service/continuity_service.go` 校验项目归属与状态编码；
-  `ReviewFact` 只接受 confirmed/superseded/stale，不能退回候选。
-- 前端 `/continuity/:project_ulid` 用标签页分别展示事实、伏笔与摘要。
+**实现**
 
-验收点：候选事实不会自动成为正式事实；伏笔状态流转可追溯；章节摘要可标记 stale 且不自动覆盖正文。
+- `api/outline_api.go` 的 `SaveNode` / `DeleteNode` / `ListTree`。
+- `service/outline_service.go` 的 `SaveNode`：新建时 `sort_order` 缺省取同父节点下
+  `outlineRepo.MaxNodeOrder` + 1，状态缺省 `draft`；`validateParent` 校验父节点归属本项目、
+  不得为自身、不得为自身后代（回溯父链判环）。
+- `service/outline_service.go` 的 `DeleteNode`：`outlineRepo.CountNodesByParent` 大于 0 时
+  返回 `ERR_CONFLICT`，要求先删子节点。
+- `service/outline_service.go` 的 `ListTree`：`outlineRepo.ListNodesByProject` 取全量节点，
+  `attachOutlineChildren` 递归组装父子关系，根节点按排序号升序。
+- `frontend/src/views/outline/index.vue`：树形表格渲染节点，支持新建子节点、编辑、删除。
 
-## 4. 知识库
+**验收点**
 
-### 4.1 上传与索引
+- 父节点设为自身或自身后代返回 `ERR_INVALID_PARAM`。
+- 有子节点的节点删除返回 `ERR_CONFLICT`。
+- 同一父节点下新增节点的排序号递增。
+- 大纲树按层级返回，根节点在顶层，父节点在子节点之前。
 
-用户能力：上传 txt/md/docx/pdf；查看索引状态；失败后重试。
+### 4.2 场景卡
 
-实现：
+**用户能力**
 
-- `api/knowledge_api.go` 接收 multipart 上传（`project_ulid`、`doc_name`、`file`）。
-- `service/knowledge_service.go` 写 MinIO + 落库 `pending` + 投递 RabbitMQ；
-  落库失败时回滚 MinIO 对象。
-- `service/knowledge_worker.go` 消费任务，提取文本、切片、计算内容哈希；
-  `service/knowledge_manticore.go` 负责 Manticore 表结构迁移、回灌、同步与查询；
-  启动时确保表结构为 CJK ngram，旧结构自动重建并回灌。
-- `repo/knowledge_repo.go` 只负责数据库读写；Manticore/MinIO 客户端封装在 infra/repo 边界内。
+- 在大纲节点下新建/编辑场景卡（地点、冲突、节奏、预计字数、入场状态、目标、关键选择、结果、退场状态）。
+- 在场景卡中关联出场角色。
+- 删除场景卡。
+- 按节点查看场景列表。
 
-验收点：上传成功即见 `pending`；索引完成后可检索；失败显示原因；reindex 可恢复。
+**实现**
 
-### 4.2 检索
+- `api/outline_api.go` 的 `SaveScene` / `DeleteScene` / `ListScenes`。
+- `service/outline_service.go` 的 `SaveScene`：校验所属节点归属本项目；角色 ULID 列表经
+  `encodeCharacterULIDs` 编码为 JSON 数组存 `character_ulid_list`；新建时排序号取同节点下
+  `outlineRepo.MaxSceneOrder` + 1。
+- `service/outline_service.go` 的 `ListScenes`：`outline_ulid` 为空查项目全部场景，
+  非空时先校验节点归属再按节点过滤。
+- `service/outline_service.go` 的 `toDetailedSceneVO`：回读时解析角色 ULID JSON 数组，
+  解析失败返回 `ERR_INTERNAL`；空数组回填为 `[]`。
+- `frontend/src/views/outline/index.vue` 的 `submitScene` / `removeScene` / `loadScenes`。
 
-用户能力：输入查询，得到命中切片；查看检索追踪；把命中作为 AI 引用依据。
+**验收点**
 
-实现：
+- 场景卡只能挂在本项目的大纲节点下。
+- 场景卡的关联角色列表回读为数组（无关联时为空数组而非 null）。
+- 按节点过滤只返回该节点下的场景。
+- 删除场景后场景列表中不再出现。
 
-- `POST /knowledge/search` 调 `KnowledgeService.SearchWithTrace`。
-- Manticore 双通道（逐词 OR / 整串短语）召回；RRF 融合；可选 chat 模型按 ID 重排。
-- 响应含 `result_list` 与 `trace`（查询词、MATCH 表达式、候选数、重排说明、选中 ID、通道）。
+---
 
-验收点：无 embedding 配置可用；中文专名可召回；跨项目不串数据；重排失败自动降级。
+## 5. 连续性
 
-### 4.3 文档预览
+### 5.1 时间事实与复核
 
-用户能力：在线查看原文；txt/md 直接渲染，docx/pdf 由前端组件渲染。
+**用户能力**
 
-实现：`GET /knowledge/content` 返回文件流；前端按扩展名选择预览组件（docx-preview / vue-pdf-embed）。
+- 记录时间事实（主体、谓词、客体、有效期章节、来源章节与原文引用）。
+- 对事实做复核（确认 / 取代 / 标记过期）。
+- 按状态与章节筛选事实列表。
 
-验收点：预览内容与上传文件一致；无权限项目无法读取。
+**实现**
 
-## 5. AI 工作台
+- `api/continuity_api.go` 的 `SaveFact` / `ReviewFact` / `ListFacts`。
+- `service/continuity_service.go` 的 `isValidFactStatusCode`：状态只允许
+  `candidate` / `confirmed` / `superseded` / `stale`，其余返回 `ERR_INVALID_PARAM`。
+- `service/continuity_service.go` 的 `SaveFact`：新建状态缺省 `candidate`；
+  更新时状态为空则沿用原状态。
+- `service/continuity_service.go` 的 `ReviewFact`：复核目标状态只允许
+  `confirmed` / `superseded` / `stale`，不能退回 `candidate`；可选写备注。
+- `service/continuity_service.go` 的 `ListFacts`：按状态与章节过滤。
+
+**验收点**
+
+- 新建事实初始状态为 `candidate`，不会自动转正。
+- 复核到非法状态（含退回 `candidate`）返回 `ERR_INVALID_PARAM`。
+- 复核后事实状态变为目标值，列表按状态过滤结果一致。
+
+### 5.2 伏笔钩子
 
-### 5.1 会话管理
+**用户能力**
+
+- 记录伏笔钩子（描述、预期回收、埋设章节、回收章节、重要程度）。
+- 推进伏笔状态（计划中 / 已埋设 / 已呼应 / 已回收 / 已放弃）。
+- 按状态筛选钩子列表。
 
-用户能力：创建、切换、删除 AI 会话；查看历史消息。
+**实现**
 
-实现：`chat_sessions` / `chat_messages` 两张表，`api/chat_api.go` + `service/chat_service.go`
-管理会话生命周期。删除会话级联删除消息。会话名为空时用首条消息前 20 字回填。
+- `api/continuity_api.go` 的 `SaveHook` / `ListHooks`。
+- `service/continuity_service.go` 的 `isValidHookStatusCode` / `isValidImportanceCode`：
+  状态限定五个枚举值，重要程度限定 `high` / `medium` / `low`（缺省 `medium`）。
+- `service/continuity_service.go` 的 `SaveHook`：状态必须显式给出（请求绑定层 `binding:"required"`），
+  更新时状态随保存推进。
+
+**验收点**
+
+- 非法伏笔状态或重要程度被拒（`ERR_INVALID_PARAM`）。
+- 新建钩子的重要程度缺省为 `medium`。
+- 按状态筛选只返回对应状态的钩子。
+
+### 5.3 章节摘要
+
+**用户能力**
+
+- 为章节维护摘要与来源哈希。
+- 按状态与章节筛选摘要列表。
+
+**实现**
+
+- `api/continuity_api.go` 的 `SaveSummary` / `ListSummaries`。
+- `service/continuity_service.go` 的 `isValidSummaryStatusCode`：状态限定
+  `pending` / `verified` / `stale`（缺省 `pending`）。
+- `service/continuity_service.go` 的 `SaveSummary`：带 `summary_ulid` 为更新；
+  不带时先按 `GetSummaryByChapter(project, chapter)` 查同章节已有摘要，存在则更新，不存在才新建。
+
+**验收点**
+
+- 同一章节重复保存摘要只保留一条记录，不产生重复行。
+- 非法摘要状态被拒。
+- 按章节过滤只返回该章节的摘要。
+
+---
+
+## 6. 知识库
+
+### 6.1 上传与索引
+
+**用户能力**
+
+- 上传 txt / md / docx / pdf 资料到项目。
+- 查看文档列表与索引状态。
+- 对失败或已索引文档重新索引。
+- 删除文档。
+
+**实现**
 
-验收点：会话按项目与用户隔离；历史消息顺序正确；删除后不可恢复。
+- `api/knowledge_api.go` 的 `Upload`：`multipart/form-data`，文件字段名 `file`，
+  表单字段 `project_ulid` 与 `doc_name`；其余表单字段交给 `c.ShouldBind` 绑定。
+- `service/knowledge_service.go` 的 `docTypeOfFileName`：只接受 `txt` / `md` / `docx` / `pdf`，
+  其他返回 `ERR_INVALID_PARAM`；上传大小超过 `UploadMaxMB`（默认 20MB）被拒。
+- `service/knowledge_service.go` 的 `Upload`：原文写入 MinIO（对象键为 `doc_ulid`），
+  文档行落库且 `doc_status_code='pending'`；落库失败时回滚删除 MinIO 对象；
+  投递任务失败时把文档状态置为 `failed`。
+- `service/knowledge_service.go` 的 `enqueueIndexJob`：先写 `jobs` 留痕（`queued`），
+  再投递 RabbitMQ `nw_doc_index` 队列；投递失败把任务置 `failed`。
+- `service/knowledge_worker.go` 的 `Run`：消费队列；`handleIndexJob` 内部最多重试 3 次
+  （`maxIndexRetryCount`），仍失败则把任务置 `failed`、文档置 `failed` 并 ack（毒消息不重投）。
+- `service/knowledge_worker.go` 的 `indexDocument`：取原文 → `extractDocumentText` 提取纯文本
+  （txt/md 直读并剥 UTF-8 BOM，docx 解 zip 取 `word/document.xml` 去标签还原实体，
+  pdf 用 `ledongthuc/pdf` 取纯文本）→ `chunkText` 滑窗切片 → `contentHashOf`（sha256 hex）
+  去重并复用同哈希的旧切片 ULID → 事务内先删旧切片再写新切片 → 同步 Manticore →
+  文档状态置 `indexed` 并写 `chunk_count` 与 `total_token_count`。
+- `service/knowledge_worker.go` 的 `chunkText`：窗口 `chunkSize` 字符、步进 `chunkSize - overlap`；
+  窗口内存在换行或句末标点且位置超过窗口一半时优先在边界切分；
+  `overlap >= chunkSize` 收敛为 `chunkSize-1`，负 overlap 归零。
+- `service/knowledge_manticore.go` 的 `ensureManticoreSchema`：建表 DDL 为
+  `(chunk_ulid string, doc_ulid string, project_ulid string, chunk_text text)
+  charset_table='non_cjk,0..9,A..Z->a..z,a..z' ngram_len='1' ngram_chars='cjk'`；
+  `SHOW CREATE TABLE` 结果不含 `ngram_len` 时 `DROP` 后重建并返回 `true` 触发回灌。
+- `service/knowledge_manticore.go` 的 `rebuildManticoreIndex`：表结构升级后从 PG 切片一次性回灌。
+- `service/knowledge_service.go` 的 `Reindex`：只允许 `indexed` / `failed` 状态的文档重投，
+  投递 `doc_reindex` 任务并把状态置回 `pending`。
+- `service/knowledge_service.go` 的 `Delete`：先删 MinIO 对象，再删 Manticore 行，
+  最后事务内删切片与文档行；Manticore 清理失败只告警（降级）。
+
+**验收点**
 
-### 5.2 发送消息
+- 非 txt/md/docx/pdf 文件上传被拒。
+- 超出大小上限的文件上传被拒。
+- 上传后文档状态为 `pending`，索引完成后变为 `indexed` 并带出切片数与 token 数。
+- 文档正文重复上传时，同哈希切片的 ULID 保持不变。
+- 索引失败时文档状态为 `failed` 且带出错误信息；重投后重新进入索引流程。
+- 删除文档后 MinIO 对象、Manticore 行、切片行与文档行都不存在。
 
-用户能力：输入文本或 `/技能`，携带当前章节与 @引用，选择历史条数与模型，
-发送消息并看到流式回复。
+### 6.2 检索
 
-实现：`POST /chat/send` 返回 SSE；service 先解析技能、装配上下文、检索资料，再调用模型；
-流结束在事务内落库助手消息与 AI 字数统计。
+**用户能力**
 
-验收点：流式逐字展示；停止可取消；done 事件含完整回复与召回依据；失败有明确错误码且不落半截消息。
-
-### 5.3 斜杠技能
-
-用户能力：从补全列表选择技能；管理内置/自定义技能模板。
-
-实现：`internal/ai/skills.go` 定义九个内置技能；`slash_commands` 表存模板；
-`/slash/parse` 解析正文中的命令；提示词模板只影响上下文，不改变链路。
-
-验收点：内置技能不可删；自定义技能立即出现在补全列表；技能命中后模型回复符合模板意图。
-
-### 5.4 上下文与引用
-
-用户能力：@引用文档与章节；设置历史条数；查看模型实际依据。
-
-实现：请求带 `ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_message_ulid_list`；
-`ai.AssembleContext` 按优先级与字符预算裁剪；`done` 事件携带召回列表。
-引用章节首项视为当前章，其前后章的梗概作为 `chapter_summary` 块注入。
-
-验收点：显式引用优先于普通召回；超预算有裁剪记录；私人笔记不注入；
-引用越界的章节或文档直接报错。
-
-### 5.5 插入正文
-
-用户能力：把 AI 回复插入当前章节，必要时先创建快照。
-
-实现：前端把 `done` 事件的完整文本插入 CodeMirror；章节更新走同一 `POST /chapter/update`，
-服务端重新计算字数并维护统计。
-
-验收点：未点击插入时正文不变；插入后可回滚到快照。
-
-## 6. 模型生态
-
-### 6.1 供应商管理
-
-用户能力：添加 OpenAI 兼容或 Anthropic 供应商；设置地址、密钥、模型；测试连通；设为默认；启停。
-
-实现：`model_providers` 表 + AES-256-GCM 加密；`ai.Client.Probe` 发起最小对话请求；
-默认供应商全局唯一，切换时由 service 保证旧默认被取消。
-
-验收点：密钥只回显掩码；测试成功才允许切默认；禁用供应商不被对话链路选中。
-
-### 6.2 模型选择
-
-用户能力：在 AI 面板选择本次调用的供应商。
-
-实现：`GET /model/chat_options` 返回 `{capability_vo, provider_list}`；
-`ChatSendREQ.provider_ulid` 指定覆盖；空值走默认供应商。
-
-验收点：切换后立即生效；禁用项不可选；无可用供应商时页面给出配置指引。
-
-## 7. 可视化与运维
-
-### 7.1 数据总览
-
-用户能力：查看项目数、字数、今日新增、AI 生成字数与近 30 天趋势。
-
-实现：`repo/stats_repo.go` 从 `projects` 与 `word_count_stats` 聚合，ECharts 渲染双系列。
-
-验收点：趋势与章节字数变化一致；空数据展示空态而非报错。
-
-### 7.2 用量分析
-
-用户能力：按 7/14/30 天查看调用次数、token、成功率、延迟与分布。
-
-实现：`ai.UsageRecorder` 缓冲调用，`repo/model_usage_repo.go` 按日 upsert；
-管理端 `GET /model/usage/overview` 聚合，缺失日补零。
-
-验收点：流式调用结束后用量被补记；失败调用计入失败数；分布表与分析卡一致。
-
-### 7.3 运行状态
-
-用户能力：查看进程信息、依赖健康、模型能力结论。
-
-实现：`service/system_status_service.go` 并行探测 PG/Redis/RabbitMQ/MinIO/Manticore 与模型；
-前端显示耗时与结论，失败页有重试入口。
-
-验收点：某个依赖不可用时显示 degraded/down 而非空白；探测不影响主业务请求。
-
-## 8. 跨模块约束
-
-| 约束 | 实现方式 |
-| --- | --- |
-| 项目隔离 | 所有业务查询强制带 `project_ulid` |
-| 权限收口 | 管理路由挂权限中间件，前端只隐藏入口不代替鉴权 |
-| 响应一致 | 所有 API 走 `pkg.Ok` / `pkg.Fail` |
-| 错误可追踪 | 响应 `trace_id` 与日志 `request_id` 同源 |
-| 交互有反馈 | 写操作 toast、加载态、空态、错误重试 |
-| 文件可维护 | Go 文件 ≤500 行；前端页面超限拆 CSS/子组件 |
-| 无向量模型 | 检索只用词法 + 结构化 + chat 重排；配置与 UI 均无向量项 |
+- 在项目知识库中按关键词检索资料片段。
+- 选择 keyword 或 hybrid 检索模式。
+- 查看检索过程（查询词、候选规模、入选切片、是否重排）。
+
+**实现**
+
+- `api/knowledge_api.go` 的 `Search` 返回结果列表与检索过程。
+- `service/knowledge_service.go` 的 `normalizeSearchMode`：仅 `hybrid` 走双通道，其余（含空值）按 `keyword`。
+- `service/knowledge_service.go` 的 `extractQueryTerms`：CJK 连续串按 2-gram 切分，
+  拉丁串按字母数字切分并去重去标点；无词时回退原查询串。
+- `service/knowledge_service.go` 的 `searchKeywordChannel`：走 Manticore MATCH，命中后回表取切片正文，
+  并写入 BM25 相关度与来源通道标记。
+- `service/knowledge_service.go` 的 `fuseSearchResults`：RRF 融合，
+  得分 `Σ 1/(60+rank)`（`rrfRankConstant=60`）；同一切片跨通道命中得分累加且标记为 `hybrid`；
+  得分降序后截断到 topK。
+- `service/knowledge_service.go` 的 `maybeRerank`：用当前对话模型对候选切片重排，
+  8 秒超时；解析失败或模型不可用时 fail-open 保留原顺序，并在检索过程里写明降级原因。
+- `service/knowledge_service.go` 的 `SearchWithTrace`：查询词为空返回 `ERR_INVALID_PARAM`；
+  `top_k` 缺省取 `RAGTopK`（默认 6）；hybrid 模式下某通道失败时降级到另一通道并记 warn。
+- `service/knowledge_service.go` 的 `mustOwnDoc`：文档 `project_ulid` 为空或为 `"0"`（全局库）时放行，
+  否则校验项目归属。
+
+**验收点**
+
+- 检索结果带出切片正文、得分与来源通道（`term` / `phrase` / `hybrid`）。
+- 同一片段被两个通道命中时排在单通道命中之前，且来源标记为 `hybrid`。
+- 未配置模型供应商时检索仍可用，检索过程写明未重排。
+- 查询词为空时返回 `ERR_INVALID_PARAM`。
+- 他人项目的文档不可被检索到。
+
+### 6.3 切片查看与原文预览
+
+**用户能力**
+
+- 分页查看文档切片。
+- 预览文档原文（txt / md / docx / pdf）。
+
+**实现**
+
+- `api/knowledge_api.go` 的 `ChunkList`：`GET /knowledge/chunk/list` 分页返回切片序号与文本。
+- `api/knowledge_api.go` 的 `Content`：`GET /knowledge/content` 从对象存储取回原文，
+  按类型设置 `Content-Type`（txt / md / docx / pdf），并带 `Content-Disposition: inline` 文件名。
+- `service/knowledge_service.go` 的 `GetContent`：读取上限 25 MiB（`contentMaxBytes`）。
+- `frontend/src/views/knowledge/ChunkListDialog.vue`：分页展示切片。
+- `frontend/src/views/knowledge/KnowledgePreviewDrawer.vue`：`fetchKnowledgeContent` 取 Blob，
+  txt/md 走文本渲染，pdf 走 `URL.createObjectURL` 内嵌预览，docx 走 `docx-preview`。
+
+**验收点**
+
+- 切片弹窗按序号与正文分页展示。
+- 预览抽屉能渲染 txt/md 文本；pdf 可在浏览器内查看。
+- 越权访问他人文档原文返回 `ERR_FORBIDDEN`。
+
+---
+
+## 7. AI 工作台
+
+### 7.1 会话管理
+
+**用户能力**
+
+- 在项目下新建 AI 会话。
+- 查看会话列表、切换会话、删除会话。
+- 查看会话历史消息。
+
+**实现**
+
+- `api/chat_api.go` 的 `SessionCreate` / `SessionList` / `SessionDelete` / `History`。
+- `service/chat_service.go` 的 `SessionCreate`：校验项目归属；会话名可显式指定。
+- `service/chat_service.go` 的 `SessionList`：`chatRepo.ListSessionsByProject`，返回非 nil 列表。
+- `service/chat_service.go` 的 `SessionDelete`：`mustOwnSession` 校验归属后
+  `chatRepo.DeleteSessionWithMessages` 级联删消息。
+- `service/chat_service.go` 的 `History`：按 `created_at` 升序返回全量消息，
+  包在 `PageDTO` 中，`total` 为消息条数。
+- `service/chat_service.go` 的 `resolveSession`：`session_ulid` 为空时自动建会话；
+  非空时校验归属且会话项目必须与请求项目一致，否则 `ERR_INVALID_PARAM`。
+- `frontend/src/views/workspace/AiPanel.vue` 的 `loadSessions` / `handleCreateSession` /
+  `handleDeleteSession` / `selectSession`。
+
+**验收点**
+
+- 会话名在首条消息发出后按正文前 20 字自动回填（`sessionNameRunes`）。
+- 首次发送消息若未指定会话，服务端自动创建会话并通过 SSE 事件回传 `session_ulid`。
+- 删除会话后其消息一并删除；他人会话返回 `ERR_FORBIDDEN`。
+- 历史消息按时间正序返回。
+
+### 7.2 发送与流式生成
+
+**用户能力**
+
+- 输入正文发起 AI 生成，实时看到增量输出。
+- 中途停止生成。
+- 生成失败后重试。
+- 在生成完成后查看 AI 依据并把回复插入章节正文。
+
+**实现**
+
+- `api/chat_api.go` 的 `Send`：`POST /chat/send` 返回 `text/event-stream`；
+  流开始前的失败输出 JSON 错误包络，流开始后的失败只能随流下发。
+- `api/chat_api.go` 的 `sseChatWriter`：事件行 `data: {json}`，心跳为 `: ping` 注释行；
+  `begin()` 标记响应头已提交。
+- `service/chat_service.go` 的 `Send` 主链路：技能解析 → 会话解析 → 读取会话消息 →
+  显式引用校验 → 历史选取 → 上下文素材加载 → 上下文装配 → 预算裁剪 → 落库用户消息 →
+  构造消息序列 → 取供应商规格 → 流式生成 → 落库助手消息与 AI 字数 → 发 `done` 事件。
+- `service/chat_service.go` 的 `chatEventWriter.emit`：`seq` 从 1 单调递增；
+  `reference_list` 缺省为空数组。
+- `service/chat_service.go` 的 `streamChat`：15 秒无输出发心跳（`chatPingInterval`）；
+  客户端断开即中止生成且不落库助手消息；流结束或失败时通过
+  `aiClient.RecordStreamUsage` 上报用量。
+- `service/chat_service.go` 的 `resolveSkill`：请求带 `skill_code` 时按编码取启用中的技能；
+  否则解析正文首 token 的斜杠命令；未命中技能则全文作为用户正文。
+- `service/chat_service.go` 的 `loadContextInput`：装配引用章节（首项为当前章）、
+  当前章前后章梗概、@引用文档全文、项目角色卡、项目设定条目；
+  RAG 召回失败时降级为空上下文，不阻断生成；引用章节不属于本项目或文档越权直接报错。
+- `service/chat_context.go` 的 `buildContextBlocks`：产出上下文块，
+  优先级为 skill(100) > current_chapter(90) > ref_chapter / ref_doc(80) > rag(70) >
+  chapter_summary(60) > character / lore(50) > history(40)；技能命中时渲染
+  `{{user_input}}` / `{{chapter_content}}` / `{{context}}` 并把渲染结果作为最高优先级块。
+- `ai/prompt.go` 的 `AssembleContext`：按优先级降序装配，超出字符预算（`ContextBudgetChars=12000`）
+  的块整块丢弃并返回被丢弃的块键；空块直接跳过；同优先级保持输入顺序。
+- `ai/prompt.go` 的 `RenderPrompt`：命中占位符替换为值，缺失占位符替换为空串。
+- `ai/prompt.go` 的 `SystemPrompt`：生成系统提示词，并注入项目文风约束。
+- `service/chat_context.go` 的 `buildChatMessages`：消息序列为
+  system → 【上下文】装配文本（为空则省略）→ 历史消息（按 role 映射）→ 最终指令。
+- `service/chat_context.go` 的 `selectHistoryMessages`：取最近 n 条为常规历史（旧→新）；
+  显式引用消息必注入、去重后按时间旧→新追加到尾部；n ≤ 0 时不注入常规历史。
+- `service/chat_context.go` 的 `validateRefMessages`：显式引用消息必须属于当前会话，去重保序。
+- `service/chat_service.go` 的 `estimateTokenCount`：按 rune 数 × 0.75 估算 token。
+- `frontend/src/composables/useSSE.ts` 的 `streamSsePost`：用 `fetch` + `ReadableStream` 读流，
+  `parseSseBuffer` 逐块解析；`useSSE` 提供 `startStream` / `stopStream`，
+  重复调用会先中止上一条流。
+- `frontend/src/views/workspace/AiPanel.vue` 的 `runStream`：`chunk` 事件增量追加，
+  `done` 事件覆盖为完整回复并挂 RAG 依据，`error` 事件落错误气泡可重试。
+- `frontend/src/views/workspace/ChapterEditor.vue` 的 `insertTextAtCursor`：在光标处插入文本；
+  `frontend/src/views/workspace/index.vue` 的 `handleInsertToChapter`：把 AI 回复插入当前章节。
+
+**验收点**
+
+- SSE 事件的 `seq` 从 1 起单调递增，事件类型为 `chunk` / `done` / `error`。
+- 流开始前的失败（如供应商未配置）返回 JSON 错误包络，而不是 SSE 事件。
+- 点击停止后不再追加增量输出，助手消息不落库（用户消息仍保留）。
+- 生成完成后助手消息与用户消息都出现在会话历史中。
+- `done` 事件的 `reference_list` 带回本次 RAG 召回依据。
+- 插入章节后正文包含 AI 回复内容，并走同一自动保存通道。
+
+### 7.3 技能（斜杠命令）
+
+**用户能力**
+
+- 在输入框用 `/` 触发技能补全。
+- 以斜杠命令方式发起创作任务（续写、大纲、润色、扩写、缩写、梗概、审稿、取名、设定问答）。
+- 在后台管理技能：新建、编辑提示词模板、启用/停用、删除。
+
+**实现**
+
+- `ai/skills.go` 的 `builtinSkillList`：9 个内置技能资产（`continue` / `outline` / `polish` /
+  `expand` / `condense` / `summary` / `review` / `name` / `setting`），含分类、说明与提示词模板。
+- `service/slash_service.go` 的 `SeedBuiltin`：按 `command_code` 查缺补插，
+  已存在不覆盖（保留用户对提示词的定制），`builtin_flag=true`。
+- `service/slash_service.go` 的 `parseSlashContent`：正文首 token 形如 `/code` 且命中启用命令时
+  剥离命令，剩余正文进 `remainder_text` 与 `placeholder_map["user_input"]`；
+  未命中时正文原样保留且 `skill_code` 为空。
+- `service/slash_service.go` 的 `Save`：新建命令 `builtin_flag=false`；
+  更新时 `builtin_flag` 不入更新列（不可变更）。
+- `service/slash_service.go` 的 `Delete`：内置命令拒删，返回 `ERR_BIZ_FAILED`。
+- `frontend/src/views/workspace/ChatComposer.vue`：输入时按 `/` 与 `@` 触发弹层，
+  键盘上下选择、Enter/Tab 确认；选中技能后以 `skill_code` 徽标形式提交。
+- `frontend/src/views/slash-admin/index.vue`：技能管理页。
+
+**验收点**
+
+- 正文首 token 命中启用命令时命令被剥离，剩余正文作为参数进入提示词模板。
+- 未知命令、已停用命令、命令不在首 token 三种情况正文原样保留（不进入技能分支）。
+- 停用某技能后输入该命令不再命中。
+- 内置技能在管理页不可删除；可修改其提示词模板且重启后不被覆盖。
+- 技能缺省分类与排序号在管理页可见。
+
+### 7.4 引用与插入
+
+**用户能力**
+
+- 用 `@` 选择知识库文档或本项目章节作为引用素材。
+- 在引用选择器中按名称过滤。
+- 移除已选引用。
+
+**实现**
+
+- `frontend/src/views/workspace/ChatComposer.vue` 的 `AT_TOKEN_REGEXP` 与 `refPicker`：
+  候选来源为 `listKnowledgeDocuments` 的文档列表与工作台扁平章节列表，两类二选一切换。
+- `service/chat_service.go` 的 `loadContextInput`：引用章节必须属于本项目，
+  否则 `ERR_INVALID_PARAM`；引用文档必须属于本项目或为全局库（`project_ulid == "0"`），
+  否则 `ERR_FORBIDDEN`。
+- `service/chat_context.go` 的 `loadDocFullText`：按 `chunk_index` 升序分页（每页 200 条）
+  拼接文档全部切片文本。
+- `service/chat_context.go` 的 `buildContextBlocks`：当前章块优先级 90，
+  引用章与引用文档块优先级 80。
+
+**验收点**
+
+- 引用当前章节时上下文块优先级为 90；引用其他章节或文档为 80。
+- 引用他人文档返回 `ERR_FORBIDDEN`；引用不存在的章节返回 `ERR_INVALID_PARAM`。
+- 移除引用后请求体不再携带对应 ULID。
+- 引用文档的全文由该文档全部切片拼接而成。
+
+---
+
+## 8. 模型生态
+
+### 8.1 供应商管理
+
+**用户能力**
+
+- 新建/编辑模型供应商（名称、协议、网关地址、API Key、对话模型、温度、输出上限）。
+- 设为默认供应商。
+- 连通性测试。
+- 删除供应商。
+
+**实现**
+
+- `api/model_provider_api.go` 的 `List` / `Save` / `Delete` / `Test`。
+- `service/model_provider_service.go` 的 `SeedDefault`：`model_providers` 表为空时按配置播种一条默认供应商
+  （`default_flag=true`、`enabled_flag=true`、测试状态 `untested`）；表非空时不播种。
+- `service/model_provider_service.go` 的 `Save`：首次创建必须给 API Key（否则 `ERR_INVALID_PARAM`）；
+  密钥经 `pkg.SealSecret` 封存为密文；`default_flag` 为真时先 `providerRepo.ClearDefault` 保证全局唯一；
+  Anthropic 协议下自动去掉地址末尾的 `/v1`（SDK 自行拼接）。
+- `service/model_provider_service.go` 的 `Delete`：默认供应商拒删，返回 `ERR_BIZ_FAILED`。
+- `service/model_provider_service.go` 的 `Test`：`gateway.Probe` 只验证对话通道，
+  结果（状态、延迟、说明）回写供应商记录 `last_test_status_code` / `last_test_message` / `last_test_at_ms`。
+- `service/model_provider_service.go` 的 `toVO`：API Key 只回显掩码
+  （`maskSecret`：保留首 4 位与末 3 位，长度 ≤ 10 时全掩码）；无法解密时提示重新填写。
+- `service/model_provider_service.go` 的 `specOf`：`pkg.OpenSecret` 解封密钥，
+  解封失败返回「供应商密钥无法解密，请重新填写 API Key」。
+- `api/router.go` 的 `registerModelRoutes`：供应商写操作收口到 `system:model:manage`，
+  列表与能力探测对所有登录用户开放。
+
+**验收点**
+
+- 列表与详情中不出现明文 API Key，只出现掩码。
+- 首次创建不填 API Key 返回 `ERR_INVALID_PARAM`。
+- 默认供应商全局唯一，删除默认供应商被拒。
+- 连通性测试成功与失败都回写状态，界面能看到最近一次测试结论与时间。
+- 更换 `NW_JWT_SECRET` 后旧密文无法解封，页面提示重新填写 API Key。
+
+### 8.2 模型选择与能力
+
+**用户能力**
+
+- 在 AI 面板选择本次对话使用的供应商。
+- 查看当前 AI 能力结论与提示。
+
+**实现**
+
+- `api/model_provider_api.go` 的 `Capability` 返回 `ModelCapabilityVO`；
+  `ChatOptions` 返回能力视图与供应商列表。
+- `service/model_provider_service.go` 的 `Capability`：存在默认供应商则 `chat_ready=true`
+  并带出其 ULID、名称与对话模型名；未配置时给出提示文案（知识库仍可关键词检索）。
+- `service/model_provider_service.go` 的 `ChatSpec` / `ChatSpecOf`：
+  未指定供应商时取默认；指定供应商不存在或已停用时返回 `ERR_INVALID_PARAM`。
+- `service/chat_service.go` 的 `Send`：`providerSpec` 解析失败发生在流开始前，
+  由 API 层输出 JSON 错误包络。
+- `frontend/src/views/workspace/AiPanel.vue` 的 `loadModelOptions`：模型下拉只列启用中的供应商，
+  默认选中默认供应商；加载失败时降级为空列表，面板照常可用。
+
+**验收点**
+
+- 未配置供应商时 `chat_ready=false`，AI 生成返回 `ERR_AI_PROVIDER`。
+- 选择停用中的供应商发起对话返回 `ERR_INVALID_PARAM`。
+- AI 面板的模型下拉只显示启用中的供应商。
+- 能力提示文案与实际供应商配置一致。
+
+---
+
+## 9. 可视化与运维
+
+### 9.1 数据总览
+
+**用户能力**
+
+- 查看项目数、累计字数、今日新增、AI 累计字数。
+- 查看近 30 天字数趋势。
+- 在项目列表中新建、编辑、删除项目。
+
+**实现**
+
+- `api/stats_api.go` 的 `Overview`：`GET /stats/overview`，`project_ulid` 为空为全局统计。
+- `service/stats_service.go` 的 `Overview`：`CountProjects` / `SumTotalWordCount` /
+  `SumWordDeltaByDate`（今日） / `SumAIWordTotal`。
+- `service/stats_service.go` 的 `trendList`：覆盖近 30 天（含今日），缺日期补零。
+- `frontend/src/views/dashboard/index.vue`：`loadStatsOverview` 拉数据，
+  `renderTrendChart` 用 ECharts 渲染趋势图，`loadProjectList` 渲染项目表。
+
+**验收点**
+
+- 全局视图与项目视图的统计口径不同：指定项目时只统计该项目。
+- 趋势数组固定 30 个点，缺失日期补零而非缺项。
+- 仪表盘项目表可新建、编辑、删除项目。
+
+### 9.2 用量分析
+
+**用户能力**
+
+- 查看区间内每日调用数、token 用量与平均延迟。
+- 查看按供应商、按模型的分组用量。
+- 切换统计区间。
+
+**实现**
+
+- `api/model_usage_api.go` 的 `Overview`：`GET /model/usage/overview`，权限码 `system:usage:read`。
+- `service/model_usage_service.go` 的 `RecordUsage`：内存缓冲按
+  「日期 | 供应商 | 模型 | 调用类型」聚合计数、token 与延迟累加。
+- `service/model_usage_service.go` 的 `flushLoop`：每 5 秒落库一次，进程退出时做最后一次落库；
+  落库失败只告警并丢弃该批缓冲。
+- `service/model_usage_service.go` 的 `Overview`：查询前先 `Flush`，避免刚发生的调用不可见；
+  缺日补零保证图表连续；平均延迟按每日调用数加权（`weightedAvgLatency`）。
+- `service/model_usage_service.go` 的 `resolveUsageRange`：缺省近 14 天；
+  非法日期回退为合法日期；起止倒置自动纠正。
+- `frontend/src/views/admin/usage.vue`：`loadOverview` 拉数据，`renderTrendChart` 渲染趋势图，
+  `handleRangeChange` 切换区间。
+
+**验收点**
+
+- 用量趋势的日期连续，缺失日显示为 0。
+- 区间参数非法或倒置时界面仍能展示合法区间数据。
+- 发起一次模型调用后，用量页的调用数与 token 数随之增长。
+- 无权限用户访问用量接口返回 `ERR_FORBIDDEN`。
+
+### 9.3 运行状态
+
+**用户能力**
+
+- 查看 PostgreSQL、Redis、RabbitMQ、MinIO、Manticore 的健康状态与延迟。
+- 查看模型供应商（对话）是否可用。
+- 查看服务启动时间、运行时长、Go 版本与构建版本。
+
+**实现**
+
+- `api/system_status_api.go` 的 `Status`：`GET /system/status`，权限码 `system:status:read`。
+- `service/system_status_service.go` 的 `Status`：五个依赖探针并发执行，
+  单项失败不影响其余结果。
+- `service/system_status_service.go` 的 `probeDependency`：探针未配置记为 `degraded`（未配置）；
+  必需依赖（PostgreSQL）失败记为 `down`，其余失败记为 `degraded`；延迟取毫秒。
+- `service/system_status_service.go` 的 `Status` 末尾追加「模型供应商（对话）」一项，
+  状态取自 `providerSvc.Capability` 的 `chat_ready`。
+- `cmd/server/main.go`：各探针实现为 PG `PingContext`、Redis `Ping`、
+  RabbitMQ 连接状态与队列声明、MinIO 桶存在性、Manticore `Ping`。
+- `frontend/src/views/admin/status.vue`：`loadStatus` 拉数据并渲染依赖状态列表。
+
+**验收点**
+
+- 停掉某个中间件后对应依赖显示为不可用，其余依赖状态不受影响。
+- 未配置某依赖时显示「未配置」而不是「正常」。
+- 未配置模型供应商时，模型项显示不可用且带出提示文案。
+- 页面展示服务运行时长与构建版本。
+
+---
+
+## 10. 扩展
+
+### 10.1 创作流程设计器
+
+**用户能力**
+
+- 在 BPMN 画布上编辑作品创作流程。
+- 新建、保存、载入流程草稿。
+- 导入 / 导出 BPMN XML 文件。
+- 管理多份本地草稿。
+
+**实现**
+
+- `frontend/src/views/workflow/index.vue`：基于 `bpmn-js` 的 `Modeler` 绘制画布；
+  提供一份默认流程（选题 → 大纲 → 起草 → 复核 → 定稿）。
+- `frontend/src/views/workflow/index.vue` 的 `readDraftList` / `persistDraftList`：
+  草稿保存在浏览器 `localStorage`，键 `nw_workflow_draft_list_v1`。
+- `frontend/src/views/workflow/index.vue` 的导出逻辑：用 `Blob` 生成
+  `application/xml;charset=utf-8` 并触发浏览器下载；导入走文件选择读取 XML。
+
+**验收点**
+
+- 草稿刷新页面后仍在（存于 localStorage）。
+- 导出的 `.bpmn` 文件可被重新导入并还原画布。
+- 草稿列表按更新时间倒序。
+- 流程草稿不进入业务数据库。
+
+### 10.2 微前端装载
+
+**用户能力**
+
+- 登记子应用入口（名称、入口地址、路由前缀）。
+- 启用/停用子应用。
+- 装载与卸载已登记的子应用。
+
+**实现**
+
+- `frontend/src/views/micro-app/index.vue`：使用 `qiankun` 的 `loadMicroApp` 装载子应用，
+  卸载时调用返回实例的卸载方法。
+- `frontend/src/views/micro-app/index.vue` 的 `readAppList` / `persistAppList`：
+  登记表保存在浏览器 `localStorage`，键 `nw_micro_app_registry_v1`。
+- 入口地址用 `new URL(...)` 校验，非法地址给出提示并拒绝登记。
+
+**验收点**
+
+- 登记表刷新页面后仍在。
+- 非法入口地址无法登记。
+- 装载后子应用渲染在挂载点内，卸载后挂载点清空。
+- 子应用登记信息不进入业务数据库。
+
+---
+
+## 11. 前端工作台装配
+
+**用户能力**
+
+- 登录后进入仪表盘；在项目间切换；进入写作台与各项目子页面。
+
+**实现**
+
+- `frontend/src/router/index.ts`：路由表覆盖仪表盘、配置、技能管理、流程、微前端、
+  用户/角色/审计/用量/状态，以及项目内的工作台、知识库、角色、笔记、大纲、连续性页面。
+- `frontend/src/router/index.ts` 的 `beforeEach`：无 token 访问非公开页跳 `/login`；
+  已登录访问 `/login` 重定向首页；公开页白名单只有 `/login`。
+- `frontend/src/api/http.ts`：axios 实例注入 `Authorization: Bearer <token>`；
+  响应拦截器解包 `data`、统一错误提示；遇 `ERR_UNAUTHORIZED` 清 token 并跳登录页。
+- `frontend/src/views/workspace/index.vue`：三栏工作台（左目录树 / 中章节编辑器 / 右 AI 面板），
+  切换章节前先 `flushSave` 落盘当前内容。
+- `frontend/src/views/workspace/ChapterEditor.vue`：CodeMirror 编辑器 + 防抖自动保存。
+
+**验收点**
+
+- 未登录访问任何业务页跳转到登录页。
+- 令牌失效时前端自动清 token 并回到登录页。
+- 工作台切换章节时上一章的未保存内容先落盘，不丢内容。
+- 同一错误只弹一次提示。

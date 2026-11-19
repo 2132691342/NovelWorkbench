@@ -7,6 +7,7 @@ import "time"
 // ULID 业务前缀常量：所有主键形如 PRJ_01HXXX，便于肉眼识别与日志排错。
 const (
 	IDPrefixUser            = "USR_" // 用户
+	IDPrefixRequest         = "REQ_" // 请求链路 ID
 	IDPrefixProject         = "PRJ_" // 小说项目
 	IDPrefixVolume          = "VOL_" // 卷
 	IDPrefixChapter         = "CHP_" // 章节

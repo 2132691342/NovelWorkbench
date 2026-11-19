@@ -37,22 +37,22 @@
 
 .knowledge-page__status.is-pending {
   color: var(--info);
-  background-color: #dbeafe;
+  background-color: var(--info-border);
 }
 
 .knowledge-page__status.is-indexing {
   color: var(--warning);
-  background-color: #fef3c7;
+  background-color: var(--warning-border);
 }
 
 .knowledge-page__status.is-indexed {
   color: var(--success);
-  background-color: #d1fae5;
+  background-color: var(--success-border);
 }
 
 .knowledge-page__status.is-failed {
   color: var(--error);
-  background-color: #fee2e2;
+  background-color: var(--error-border);
 }
 
 .knowledge-page__pagination {

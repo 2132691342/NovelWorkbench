@@ -39,9 +39,9 @@
 }
 
 .models-page__capability.is-ready {
-  border-color: #a7f3d0;
-  background-color: #ecfdf5;
-  color: #047857;
+  border-color: var(--success-border);
+  background-color: var(--success-bg);
+  color: var(--success-text);
 }
 
 .models-page__capability.is-ready .models-page__capability-dot {
@@ -49,15 +49,15 @@
 }
 
 .models-page__capability.is-degraded {
-  border-color: #fde68a;
-  background-color: #fffbeb;
-  color: #b45309;
+  border-color: var(--warning-border);
+  background-color: var(--warning-bg);
+  color: var(--warning-text);
 }
 
 .models-page__capability.is-down {
-  border-color: #fecaca;
-  background-color: #fef2f2;
-  color: #b91c1c;
+  border-color: var(--error-border);
+  background-color: var(--error-bg);
+  color: var(--error-text);
 }
 
 .models-page__capability.is-down .models-page__capability-dot {
@@ -134,13 +134,13 @@
 }
 
 .provider-card__status.is-success {
-  background-color: #d1fae5;
-  color: #047857;
+  background-color: var(--success-border);
+  color: var(--success-text);
 }
 
 .provider-card__status.is-failed {
-  background-color: #fee2e2;
-  color: #b91c1c;
+  background-color: var(--error-border);
+  color: var(--error-text);
 }
 
 .provider-card__meta {

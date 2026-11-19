@@ -1,12 +1,21 @@
+// 本文件覆盖知识库检索链路与索引表迁移链路：
+// 文本切片 → 查询词抽取 → 检索模式归一 → RRF 融合排序 → chat 重排解析与 fail-open；
+// 以及 Manticore 中文 ngram 表结构的旧表重建与回灌判定。
+// 这两条链路决定了"资料能否被找到、找到的顺序是否可信"，任一环节算错都会直接误导作者。
+
 package service
 
 import (
+	"context"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/ai"
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
+	"github.com/2132691342/NovelWorkbench/backend/internal/infra"
 )
 
 // searchHit 构造检索命中。
@@ -14,8 +23,7 @@ func searchHit(chunkULID string) domain.KnowledgeChunkVO {
 	return domain.KnowledgeChunkVO{ChunkULID: chunkULID, ChunkText: chunkULID}
 }
 
-// TestKnowledgeRetrievalChain 覆盖无向量检索的完整链路：
-// 文本切片 → 查询词抽取 → 检索模式归一 → RRF 融合排序 → chat 重排解析与 fail-open。
+// TestKnowledgeRetrievalChain 覆盖无向量检索的完整链路。
 func TestKnowledgeRetrievalChain(t *testing.T) {
 	// ---- 环节一：切片 ----
 	chunks := chunkText("  短文本  ", 100, 10)
@@ -132,5 +140,55 @@ func TestKnowledgeRetrievalChain(t *testing.T) {
 		if _, err := ai.ParseRerankIDs(bad, allowed); err == nil {
 			t.Fatalf("重排解析 %q 应失败并降级", bad)
 		}
+	}
+
+	// ---- 环节七：默认召回条数解析（应用配置缺失时回退全局配置） ----
+	svc := &KnowledgeService{config: KnowledgeIndexConfig{RAGTopK: 9}}
+	if got := svc.resolveRAGTopK(context.Background()); got != 9 {
+		t.Fatalf("无应用配置时应回退全局配置，got = %d, want 9", got)
+	}
+}
+
+// TestManticoreSchemaMigrationChain 覆盖 Manticore 中文 ngram 表结构迁移：
+// 旧全文表按新结构重建且仅迁移一次，新结构启动不重建。
+func TestManticoreSchemaMigrationChain(t *testing.T) {
+	var queries []string
+	legacy := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.FormValue("query")
+		queries = append(queries, query)
+		switch {
+		case strings.HasPrefix(query, "SHOW CREATE TABLE"):
+			if legacy {
+				_, _ = w.Write([]byte(`[{"Create Table":"min_infix_len='3' morphology='none'"}]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{"Create Table":"ngram_len='1' ngram_chars='cjk'"}]`))
+		case strings.HasPrefix(query, "DROP TABLE"):
+			legacy = false
+		}
+		_, _ = w.Write([]byte(`[{"total":0}]`))
+	}))
+	defer server.Close()
+	client := infra.NewManticore(&infra.ManticoreConfig{BaseURL: server.URL})
+
+	rebuilt, err := ensureManticoreSchema(context.Background(), client, "nw_chunks")
+	if err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+	if !rebuilt {
+		t.Fatal("legacy table should be rebuilt")
+	}
+	if len(queries) != 4 || !strings.HasPrefix(queries[1], "SHOW CREATE TABLE") ||
+		!strings.HasPrefix(queries[2], "DROP TABLE") || !strings.Contains(queries[3], "ngram_len='1'") {
+		t.Fatalf("unexpected migration sequence: %v", queries)
+	}
+
+	rebuilt, err = ensureManticoreSchema(context.Background(), client, "nw_chunks")
+	if err != nil {
+		t.Fatalf("ensure schema again: %v", err)
+	}
+	if rebuilt {
+		t.Fatal("migrated table should not rebuild again")
 	}
 }

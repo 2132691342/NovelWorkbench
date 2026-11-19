@@ -323,11 +323,11 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 		input.DocList = append(input.DocList, docSource{DocName: doc.DocName, FullText: fullText})
 	}
 	if strings.TrimSpace(userInput) != "" {
+		// TopKCount 留空，由知识库服务按应用配置 rag_top_k 解析
 		hits, err := s.knowledgeService.Search(ctx, userULID, &domain.KnowledgeSearchREQ{
 			ProjectULID: req.ProjectULID,
 			KeywordText: userInput,
 			SearchMode:  domain.SearchModeHybrid,
-			TopKCount:   s.config.RAGTopK,
 		})
 		if err != nil {
 			pkg.SLogger().Warnw("RAG 召回失败，降级为空上下文", "error", err)

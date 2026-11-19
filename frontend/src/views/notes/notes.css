@@ -103,6 +103,10 @@
 .notes-page__name-input {
   flex: 1;
 }
+.notes-page__editor-mode {
+  flex: 0 0 auto;
+}
+
 
 .notes-page__editor-body {
   flex: 1;

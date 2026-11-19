@@ -1,3 +1,8 @@
+// 本文件覆盖 AI 对话请求准备链路的全部环节：
+// 正文解析（斜杠命令）→ 技能命中渲染 → @引用分优先级注入 → 设定注入且私人笔记排除 →
+// 预算裁剪丢块 → 历史选取 → 消息序列成型 → 显式引用会话归属校验。
+// 这条链路决定了模型实际看到的全部输入，任何一段变化都会改变 AI 产出，因此合并为一条用例。
+
 package service
 
 import (
@@ -23,11 +28,48 @@ func findBlock(blocks []ai.ContextBlock, blockKey string) *ai.ContextBlock {
 	return nil
 }
 
-// TestChatContextAssemblyChain 覆盖 AI 对话上下文装配的完整链路：
-// 技能命中渲染 → @引用分优先级注入 → 设定注入且私人笔记排除 → 预算裁剪丢块 → 历史选择 → 消息序列成型。
-// 这条链路决定了模型实际看到的全部输入，任何一段变化都会改变 AI 产出，因此合并为一条用例串起各环节。
-func TestChatContextAssemblyChain(t *testing.T) {
-	// ---- 环节一：技能命中，模板占位符用其余块装配文本填充 ----
+// enabledSlashCommands 基于内置技能构造测试命令表（含一条禁用命令）。
+func enabledSlashCommands() []domain.SlashCommandDO {
+	commands := ai.BuiltinSkills()
+	for i := range commands {
+		commands[i].EnabledFlag = true
+	}
+	return append(commands, domain.SlashCommandDO{
+		CommandCode: "disabled_cmd",
+		CommandName: "禁用命令",
+		EnabledFlag: false,
+	})
+}
+
+// TestChatRequestPreparationChain 覆盖 AI 对话请求准备链路。
+func TestChatRequestPreparationChain(t *testing.T) {
+	commands := enabledSlashCommands()
+
+	// ---- 环节一：斜杠命令解析，首 token 命中才剥离命令与参数 ----
+	parsed := parseSlashContent("/continue 以林澈视角", commands)
+	if parsed.SkillCode != "continue" || parsed.RemainderText != "以林澈视角" {
+		t.Fatalf("命令与参数分离失败: %+v", parsed)
+	}
+	if parsed.PlaceholderMap["user_input"] != "以林澈视角" {
+		t.Fatalf("placeholder user_input = %q, want 以林澈视角", parsed.PlaceholderMap["user_input"])
+	}
+	parsed = parseSlashContent("  /polish \t 加强画面感  \n", commands)
+	if parsed.SkillCode != "polish" || parsed.RemainderText != "加强画面感" {
+		t.Fatalf("空白归一失败: %+v", parsed)
+	}
+	for _, contentText := range []string{
+		"普通的正文开头，不该命中",
+		"/unknown 一些参数",
+		"/disabled_cmd 参数",
+		"续写 /continue",
+	} {
+		parsed = parseSlashContent(contentText, commands)
+		if parsed.SkillCode != "" || parsed.RemainderText != contentText || len(parsed.PlaceholderMap) != 0 {
+			t.Fatalf("content %q 未命中时应原样保留: %+v", contentText, parsed)
+		}
+	}
+
+	// ---- 环节二：技能命中，模板占位符用其余块装配文本填充 ----
 	input := chatContextInput{
 		SkillTemplate: "润色指令：{{user_input}}｜章节：{{chapter_content}}｜依据：{{context}}",
 		UserInput:     "这段话",
@@ -51,7 +93,7 @@ func TestChatContextAssemblyChain(t *testing.T) {
 		}
 	}
 
-	// ---- 环节二：自由对话（技能未命中）直接用用户正文 ----
+	// ---- 环节三：自由对话（技能未命中）直接用用户正文 ----
 	freeBlocks, freeInstruction := buildContextBlocks(chatContextInput{
 		UserInput:   "自由提问原文",
 		ChapterList: []chapterSource{{ChapterName: "第一章", ContentText: "章节正文", IsCurrent: true}},
@@ -63,7 +105,7 @@ func TestChatContextAssemblyChain(t *testing.T) {
 		t.Fatal("技能未命中时不应有 skill 块")
 	}
 
-	// ---- 环节三：@引用按当前章(90)/引用章与引用文档(80)分优先级 ----
+	// ---- 环节四：@引用按当前章(90)/引用章与引用文档(80)分优先级 ----
 	blocks, _ = buildContextBlocks(chatContextInput{
 		UserInput: "提问",
 		ChapterList: []chapterSource{
@@ -85,7 +127,7 @@ func TestChatContextAssemblyChain(t *testing.T) {
 		t.Fatalf("引用文档块缺失或优先级错误: %+v", refDoc)
 	}
 
-	// ---- 环节四：设定条目注入，私人笔记(note)必须被排除 ----
+	// ---- 环节五：设定条目注入，私人笔记(note)必须被排除 ----
 	blocks, _ = buildContextBlocks(chatContextInput{
 		UserInput: "提问",
 		LoreList: []domain.LoreDO{
@@ -114,7 +156,7 @@ func TestChatContextAssemblyChain(t *testing.T) {
 		t.Fatal("全部为 note 时不应产出 lore 块")
 	}
 
-	// ---- 环节五：预算超限时按优先级丢块并记录块键 ----
+	// ---- 环节六：预算超限时按优先级丢块并记录块键 ----
 	blocks, _ = buildContextBlocks(chatContextInput{
 		UserInput:   "提问",
 		DocList:     []docSource{{DocName: "A", FullText: strings.Repeat("d", 100)}},
@@ -137,7 +179,7 @@ func TestChatContextAssemblyChain(t *testing.T) {
 		t.Fatal("被丢弃块不应进入装配文本")
 	}
 
-	// ---- 环节六：历史选取（最近 N 条 + 显式引用必注入且去重置尾） ----
+	// ---- 环节七：历史选取（最近 N 条 + 显式引用必注入且去重置尾） ----
 	messages := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),
@@ -164,7 +206,7 @@ func TestChatContextAssemblyChain(t *testing.T) {
 		t.Fatalf("N 为 0 时只应注入引用消息，实际 %v", selected)
 	}
 
-	// ---- 环节七：消息序列 system → 【上下文】 → 历史 role 映射 → 最终指令 ----
+	// ---- 环节八：消息序列 system → 【上下文】 → 历史 role 映射 → 最终指令 ----
 	history := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "历史问"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "历史答"),
@@ -191,7 +233,7 @@ func TestChatContextAssemblyChain(t *testing.T) {
 		t.Fatalf("装配文本为空时应省略上下文消息: %+v", messagesOut)
 	}
 
-	// ---- 环节八：显式引用消息的会话归属校验 ----
+	// ---- 环节九：显式引用消息的会话归属校验 ----
 	sessionMessages := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),

@@ -45,6 +45,8 @@ export default {
       dashboard: 'Dashboard',
       settings: 'Settings',
       slashAdmin: 'Slash commands',
+      workflow: 'Workflow',
+      microApp: 'Micro-frontends',
       systemAdmin: 'System admin',
       adminUsers: 'Users',
       adminRoles: 'Roles',

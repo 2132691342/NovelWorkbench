@@ -118,12 +118,12 @@
 
 .character-card__role.is-antagonist {
   color: var(--error);
-  background-color: #fee2e2;
+  background-color: var(--error-border);
 }
 
 .character-card__role.is-supporting {
   color: var(--success);
-  background-color: #d1fae5;
+  background-color: var(--success-border);
 }
 
 .character-card__personality {

@@ -326,4 +326,3 @@ func lastBoundary(window []rune) int {
 	}
 	return 0
 }
-

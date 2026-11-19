@@ -23,6 +23,7 @@ import (
 // 对话链路常量。
 const (
 	settingKeyChatHistoryCount = "chat_history_count" // 应用配置键：历史注入条数
+	settingKeyRAGTopK          = "rag_top_k"          // 应用配置键：知识库默认召回条数
 	globalDocProjectID         = "0"                  // 全局知识库文档的项目标识
 	chatPingInterval           = 15 * time.Second     // 流式无输出心跳间隔
 	docFullTextPageSize        = 200                  // 文档切片全量拼接分页大小
@@ -62,7 +63,6 @@ func (e *chatEventWriter) emit(eventType, contentText, errorMessage string, refe
 // ChatConfig 对话链路参数（infra 配置的标量子集，避免 service 依赖配置类型）。
 type ChatConfig struct {
 	HistoryCount int // 历史注入默认条数（应用配置未命中时兜底）
-	RAGTopK      int // RAG 召回条数
 }
 
 // ChatService AI 对话业务：会话管理、上下文装配、流式生成与消息落库。

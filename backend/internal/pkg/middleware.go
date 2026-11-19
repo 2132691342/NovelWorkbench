@@ -26,7 +26,7 @@ func RequestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := c.GetHeader("X-Request-ID")
 		if requestID == "" {
-			requestID = NewULID("REQ_")
+			requestID = NewULID(domain.IDPrefixRequest)
 		}
 		c.Set(ContextKeyRequestID, requestID)
 		c.Header("X-Request-ID", requestID)

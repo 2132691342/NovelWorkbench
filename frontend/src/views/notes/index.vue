@@ -20,6 +20,7 @@ import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
 import NoteEditor from './NoteEditor.vue'
+import MarkdownNoteEditor from './MarkdownNoteEditor.vue'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -39,6 +40,8 @@ const currentNote = ref<NWLoreVo | null>(null)
 const noteName = ref('')
 const contentHtml = ref('')
 const saveStatus = ref<NWSaveStatus>('idle')
+/** 笔记编辑模式：rich 使用 WangEditor，markdown 使用 MavonEditor */
+const editorMode = ref<'rich' | 'markdown'>('rich')
 const creatingFlag = ref(false)
 
 let saveTimer: number | null = null
@@ -286,6 +289,10 @@ onMounted(() => {
                 :placeholder="t('notes.namePlaceholder')"
                 @input="handleNameInput"
               />
+              <el-radio-group v-model="editorMode" size="small" class="notes-page__editor-mode">
+                <el-radio-button value="rich">{{ t('markdownNote.modeRich') }}</el-radio-button>
+                <el-radio-button value="markdown">{{ t('markdownNote.modeMarkdown') }}</el-radio-button>
+              </el-radio-group>
               <span class="notes-page__save-state" :class="`is-${saveStatus}`">
                 <template v-if="saveStatus === 'saving'">{{ t('notes.saveStatus.saving') }}</template>
                 <template v-else-if="saveStatus === 'saved'">{{ t('notes.saveStatus.saved') }}</template>
@@ -296,7 +303,15 @@ onMounted(() => {
                 <template v-else>{{ t('notes.saveStatus.unsaved') }}</template>
               </span>
             </div>
+            <MarkdownNoteEditor
+              v-if="editorMode === 'markdown'"
+              v-model="contentHtml"
+              class="notes-page__editor-body"
+              :placeholder="t('markdownNote.editorTip')"
+              @change="handleContentChange"
+            />
             <NoteEditor
+              v-else
               v-model="contentHtml"
               class="notes-page__editor-body"
               :placeholder="t('notes.contentPlaceholder')"

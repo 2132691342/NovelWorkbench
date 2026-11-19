@@ -25,7 +25,7 @@ type ChapterSnapshotDO struct {
 	SnapshotULID string `json:"snapshot_ulid" gorm:"column:snapshot_ulid;primaryKey;size:40"` // 快照 ULID（SNP_ 前缀）
 	ChapterULID  string `json:"chapter_ulid" gorm:"column:chapter_ulid;size:40;index"`        // 所属章节
 	ContentText  string `json:"content_text" gorm:"type:text"`                                // 快照正文
-	SnapshotType string `json:"snapshot_type" gorm:"size:16"`                                 // 来源：manual/ai_before/ai_after
+	SnapshotType string `json:"snapshot_type" gorm:"size:16"`                                 // 来源：manual（人工留档，当前仅此一种）
 	ChangeNote   string `json:"change_note" gorm:"size:256"`                                  // 变更说明
 }
 

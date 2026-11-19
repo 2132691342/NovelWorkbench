@@ -11,7 +11,7 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 )
 
-// UserRepo 用户账号持久化仓储（唯一允许出现 gorm 类型的层）。
+// UserRepo 用户账号持久化仓储（SQL 只出现在本层，跨仓储事务由 service 通过 repo.WithTx 协调）。
 type UserRepo struct {
 	db *gorm.DB // 事务入口
 }

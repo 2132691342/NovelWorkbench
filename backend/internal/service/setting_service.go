@@ -14,7 +14,7 @@ import (
 // settingDefaultList 启动播种的默认配置（键白名单与其默认值、说明的唯一来源）。
 var settingDefaultList = []domain.AppSettingDO{
 	{SettingKey: "chat_history_count", SettingValue: "5", SettingDesc: "AI 对话历史注入条数"},
-	{SettingKey: "rag_top_k", SettingValue: "6", SettingDesc: "RAG 检索默认召回条数"},
+	{SettingKey: "rag_top_k", SettingValue: "6", SettingDesc: "知识库检索默认召回条数"},
 }
 
 // SettingService 应用配置业务：默认值播种、查询与更新（值须为正整数）。

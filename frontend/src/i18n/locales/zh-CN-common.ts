@@ -45,6 +45,8 @@ export default {
       dashboard: '仪表盘',
       settings: '设置',
       slashAdmin: '斜杠命令管理',
+      workflow: '创作流程',
+      microApp: '微前端管理',
       systemAdmin: '系统管理',
       adminUsers: '用户管理',
       adminRoles: '角色管理',

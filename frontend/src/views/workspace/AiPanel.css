@@ -31,8 +31,8 @@
 }
 
 .ai-panel__notice.is-down {
-  background-color: #fef2f2;
-  color: #b91c1c;
+  background-color: var(--error-bg);
+  color: var(--error-text);
 }
 
 

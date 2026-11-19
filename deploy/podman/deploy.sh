@@ -47,7 +47,7 @@ cp "$BACKEND_CONF" "$BUILD_DIR/backend/config.yaml"
 cp /etc/ssl/certs/ca-certificates.crt "$BUILD_DIR/backend/ca-certificates.crt" \
   || die "缺少宿主机 CA bundle（/etc/ssl/certs/ca-certificates.crt）"
 cp -r "$FRONTEND_DIST" "$BUILD_DIR/frontend/dist"
-cp "$REPO_ROOT/frontend/nginx.conf.template" "$BUILD_DIR/frontend/nginx.conf.template"
+cp "$NGINX_CONF" "$BUILD_DIR/frontend/nginx.conf.template"
 
 # ---- 构建运行镜像 ----
 BACKEND_IMAGE="${NW_BACKEND_IMAGE:-localhost/novel-workbench-backend:latest}"

@@ -1,54 +1,67 @@
 # 测试说明
 
 本文描述 NovelWorkbench 当前保留的测试、运行方式与集成环境验证方法。
+只写现在存在的测试文件与用例，不描述不存在的用例。
 
-测试策略聚焦跨模块、跨协议的复杂链路：只保留"失败即代表真实行为损坏"的用例。
-字段透传、getter/setter、常量表查表、组件快照、样式存在性一类低信息量断言一律不保留。
+## 1. 测试策略
 
-## 1. 分层策略
+### 1.1 分层
 
-| 层 | 测什么 | 不测什么 |
+| 层 | 测什么 | 刻意不测什么 |
 | --- | --- | --- |
-| Go 单元测试（`go test -short`） | 请求生命周期、上下文装配、检索融合、切片算法、密钥封存、用量聚合、索引迁移等跨步骤链路 | CRUD 字段透传、JSON 序列化回显、静态常量映射表、实现细节 |
-| 前端单元测试（`npm run test`） | SSE 事件解析这类纯函数链路 | 组件渲染、样式存在性 |
-| 类型检查与构建（`npm run build`） | TypeScript 类型正确性与生产构建通过 | —— |
-| 集成环境 E2E | 认证→项目→章节→快照、知识库索引→检索、SSE 对话全链路 | 逐个 UI 控件的机械点击 |
+| Go 单元测试（`go test -short`） | 请求生命周期、上下文装配、检索融合、切片算法、索引表迁移、密钥封存、用量聚合等跨步骤链路 | CRUD 字段透传、JSON 序列化回显、常量表查表、仓储 SQL 细节 |
+| 前端单元测试（`npm run test`） | SSE 事件解析这类纯函数链路 | 组件渲染、样式存在性、路由跳转 |
+| 类型检查与构建（`npm run build` = `vue-tsc && vite build`） | TypeScript 类型正确性与生产构建通过 | —— |
+| 集成环境验证 | 需要中间件与模型服务的完整业务链路 | 逐个 UI 控件的机械点击 |
 
-测试原则：
+### 1.2 原则
 
-- 一个用例讲一条链路，多个环节串在同一个 `Test*` 函数里，用注释标出"环节一/二/三"。
-- 表驱动只用于"同一行为的多个输入"（如鉴权的四种拒绝路径）。
-- `-short` 模式不依赖外部服务；禁止 `time.Sleep`；同一行为只在一处断言。
-- 断言面向可观察结果（业务码、状态码、内容包含关系、顺序），不面向内部实现细节。
-- 不为单个中间件或单个函数单独建用例：它没有链路语义，失败了也无法定位上下文。
+- 一个用例讲一条链路：多个环节串在同一个 `Test*` 函数内，用注释标出「环节一 / 环节二 / 环节三」。
+- 表驱动只用于「同一行为的多个输入」（如鉴权的四条拒绝路径、检索模式的多种取值），
+  行为不同则分节断言。
+- `-short` 模式不依赖任何外部服务：外部依赖一律用 `httptest.NewServer` 或闭包替身。
+- 禁止 `time.Sleep`；需要顺序时用确定的输入顺序表达。
+- 断言面向可观察结果：业务码、HTTP 状态、内容包含关系、顺序、条数；
+  不断言内部变量名、私有函数调用次数或 SQL 语句。
+- 不为单个函数单独建用例：没有链路语义的函数级用例失败时无法定位上下文。
 
 ## 2. 后端单元测试
 
-运行命令：
+### 2.1 运行方式
 
 ```bash
 cd backend
 CGO_ENABLED=0 go test -short -count=1 -shuffle=on ./...
 ```
 
-CI 使用相同命令（见 `.github/workflows/ci.yml`），并设置 `GOTOOLCHAIN=local`
-与 `CGO_ENABLED=0`，确保与容器静态构建一致。
+CI 使用同一命令（见 `.github/workflows/ci.yml` 的 backend job），job 级环境变量为：
 
-当前保留 9 条用例，每条覆盖一条完整链路：
-
-| 测试文件 | 用例 | 覆盖链路 |
+| 变量 | 值 | 原因 |
 | --- | --- | --- |
-| `backend/internal/pkg/access_test.go` | `TestRequestLifecycleChain` | 请求生命周期：请求 ID 透传 → 鉴权 → 权限判定 → 审计落库 → 响应包络，五段串成一条 |
-| `backend/internal/pkg/access_test.go` | `TestAuthRejectionChain` | 鉴权拒绝四条路径：无令牌 / 令牌已吊销 / 账号已禁用 → 401，权限不足 → 403 |
-| `backend/internal/pkg/secret_test.go` | `TestSecretSealOpenChain` | 供应商密钥封存：同材料可解、换材料与坏密文必须失败、空材料拒绝、nonce 随机 |
-| `backend/internal/ai/prompt_test.go` | `TestContextAssemblyChain` | 上下文装配：优先级排序、超预算丢块、空块跳过、同优先级稳定、占位符渲染、系统提示词注入文风 |
-| `backend/internal/service/chat_service_test.go` | `TestChatContextAssemblyChain` | AI 对话上下文全链路（八个环节）：技能命中渲染 → 自由对话 → @引用分优先级注入 → 设定注入且私人笔记排除 → 预算裁剪丢块 → 历史选取（最近 N 条 + 显式引用去重置尾）→ 消息序列成型 → 显式引用会话归属校验 |
-| `backend/internal/service/knowledge_service_test.go` | `TestKnowledgeRetrievalChain` | 无向量检索全链路：文本切片（滑窗重叠/边界优先/非法参数收敛）→ 查询词抽取（CJK 2-gram 与拉丁词）→ 检索模式归一 → RRF 双通道融合与单通道排序与 TopK → chat 重排结果解析与 fail-open |
-| `backend/internal/service/knowledge_manticore_test.go` | `TestEnsureManticoreSchemaMigratesLegacyTable` | Manticore 中文 ngram 表结构迁移：旧表 `DROP → CREATE → 回灌` 只触发一次，新表启动不重建 |
-| `backend/internal/service/model_usage_service_test.go` | `TestUsageAggregationChain` | 用量分析三环节：查询区间解析（缺省近 14 天 / 非法回退 / 起止倒置纠正）→ 缺日补零 → 按调用数加权的平均延迟 |
-| `backend/internal/service/slash_service_test.go` | `TestSlashParsingChain` | 斜杠命令解析：命中与参数分离、无参数、空白归一、未命中（自由正文 / 未知命令 / 禁用命令 / 命令不在首 token）正文原样保留 |
+| `GOTOOLCHAIN` | `local` | 与 Dockerfile 一致：`go.mod` 声明的 Go 版本必须能被固定工具链直接构建 |
+| `CGO_ENABLED` | `0` | 全流水线静态构建，禁止 cgo |
+
+同一 job 在测试之前还执行 `go vet ./...` 与
+`CGO_ENABLED=0 go build -tags "netgo osusergo" ./...`。
+
+### 2.2 当前用例清单（共 7 条）
+
+| 测试文件 | 用例函数 | 覆盖链路 | 断言要点 |
+| --- | --- | --- | --- |
+| `backend/internal/ai/prompt_test.go` | `TestContextAssemblyChain` | AI 上下文装配链路：优先级排序 → 空块跳过 → 超预算整块丢弃 → 同优先级稳定 → 模板渲染 → 系统提示词 | 预算充足时不丢块且 `skill` 块排最前；空块不进结果；预算不足时从低到高丢 `history`/`chapter_summary` 且高优先级块保留；同优先级保持输入顺序；占位符缺失替换为空串；系统提示词含项目文风 |
+| `backend/internal/pkg/access_test.go` | `TestAccessControlChain` | 访问控制链路：请求 ID 透传 → 鉴权注入用户 → 权限判定 → 审计落库 → 响应包络；拒绝路径：缺失令牌 / 令牌已吊销 / 账号已禁用 → 401，权限不足 → 403 | 放行路径断言 HTTP 200、`resp_code=SUCCESS`、`trace_id` 等于注入的 `X-Request-ID`、鉴权用户已注入、审计恰好 1 条且动作码与目标正确；拒绝路径用表驱动覆盖 4 种输入，分别断言 HTTP 状态与 `resp_code`（`ERR_UNAUTHORIZED` / `ERR_FORBIDDEN`） |
+| `backend/internal/pkg/access_test.go` | `TestSecretSealOpenChain` | 供应商密钥封存链路：同材料可解 → 换材料失败 → 坏密文失败 → 空材料失败 → nonce 随机 | 密文非空且非明文；同材料解封还原原文；换材料、非法密文、空材料三者必须报错；两次封存结果必须不同 |
+| `backend/internal/service/chat_service_test.go` | `TestChatRequestPreparationChain` | AI 对话请求准备链路（环节一~九）：斜杠命令解析 → 技能命中渲染 → @引用分优先级注入 → 设定注入且私人笔记排除 → 预算裁剪丢块 → 历史选取 → 消息序列成型 → 显式引用会话归属校验 | 命令与参数分离、空白归一、未命中（含未知/禁用/非首 token）正文原样保留；`skill` 块优先级为 100 且渲染结果即最终指令；当前章优先级 90、引用章与引用文档优先级 80；`note` 类型设定不得进入 `lore` 块；超预算时丢 `chapter_summary`/`history` 而保留 `ref_doc`/`rag`；历史取最近 N 条且显式引用去重后置尾；消息序列为 system → 【上下文】→ 历史 → 最终指令；引用会话外消息必须失败 |
+| `backend/internal/service/knowledge_service_test.go` | `TestKnowledgeRetrievalChain` | 知识库检索链路（环节一~七）：文本切片 → 查询词抽取 → 检索模式归一 → RRF 双通道融合 → RRF 单通道排序与 TopK 截断 → 重排结果解析与 fail-open → 默认召回条数解析 | 短文本产单切片、空白文本不产切片、相邻切片共享重叠区、窗口内边界优先于硬切、非法参数收敛；CJK 切 2-gram、拉丁词去重去标点；未知模式按 `keyword`；跨通道命中切片排首位且得分等于 `1/62 + 1/61`、来源标 `hybrid`；单通道按 `1/(60+rank)` 降序且截断到 topK；重排解析重排并补齐尾部，重复 ID / 越界 ID / 非 JSON / 带围栏均解析失败；无应用配置时 `resolveRAGTopK` 回退全局配置 |
+| `backend/internal/service/knowledge_service_test.go` | `TestManticoreSchemaMigrationChain` | Manticore 中文 ngram 表结构迁移链路：旧表结构识别 → 重建 → 仅迁移一次 | 旧表返回 `rebuilt=true`，且语句序列为 `SHOW CREATE TABLE` → `DROP TABLE` → 含 `ngram_len='1'` 的建表；再次调用返回 `rebuilt=false`（新结构启动不重建） |
+| `backend/internal/service/model_usage_service_test.go` | `TestUsageAggregationChain` | 用量分析链路（环节一~三）：查询区间解析 → 缺日补零 → 按调用数加权的平均延迟 | 缺省区间为合法日期且起点早于终点；起止倒置自动纠正；非法起点回退为合法日期且起点不大于终点；缺日补零且已有数据不被改写、尾部日期补齐；加权平均延迟等于 175，空数据为 0 |
+
+用例组织方式：链路子节以 `// ---- 环节N：… ----` 注释分隔；
+仅当同一行为有多个输入时才用表驱动（`TestAccessControlChain` 的拒绝路径）。
 
 ## 3. 前端单元测试
+
+### 3.1 运行方式
 
 ```bash
 cd frontend
@@ -56,57 +69,79 @@ npm ci
 npm run test
 ```
 
-当前保留 1 条用例：
+`npm run test` 实际执行 `vitest run`；`frontend/vitest.config.ts` 配置为
+`environment: 'node'`、`include: ['src/**/*.test.ts']`，并复用 vite 的 `@` 路径别名。
 
-| 测试文件 | 用例 | 覆盖链路 |
-| --- | --- | --- |
-| `frontend/src/composables/useSSE.test.ts` | `parseSseBuffer 事件解析链路` | SSE 事件解析：跨 chunk 断行、多事件粘包、CRLF 兼容、非法 JSON 行跳过、心跳注释行忽略、尾部半行留存 |
+CI 的 frontend job 执行同一命令，随后再执行 `npm run build`（含 `vue-tsc` 类型检查）。
 
-SSE 解析直接决定 AI 流式回复能否正确落到界面，解析偏差会造成事件丢失或重复，
-因此作为一条完整链路用例保留。
+### 3.2 当前用例清单（共 1 条）
 
-前端组件渲染与样式存在性一类断言不保留；类型正确性与生产产物由
-`npm run build`（`vue-tsc && vite build`）保证，CI 与镜像构建均执行它。
+| 测试文件 | 用例 | 覆盖链路 | 断言要点 |
+| --- | --- | --- | --- |
+| `frontend/src/composables/useSSE.test.ts` | `parseSseBuffer 事件解析链路`（`describe('parseSseBuffer 事件解析链路')` 下的单个 `it`） | SSE 事件解析链路：跨 chunk 断行 → 多事件粘包 → CRLF 兼容 → 非法 JSON 跳过 → 心跳注释忽略 → 尾部半行留存 | 第一段解析出 1 个完整事件并把截断半行留在 `restText`；第二段补全半行后解析出 2 个事件且 `restText` 为空；非法 JSON 行被跳过且不影响后续事件；非 `data:` 前缀行（心跳注释）不产生事件；末尾半行必须完整留存供下一段拼接 |
+
+前端组件渲染与样式存在性一类断言不保留；类型正确性与生产产物由 `npm run build` 保证，
+CI 与镜像构建均执行它。
 
 ## 4. 集成环境验证（E2E）
 
+### 4.1 拉起环境
+
 E2E 在集成环境执行：后端直连 PostgreSQL / Redis / RabbitMQ / MinIO / Manticore，
-模型网关使用本地 mock（OpenAI 兼容 `/v1/chat/completions` 流式响应），
-验证本系统链路而非模型输出质量。可用根目录 Compose 的 `infra` profile
-快速拉起中间件，再以本地 mock 地址填入 `NW_AI_BASE_URL`：
+模型网关使用本地 mock（提供 OpenAI 兼容的 `/v1/chat/completions` 流式响应），
+验证本系统的链路行为而非模型输出质量。
+
+中间件用根目录 `docker-compose.yml` 的 `infra` profile 拉起：
 
 ```bash
 cp .env.example .env
-# 在 .env 中设置：
+# 编辑 .env，填入本地测试值：
+#   NW_JWT_SECRET=<本地随机串>
+#   NW_POSTGRES_* / NW_REDIS_* / NW_RABBITMQ_* / NW_MINIO_* 全部指向 infra profile 的服务名与本地口令
+#   NW_MANTICORE_BASE_URL=http://manticore:9308
 #   NW_AI_BASE_URL=http://127.0.0.1:<mock-port>/v1
 #   NW_AI_API_KEY=test-key
 #   NW_AI_CHAT_MODEL=test-chat-model
-#   NW_JWT_SECRET、数据库/缓存/对象存储/队列口令均填本地测试值
+#   NW_APP_ADMIN_PASSWORD=<本地管理员口令>
 docker compose --profile infra up -d --build
+curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/ready
 ```
 
-集成验证清单（需在具备中间件与 mock 模型服务的环境中执行）：
+说明：
+
+- `infra` profile 启动 PostgreSQL 16、Redis 7、RabbitMQ 4、MinIO、Manticore；
+  口令取自同一份 `.env`，避免应用与中间件口令不一致。
+- 后端容器启动时自动建表（26 张表）、播种默认供应商、内置技能、默认配置、内置角色，
+  并在用户表为空时创建管理员 `admin`（口令取 `NW_APP_ADMIN_PASSWORD`）。
+- mock 网关只需实现 OpenAI 兼容的对话流式响应即可覆盖生成、重排与连通性测试三条路径。
+- mock 不可用时，其余功能（项目、卷章、角色、设定、规划、连续性、知识库上传与检索）仍可验证；
+  AI 生成类操作返回 `ERR_AI_PROVIDER`。
+
+### 4.2 验证清单
 
 | 链路 | 验证点 |
 | --- | --- |
-| 认证 | 注册/登录/鉴权/登出拉黑；禁用账号旧令牌立即失效 |
-| 项目→卷→章 | CRUD、目录树、字数账目（含清空正文与删卷的字数回补）、快照留档/回滚/列表、删除项目后子表零残留 |
-| 角色/设定 | 角色卡、关系边、关系图数据；设定增删查（含 note 类型）；删除角色后关系边清理 |
-| 创作规划 | 大纲树层级与排序、有子节点不可删、父节点成环被拒、场景卡与节点绑定 |
-| 连续性 | 候选事实不自动转正、复核只能推进不能回退、伏笔状态流转、摘要 stale 标记 |
-| 知识库 | 上传→队列→切片→落库/建索引→检索命中（source_mode 标注）；失败重试与检索降级 |
-| 对话 | SSE 流式（chunk seq 递增 → done 带召回依据）、技能/引用/历史注入、消息落库、AI 字数落账、指定供应商生效 |
-| 模型生态 | 供应商 CRUD 与密钥掩码、连通性测试（成功/失败均回写）、默认切换唯一性、用量聚合随真实调用增长 |
-| 运行状态 | 依赖健康探测（正常/未配置降级/不可用）、AI 能力结论与供应商配置一致 |
-| 前端 | 登录守卫、项目切换与项目内导航、仪表盘统计、写作台（目录树/编辑器自动保存/SSE 面板/模型选择/插入章节）、关系图、设定管理、知识库上传/检索/预览、笔记、模型供应商、用量分析与运行状态页 |
+| 认证 | 注册（登录名/邮箱查重）；登录（登录名或邮箱均可）；登出拉黑后旧令牌立即失效；禁用账号后旧令牌失效；响应不含密码哈希 |
+| 项目→卷→章 | 项目 CRUD、目录树、卷章排序号；字数账目（改正文 / 清空正文 / 删章 / 删卷均正确增减）；章节快照留档、列表、回滚（回滚前自动留档）；删除项目后各子表零残留且 MinIO/Manticore 副本被清理 |
+| 角色设定 | 角色卡 CRUD 与类型/关键词过滤；关系边增删与自环、跨项目被拒；关系图节点与边数量正确；删角色后关系边清理；设定条目与 `note` 笔记的增删查 |
+| 创作规划 | 大纲树层级与排序；父节点设为自身/后代被拒；有子节点时删节点被拒；场景卡与节点绑定、角色列表回读为数组；按节点过滤场景 |
+| 连续性 | 候选事实不自动转正；复核只能推进到 `confirmed`/`superseded`/`stale`，退回候选被拒；伏笔状态流转与重要程度缺省为 `medium`；摘要同章节重复保存不产生重复行 |
+| 知识库 | 上传 → 队列 → 切片 → 落库 → 建索引 → 检索命中并标注 `source_mode`；同哈希切片 ULID 复用；失败重试与 `failed` 状态；重投索引；删除后对象/索引/切片/文档全清；检索过程返回查询词与入选切片 |
+| 对话 | SSE 流式（`chunk` 序号单调递增 → `done` 带召回依据）；技能命中与自由对话两种路径；@引用章节与文档按优先级注入；历史条数取配置值；消息落库；AI 字数落账；指定供应商生效；停止生成后不落库助手消息；插入章节走同一自动保存通道 |
+| 模型生态 | 供应商 CRUD 与密钥掩码；首次创建必须填 API Key；默认供应商唯一且不可删除；连通性测试成功/失败均回写状态与时间；用量聚合随真实调用增长、缺日补零 |
+| 运行状态 | 依赖健康探测（正常 / 未配置 / 不可用三种状态）；必需依赖与可选依赖的失败级别不同；模型供应商项与能力页结论一致；页面显示运行时长与构建版本 |
+| 前端 | 登录守卫与令牌失效跳转；仪表盘统计与项目切换；写作台（目录树、编辑器自动保存、AI 面板 SSE、模型选择、插入章节）；关系图；设定管理；知识库上传/检索/预览；笔记自动保存；技能管理；用量分析与运行状态页 |
 
 ## 5. 环境与注意事项
 
-- CI 只运行 `go test -short` 与 `npm run test`，不连任何外部服务；
-  镜像构建验证见 `.github/workflows/ci.yml`。
-- E2E 不需要真实模型服务；`NW_AI_API_KEY` 为空时 AI 功能返回 `ERR_AI_PROVIDER`，
-  其余功能不受影响。
-- 所有测试环境变量与部署共用同一套 `NW_*` 名称，详见 `doc/deploy.md` 的环境变量表。
+- CI 只运行 `go test -short` 与 `npm run test`，不连接任何外部服务；
+  单元测试中的 HTTP 依赖用 `httptest.NewServer` 模拟。
+- `-short` 为当前唯一使用的测试模式开关：单元测试本身不需要外部服务，
+  `-short` 保留给后续可能引入的可选集成链路（CI 注释亦如此说明）。
+- E2E 需要真实中间件与一个 mock 模型网关，不需要真实模型服务。
+- 测试环境与部署环境共用同一套 `NW_*` 环境变量名，完整变量表见 `doc/deploy.md`。
 - 测试环境中的口令同样是占位值；不要把真实凭据写入仓库文件，使用 `.env`
   （已被 `.gitignore` 忽略）。
+- 后端 `go vet` 与静态构建在 CI 中与测试同批执行；本地若改动 `go.mod` 的 Go 版本，
+  需同步确认固定工具链可用（CI 使用 `GOTOOLCHAIN=local`）。

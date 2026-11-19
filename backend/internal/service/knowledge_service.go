@@ -8,6 +8,7 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,7 @@ type KnowledgeService struct {
 	mqRepo        *repo.MQRepo           // 队列仓储
 	jobRepo       *repo.JobRepo          // 任务仓储
 	projectRepo   *repo.ProjectRepo      // 项目仓储（归属校验）
+	settingRepo   *repo.SettingRepo      // 应用配置仓储（默认召回条数）
 	aiClient      *ai.Client             // 模型网关（流式调用与用量上报）
 	providerSvc   *ModelProviderService  // 供应商服务（模型选择）
 	manticore     *infra.ManticoreClient // 全文检索客户端
@@ -47,13 +49,14 @@ type KnowledgeService struct {
 }
 
 // NewKnowledgeService 构造知识库服务。
-func NewKnowledgeService(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo, jobRepo *repo.JobRepo, projectRepo *repo.ProjectRepo, aiClient *ai.Client, providerSvc *ModelProviderService, manticore *infra.ManticoreClient, db *gorm.DB, config KnowledgeIndexConfig) *KnowledgeService {
+func NewKnowledgeService(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo, jobRepo *repo.JobRepo, projectRepo *repo.ProjectRepo, settingRepo *repo.SettingRepo, aiClient *ai.Client, providerSvc *ModelProviderService, manticore *infra.ManticoreClient, db *gorm.DB, config KnowledgeIndexConfig) *KnowledgeService {
 	return &KnowledgeService{
 		knowledgeRepo: knowledgeRepo,
 		objectRepo:    objectRepo,
 		mqRepo:        mqRepo,
 		jobRepo:       jobRepo,
 		projectRepo:   projectRepo,
+		settingRepo:   settingRepo,
 		aiClient:      aiClient,
 		providerSvc:   providerSvc,
 		manticore:     manticore,
@@ -176,7 +179,7 @@ func (s *KnowledgeService) SearchWithTrace(ctx context.Context, userULID string,
 	}
 	topK := req.TopKCount
 	if topK <= 0 {
-		topK = s.config.RAGTopK
+		topK = s.resolveRAGTopK(ctx)
 	}
 	terms := extractQueryTerms(query)
 	if len(terms) == 0 {
@@ -219,6 +222,21 @@ func (s *KnowledgeService) SearchWithTrace(ctx context.Context, userULID string,
 	results := s.maybeRerank(ctx, terms[0], hits, topK, &trace)
 	trace.SelectedIDs = selectedIDs(results)
 	return domain.KnowledgeSearchDTO{ResultList: results, Trace: trace}, nil
+}
+
+// resolveRAGTopK 默认召回条数：应用配置 rag_top_k > 全局配置 app.rag_top_k。
+func (s *KnowledgeService) resolveRAGTopK(ctx context.Context) int {
+	if s.settingRepo != nil {
+		setting, err := s.settingRepo.GetByKey(ctx, settingKeyRAGTopK)
+		if err != nil {
+			pkg.SLogger().Warnw("读取召回条数配置失败，回退全局配置", "error", err)
+		} else if setting != nil {
+			if value, convErr := strconv.Atoi(setting.SettingValue); convErr == nil && value > 0 {
+				return value
+			}
+		}
+	}
+	return s.config.RAGTopK
 }
 
 // maybeRerank 用默认对话模型对候选 ID 重排（失败时 fail-open 保留原顺序）。

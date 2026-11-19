@@ -35,6 +35,18 @@ const routes: RouteRecordRaw[] = [
         meta: { menu_key: 'slashAdmin' },
       },
       {
+        path: 'workflow',
+        name: 'WorkflowView',
+        component: () => import('@/views/workflow/index.vue'),
+        meta: { menu_key: 'workflow' },
+      },
+      {
+        path: 'micro-app',
+        name: 'MicroAppView',
+        component: () => import('@/views/micro-app/index.vue'),
+        meta: { menu_key: 'microApp' },
+      },
+      {
         path: 'admin/users',
         name: 'AdminUsersView',
         component: () => import('@/views/admin/users.vue'),

@@ -147,21 +147,21 @@
 }
 
 .lore-tag--rule {
-  background-color: #fef3c7;
-  color: #b45309;
+  background-color: var(--warning-border);
+  color: var(--warning-text);
 }
 
 .lore-tag--place {
-  background-color: #d1fae5;
-  color: #047857;
+  background-color: var(--success-border);
+  color: var(--success-text);
 }
 
 .lore-tag--item {
-  background-color: #fee2e2;
-  color: #b91c1c;
+  background-color: var(--error-border);
+  color: var(--error-text);
 }
 
 .lore-tag--event {
-  background-color: #dbeafe;
-  color: #1d4ed8;
+  background-color: var(--info-border);
+  color: var(--info-text);
 }

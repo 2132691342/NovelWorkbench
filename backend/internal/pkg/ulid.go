@@ -16,16 +16,3 @@ func NewULID(prefix string) string {
 	id := ulid.MustNew(ulid.Timestamp(time.Now()), entropy)
 	return prefix + strings.ToUpper(id.String())
 }
-
-// IsULID 校验 value 是否形如 PREFIX_ULID 的合法业务主键；prefix 为空则只校验 ULID 段。
-func IsULID(value string, prefix string) bool {
-	idx := strings.LastIndex(value, "_")
-	if idx <= 0 {
-		return false // 无下划线分隔
-	}
-	if prefix != "" && value[:idx+1] != prefix {
-		return false // 前缀不匹配
-	}
-	_, err := ulid.Parse(value[idx+1:])
-	return err == nil
-}

@@ -1,0 +1,26 @@
+.micro-app-page__subtitle {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+}
+
+.micro-app-page__table {
+  margin-top: 12px;
+}
+
+.micro-app-page__table .nw-button + .nw-button,
+.micro-app-page__table .nw-button + .el-button {
+  margin-left: 6px;
+}
+
+.micro-app-page__tip {
+  margin: 12px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.micro-app-page__mount {
+  min-height: 240px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-base);
+  background-color: var(--bg-page);
+}

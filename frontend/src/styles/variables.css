@@ -38,6 +38,22 @@
   --error: #ef4444;
   --error-hover: #dc2626;
   --error-active: #b91c1c;
+  /* 状态浅色背景与文字（替代散落的硬编码十六进制） */
+  --success-bg: #ecfdf5;
+  --success-text: #047857;
+  --success-border: #d1fae5;
+  --warning-bg: #fffbeb;
+  --warning-text: #b45309;
+  --warning-border: #fef3c7;
+  --error-bg: #fef2f2;
+  --error-text: #b91c1c;
+  --error-border: #fee2e2;
+  --info-bg: #eff6ff;
+  --info-text: #1d4ed8;
+  --info-border: #dbeafe;
+  --chart-series-1: var(--saas_dashboard-color-1);
+  --chart-series-2: var(--saas_dashboard-color-2);
+
   --info: #3b82f6;
 
   /* 阴影 */

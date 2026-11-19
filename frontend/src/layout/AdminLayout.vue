@@ -297,6 +297,24 @@ onMounted(() => {
           </svg>
           <template #title>{{ t('layout.menu.slashAdmin') }}</template>
         </el-menu-item>
+        <el-menu-item index="/workflow">
+          <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="5" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8" />
+            <rect x="14" y="14" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8" />
+            <path d="M10 7.5h3v7h1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+          <template #title>{{ t('layout.menu.workflow') }}</template>
+        </el-menu-item>
+
+        <el-menu-item index="/micro-app">
+          <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="4" width="8" height="7" rx="1.4" stroke="currentColor" stroke-width="1.8" />
+            <rect x="13" y="4" width="8" height="7" rx="1.4" stroke="currentColor" stroke-width="1.8" />
+            <rect x="3" y="13" width="18" height="7" rx="1.4" stroke="currentColor" stroke-width="1.8" />
+          </svg>
+          <template #title>{{ t('layout.menu.microApp') }}</template>
+        </el-menu-item>
+
 
         <el-menu-item index="/settings">
           <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">

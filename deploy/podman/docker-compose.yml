@@ -1,4 +1,4 @@
-# NovelWorkbench podman 部署：仅应用容器，加入既有中间件网络（liteworkbench_default）。
+# NovelWorkbench podman 部署：仅应用容器，加入既有中间件网络（默认 novelworkbench_default）。
 # 目标主机为 Podman + podman-compose（无 Docker）；镜像由 deploy.sh 基于预构建产物构建。
 # 凭据与端口一律由 .env 注入，本文件不提供任何可用默认值。
 services:

@@ -2,7 +2,11 @@
 
 package pkg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
+)
 
 // BizError 业务错误：携带字符串业务响应码，API 层据此映射 HTTP 状态并输出 RESP 包络。
 type BizError struct {
@@ -36,5 +40,5 @@ func AsBizError(err error) *BizError {
 	if bizErr, ok := err.(*BizError); ok {
 		return bizErr
 	}
-	return NewBizError("ERR_INTERNAL", err.Error())
+	return NewBizError(domain.RespCodeInternalError, err.Error())
 }
