@@ -97,7 +97,7 @@ async function loadModelOptions(): Promise<void> {
 
 /**
  * 发起流式生成并把事件回写到助手消息：
- * chunk 增量追加；done 覆盖为完整回复并挂 RAG 依据；error/网络断落错误气泡可重试。
+ * chunk 增量追加；done 覆盖为完整回复并挂 RAG 依据；error 落错误气泡可重试。
  */
 async function runStream(
   request: NWChatSendReqVo,

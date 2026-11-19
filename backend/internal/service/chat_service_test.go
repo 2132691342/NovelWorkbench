@@ -190,10 +190,8 @@ func TestChatContextAssemblyChain(t *testing.T) {
 	if len(messagesOut) != 2 || messagesOut[1].Content != "最终指令" {
 		t.Fatalf("装配文本为空时应省略上下文消息: %+v", messagesOut)
 	}
-}
 
-// TestRefMessageValidationChain 覆盖显式引用消息校验链路：会话外引用必须报错，会话内引用去重保序。
-func TestRefMessageValidationChain(t *testing.T) {
+	// ---- 环节八：显式引用消息的会话归属校验 ----
 	sessionMessages := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),

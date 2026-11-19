@@ -163,7 +163,8 @@
 - `api/knowledge_api.go` 接收 multipart 上传（`project_ulid`、`doc_name`、`file`）。
 - `service/knowledge_service.go` 写 MinIO + 落库 `pending` + 投递 RabbitMQ；
   落库失败时回滚 MinIO 对象。
-- `service/knowledge_worker.go` 消费任务，提取文本、切片、计算内容哈希、写 Manticore；
+- `service/knowledge_worker.go` 消费任务，提取文本、切片、计算内容哈希；
+  `service/knowledge_manticore.go` 负责 Manticore 表结构迁移、回灌、同步与查询；
   启动时确保表结构为 CJK ngram，旧结构自动重建并回灌。
 - `repo/knowledge_repo.go` 只负责数据库读写；Manticore/MinIO 客户端封装在 infra/repo 边界内。
 

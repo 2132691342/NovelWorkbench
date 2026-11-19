@@ -102,7 +102,7 @@ AI 相关变量仅用于**首次播种默认供应商**：`model_providers` 表�
 1. 加载配置并做启动期校验：JWT 密钥、数据库地址与库名、模型网关地址与对话模型
    为空即退出（fail fast）；协议默认 `openai`，构建版本默认 `dev`，
    历史条数默认 5，RAG 条数默认 6。
-2. 连接 PostgreSQL，失败即退出；随后 `AutoMigrate` 建表（28 张表）。
+2. 连接 PostgreSQL，失败即退出；随后 `AutoMigrate` 建表（26 张表）。
 3. 连接 Redis / RabbitMQ / MinIO / Manticore。**这四者的失败只降级告警，不阻断启动**：
    Redis 不可用则令牌吊销降级，RabbitMQ 不可用则异步索引任务降级，
    MinIO 桶不存在则对象存储降级，Manticore 不可用则全文检索降级。
@@ -206,6 +206,11 @@ Docker 内嵌 DNS 应答裸服务名，根目录 Compose 使用 `http://backend:
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | push / PR 到 `main` | 后端：`GOTOOLCHAIN=local` + `CGO_ENABLED=0` 下 `go vet`、`go build`、`go test -short -shuffle=on`；前端：Node 22 `npm ci` + `npm run test` + `npm run build`；随后验证两个 Docker 镜像可构建 |
 | `.github/workflows/release.yml` | 推送 `v*` tag | 构建后端/前端镜像并推送到 GHCR：`ghcr.io/<repo>/backend:<tag>`、`ghcr.io/<repo>/frontend:<tag>`（同时更新 `latest`） |
+
+镜像仓库名必须全小写（GHCR 硬性要求），而 GitHub 仓库名允许含大写字母。
+发布工作流因此先用 `${GITHUB_REPOSITORY,,}` 把仓库名归一为小写再拼镜像前缀：
+`2132691342/NovelWorkbench` → `ghcr.io/2132691342/novelworkbench/backend`。
+归一在 `Normalize image prefix` 步骤完成，两个镜像构建步骤共用同一前缀输出。
 
 CI 不注入任何真实凭据：单元测试不依赖外部服务，镜像构建不使用运行期环境变量。
 

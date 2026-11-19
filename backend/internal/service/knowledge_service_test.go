@@ -15,9 +15,7 @@ func searchHit(chunkULID string) domain.KnowledgeChunkVO {
 }
 
 // TestKnowledgeRetrievalChain 覆盖无向量检索的完整链路：
-// 文本切片（滑窗/重叠/边界优先/非法参数收敛）→ 查询词抽取（CJK 2-gram 与拉丁词）→
-// 检索模式归一 → RRF 双通道融合与单通道排序 → chat 重排结果解析与 fail-open。
-// 这是知识库召回质量与可控性的全部来源，合并为一条用例。
+// 文本切片 → 查询词抽取 → 检索模式归一 → RRF 融合排序 → chat 重排解析与 fail-open。
 func TestKnowledgeRetrievalChain(t *testing.T) {
 	// ---- 环节一：切片 ----
 	chunks := chunkText("  短文本  ", 100, 10)

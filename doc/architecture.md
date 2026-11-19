@@ -71,7 +71,7 @@ backend/
 ├── internal/
 │   ├── api                   HTTP 处理：绑定、鉴权挂载、响应输出
 │   ├── service               业务规则、事务边界、上下文装配
-│   ├── repo                  唯一允许出现 gorm/redis/mq/minio/manticore 客户端的层
+│   ├── repo                  SQL 与中间件访问的唯一出口；含 WithTx 事务封装
 │   ├── domain                DO/REQ/RESP/DTO/VO 唯一定义处
 │   ├── ai                    模型网关、提示词模板、技能、用量契约
 │   ├── infra                 配置加载、连接构造、启动期校验
@@ -83,7 +83,9 @@ backend/
 | 规则 | 原因 |
 | --- | --- |
 | 请求/响应结构只在 domain 定义 | 前后端契约单一事实源 |
-| repo 之外不出现 gorm 类型 | service 可独立演进与测试 |
+| SQL 只写在 repo | service 只调 repo 方法，不拼 gorm 条件 |
+| service 持有 `*gorm.DB` 仅作事务入口 | 跨表写入需要同一事务；事务边界由 service 决定，`repo.WithTx` 提供唯一封装 |
+| Manticore 客户端只在知识库相关 service 使用 | 检索是业务语义的一部分（融合、重排、追踪），不是通用数据访问 |
 | service 不写 HTTP 状态码 | 响应码到 HTTP 状态的映射集中在 `pkg.HTTPStatusForCode` |
 | api 不写业务判断 | 避免同规则散落多个处理器 |
 | 文件名与业务名一致 | 一个业务域一个文件，便于检索 |

@@ -6,7 +6,7 @@ const NW_HAN_REGEXP = /\p{Script=Han}/u
 const NW_SPACE_REGEXP = /\s/u
 
 /**
- * 统计正文字数：CJK 字符逐字计数，其余按空白分词计数（行业通用约定）。
+ * 统计正文字数：CJK 字符逐字计数，其余按空白分词计数。
  * 与后端 pkg.CountWords 同口径，保证前端实时字数与落库字数一致。
  */
 export function countWords(text: string): number {

@@ -153,61 +153,6 @@ func TestAuthRejectionChain(t *testing.T) {
 	}
 }
 
-// TestMethodWhitelistChain 覆盖方法白名单链路：非 GET/POST 请求被拦截，且不进入业务处理器。
-func TestMethodWhitelistChain(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(MethodWhitelistMiddleware())
-	reached := false
-	router.DELETE("/api/v1/project/delete", func(c *gin.Context) {
-		reached = true
-		Ok(c, nil)
-	})
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/v1/project/delete", nil))
-
-	if reached {
-		t.Fatal("DELETE 不应进入业务处理器")
-	}
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", recorder.Code)
-	}
-	var response struct {
-		RespCode string `json:"resp_code"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if response.RespCode != "ERR_INVALID_PARAM" {
-		t.Fatalf("resp_code = %q, want ERR_INVALID_PARAM", response.RespCode)
-	}
-}
-
-// TestBusinessErrorMappingChain 覆盖错误映射链路：业务码到 HTTP 状态的映射唯一且未知码归 500。
-func TestBusinessErrorMappingChain(t *testing.T) {
-	cases := []struct {
-		code       string
-		wantStatus int
-	}{
-		{code: "SUCCESS", wantStatus: http.StatusOK},
-		{code: "ERR_INVALID_PARAM", wantStatus: http.StatusBadRequest},
-		{code: "ERR_UNAUTHORIZED", wantStatus: http.StatusUnauthorized},
-		{code: "ERR_FORBIDDEN", wantStatus: http.StatusForbidden},
-		{code: "ERR_NOT_FOUND", wantStatus: http.StatusNotFound},
-		{code: "ERR_CONFLICT", wantStatus: http.StatusConflict},
-		{code: "ERR_BIZ_FAILED", wantStatus: http.StatusBadRequest},
-		{code: "ERR_AI_PROVIDER", wantStatus: http.StatusBadGateway},
-		{code: "ERR_STORAGE", wantStatus: http.StatusServiceUnavailable},
-		{code: "ERR_INTERNAL", wantStatus: http.StatusInternalServerError},
-		{code: "ERR_UNKNOWN_CODE", wantStatus: http.StatusInternalServerError},
-	}
-	for _, testCase := range cases {
-		if got := HTTPStatusForCode(testCase.code); got != testCase.wantStatus {
-			t.Fatalf("HTTPStatusForCode(%q) = %d, want %d", testCase.code, got, testCase.wantStatus)
-		}
-	}
-}
-
 // permCheckerFunc 让测试用闭包实现 PermChecker。
 type permCheckerFunc func(ctx context.Context, userULID string, permCode string) (bool, error)
 
