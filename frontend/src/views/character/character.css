@@ -144,3 +144,57 @@
   align-items: center;
   gap: 8px;
 }
+
+/* 页面骨架与卡片微调 */
+.character-page {
+  gap: 16px;
+  min-height: 100%;
+}
+
+.character-page__count {
+  color: var(--text-placeholder);
+  font-size: 11.5px;
+}
+
+.character-page__grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.character-card {
+  min-height: 158px;
+  border-color: var(--border-light);
+}
+
+.character-card__top {
+  align-items: flex-start;
+}
+
+.character-card__avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 19px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.character-card__name {
+  font-size: 14.5px;
+  font-weight: 650;
+}
+
+.character-card__personality {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.character-card__actions {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-light);
+}
+
+.character-card__actions .nw-button {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 11.5px;
+}

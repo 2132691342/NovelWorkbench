@@ -194,3 +194,19 @@ func (r *KnowledgeRepo) ListChunksByDocAll(ctx context.Context, docULID string) 
 	}
 	return dos, nil
 }
+
+// StatsByProject 汇总项目文档状态与切片总量（知识库页概览）。
+func (r *KnowledgeRepo) StatsByProject(ctx context.Context, projectULID string) (domain.KnowledgeStatsVO, error) {
+	var vo domain.KnowledgeStatsVO
+	sql := `SELECT
+		COUNT(*) AS total_count,
+		COUNT(*) FILTER (WHERE doc_status_code = 'indexed') AS indexed_count,
+		COUNT(*) FILTER (WHERE doc_status_code IN ('pending', 'indexing')) AS pending_count,
+		COUNT(*) FILTER (WHERE doc_status_code = 'failed') AS failed_count,
+		COALESCE(SUM(chunk_count), 0) AS chunk_count
+	FROM knowledge_documents WHERE project_ulid = ?`
+	if err := r.db.WithContext(ctx).Raw(sql, projectULID).Scan(&vo).Error; err != nil {
+		return domain.KnowledgeStatsVO{}, fmt.Errorf("stats knowledge documents: %w", err)
+	}
+	return vo, nil
+}

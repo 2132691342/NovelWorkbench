@@ -243,6 +243,7 @@ func registerKnowledgeRoutes(rg *gin.RouterGroup, handler *KnowledgeAPI) {
 	rg.POST("/knowledge/reindex", handler.Reindex)
 	rg.GET("/knowledge/chunk/list/:DocULID", handler.ChunkList)
 	rg.GET("/knowledge/content/:DocULID", handler.Content)
+	rg.GET("/knowledge/stats/:ProjectULID", handler.Stats)
 }
 
 // registerSkillRoutes 注册技能路由（读对所有登录用户开放，写收口到 skill:manage）。

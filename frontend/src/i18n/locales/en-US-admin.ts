@@ -47,6 +47,7 @@ export default {
     ruleAPIKeyRequired: 'An API key is required when creating a provider',
   },
   usage: {
+    pageSubtitle: 'Daily aggregation of model calls, tokens, latency and success rate.',
     title: 'Usage analytics',
     subtitle: 'Model calls, token consumption, latency and success rate, aggregated daily from the live call path.',
     rangeDays: 'Last {days} days',
@@ -62,6 +63,7 @@ export default {
     emptyTip: 'No calls recorded in this range',
   },
   status: {
+    pageSubtitle: 'Process info and dependency health — any failure directly affects writing.',
     title: 'System status',
     subtitle: 'Process info and dependency health: database, cache, queue, object storage, search and model providers.',
     refresh: 'Refresh',
@@ -88,6 +90,7 @@ export default {
     search: 'Search',
     reset: 'Reset',
     users: {
+      pageSubtitle: 'Accounts are provisioned by admins; manage status, roles and passwords here.',
       title: 'Users',
       createTitle: 'New user',
       editTitle: 'Edit user',
@@ -120,12 +123,15 @@ export default {
       rulePasswordMin: 'Password must be at least 6 characters',
     },
     roles: {
+      pageSubtitle: 'Roles decide visible menus and API permissions, sourced from menus and the permission catalog.',
       title: 'Roles',
       createTitle: 'New role',
       editTitle: 'Edit role',
       roleCode: 'Role code',
       roleName: 'Role name',
       permCodes: 'Permissions',
+      permPlaceholder: 'Select permissions (from the catalog)',
+      permHint: 'Permission codes are registered in Menus; checked codes apply immediately to accounts with this role.',
       builtinFlag: 'Type',
       builtinTag: 'Built-in',
       customTag: 'Custom',
@@ -143,6 +149,7 @@ export default {
       permAuditRead: 'Audit reading',
     },
     menus: {
+      pageSubtitle: 'Menus are the permission registry: pages, icons, routes and permission codes flow to the sidebar.',
       title: 'Menu management',
       hint: 'The menu table is also the permission registry: page rows carry page permissions, action rows register action-only codes. The sidebar renders the tree served by the backend.',
       keywordPlaceholder: 'Search name, code or permission',
@@ -178,6 +185,7 @@ export default {
       ruleNameRequired: 'Please enter the menu name',
     },
     perms: {
+      pageSubtitle: 'Permission codes grouped by domain — the single source of truth for role assignment.',
       title: 'Permission catalog',
       hint: 'Every permission code comes from menu registration: the perm_code entered when creating a menu appears here for role assignment.',
       totalCount: '{count} permissions',
@@ -209,6 +217,9 @@ export default {
       emptyTip: 'No login logs',
     },
     jobs: {
+      failedHint: 'Failed jobs can be retried; hover the reason for the full text',
+      docDeleted: 'Document deleted',
+      pageSubtitle: 'Async job states, failure reasons and retries for knowledge indexing.',
       title: 'Task center',
       subtitle: 'Async indexing jobs are consumed by the RabbitMQ worker; failed jobs can be reset and re-queued.',
       queuedCount: 'Queued',
@@ -237,6 +248,7 @@ export default {
       emptyTip: 'No async jobs',
     },
     audit: {
+      pageSubtitle: 'Key write operations and sign-ins for auditing and incident tracing.',
       title: 'Audit log',
       createdAt: 'Time',
       user: 'User',

@@ -1,0 +1,124 @@
+/* ===== 快速跳转 ===== */
+.admin-layout__command-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-placeholder);
+}
+
+.admin-layout__command-input {
+  flex: 1;
+  height: 34px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 15px;
+  font-family: inherit;
+}
+
+.admin-layout__command-input::placeholder {
+  color: var(--text-placeholder);
+}
+
+.admin-layout__command-close {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-page);
+  color: var(--text-placeholder);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.admin-layout__command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.admin-layout__command-group-title {
+  margin: 0 0 5px;
+  padding: 0 8px;
+  color: var(--text-placeholder);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-layout__command-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--transition-base), border-color var(--transition-base),
+    transform var(--transition-base);
+}
+
+.admin-layout__command-item:hover:not(:disabled) {
+  border-color: var(--border-light);
+  background: var(--primary-soft);
+  transform: translateX(2px);
+}
+
+.admin-layout__command-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-layout__command-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--bg-page);
+  color: var(--primary);
+}
+
+.admin-layout__command-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  line-height: 1.3;
+}
+
+.admin-layout__command-item-text strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-layout__command-item-text small {
+  color: var(--text-placeholder);
+  font-size: 11px;
+}
+
+.admin-layout__command-item-arrow {
+  color: var(--text-placeholder);
+  opacity: 0;
+  transition: opacity var(--transition-base);
+}
+
+.admin-layout__command-item:hover .admin-layout__command-item-arrow {
+  opacity: 1;
+}
+
+.admin-layout__command-empty {
+  margin: 18px 0;
+  color: var(--text-placeholder);
+  font-size: 13px;
+  text-align: center;
+}

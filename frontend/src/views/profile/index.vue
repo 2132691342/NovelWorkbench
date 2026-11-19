@@ -151,7 +151,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="profile-page">
+  <div class="nw-page profile-page">
     <NWLoading v-if="profileLoading" />
     <template v-else-if="profileVo">
       <section class="profile-page__hero">

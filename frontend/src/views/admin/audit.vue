@@ -6,6 +6,7 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listAdminAudits, type NWAuditVo } from '@/api/admin'
 import NWButton from '@/components/NWButton.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
@@ -74,10 +75,14 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="admin-audit-page">
+  <div class="nw-page admin-audit-page">
+    <NWPageHeader
+      :title_text="t('admin.audit.title')"
+      :subtitle_text="t('admin.audit.pageSubtitle')"
+      icon_code="history"
+    />
     <NWCard :hoverable="false">
       <template #header>
-        <h3 class="nw-card__title">{{ t('admin.audit.title') }}</h3>
         <div class="admin-audit-page__toolbar">
           <el-input
             v-model="actionFilter"

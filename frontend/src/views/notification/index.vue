@@ -171,7 +171,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="notification-page">
+  <div class="nw-page notification-page">
     <NWCard :hoverable="false">
       <template #header>
         <div class="notification-page__header">

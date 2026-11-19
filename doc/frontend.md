@@ -406,3 +406,53 @@ i18n 不再为菜单文案提供 `layout.menu.*` 键（新增语言只需翻译�
 - 组件渲染与样式断言**有意不保留**：测试环境为 `environment: 'node'`，不引入 jsdom，也不做快照。
 - 类型正确性由 `npm run build`（`vue-tsc && vite build`）保证。
 - `tsconfig.json` 开启 `strict`、`noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch`。
+
+## 12. 2026-11 前端重构现状
+
+### 12.1 工程结构新增
+
+| 路径 | 说明 |
+| --- | --- |
+| `src/styles/element-theme.css` | Element Plus 外观收敛层 |
+| `src/styles/page.css` | 页面骨架与通用布局工具类 |
+| `src/layout/CommandPalette.vue` | Ctrl/Cmd+K 快速跳转 |
+| `src/layout/AdminLayout.responsive.css` | 外壳响应式样式 |
+| `src/components/NWPageHeader.vue` | 统一页面标题区 |
+| `src/components/NWStatTile.vue` | 统计磁贴 |
+| `src/views/dashboard/DashboardTrendCard.vue` | 趋势图 |
+| `src/views/dashboard/DashboardProjectCard.vue` | 项目卡片 |
+| `src/views/dashboard/DashboardProjectDrawer.vue` | 项目表单抽屉 |
+| `src/views/knowledge/KnowledgeSearchPanel.css` | 检索测试样式 |
+| `src/views/workspace/ChapterEditor.css` | 章节编辑器样式 |
+| `src/views/workspace/workspaceTreeExport.ts` | 目录 XLSX 导出 |
+| `src/views/outline/outlineOptions.ts` | 大纲节点/状态/节奏选项 |
+| `src/views/admin/menuIcons.ts` | 菜单图标候选 |
+| `src/i18n/locales/*-assets.ts` | 连续性与创作规划文案分片 |
+
+### 12.2 页面行为变化
+
+- **仪表盘**：欢迎标题 + 4 统计磁贴 + 趋势卡 + 今日目标/快捷入口 + 项目卡片网格；新建/编辑改为抽屉；支持状态筛选、书名搜索与分页。
+- **工作台**：顶栏改为图标操作（专注模式、目录、AI 面板、快照）；目录树增加搜索、卷折叠与空态 CTA；章节编辑器工具栏增加 AI 梗概；AI 面板改为「模型 + 会话 + 上下文」控制区，默认附带当前章节。
+- **知识库**：文档库/检索测试双页签；4 个概览磁贴；上传改为抽屉；文档表格提供预览、切片、重索引、删除；检索结果展示查询词、候选数、重排状态与命中通道。
+- **连续性看板**：章节筛选与表单全部改为章节选择器；表格显示章节名而非 ULID；操作收进下拉菜单；增加概览磁贴与空态 CTA。
+- **创作规划**：场景卡的出场角色改为角色多选；页面增加标题区与空态引导；选项文案通过 `outlineOptions.ts` + i18n 渲染。
+- **创作笔记**：页面标题区、可搜索列表（标题或正文）、正文片段、更加紧凑的编辑栏；默认保存状态为「已保存」。
+- **系统设置**：按「写作目标 / AI 对话 / 知识库」分组；数字输入带范围与单位；支持逐项保存、全部保存、重置修改；显示实时生效标识。
+- **管理端**：用户、角色、菜单、权限目录、审计、登录日志、任务中心统一页面标题区、筛选条、表格与空态；任务中心失败原因可悬停查看完整文本。
+
+### 12.3 路由与权限
+
+路由结构未改变；项目内页面的进入方式新增 `ProjectPageHeader` 页签，但权限仍以 `meta.perm_code` 与后端菜单下发为准。命令面板只列出当前账号可见菜单，项目作用域菜单在未选项目时禁用。
+
+### 12.4 数据契约变化
+
+- 新增 `GET /knowledge/stats/{ProjectULID}`，类型 `NWKnowledgeStatsVo`（`total_count / indexed_count / pending_count / failed_count / chunk_count`）。
+- 修复 `listKnowledgeChunks` 分页查询串：由错误的 `&page_num=` 改为 `?page_num=`，切片弹窗恢复 200。
+- 仪表盘读取 `daily_word_goal` 应用配置；缺失时回退 2000。
+- AI 面板发送时自动把当前章节并入 `ref_chapter_ulid_list`（可在上下文开关中关闭）。
+
+### 12.5 验证
+
+- `npx vue-tsc --noEmit` 通过。
+- `npm run build` 通过。
+- 浏览器实测：登录、仪表盘、工作台、AI 自动附带章节、知识库上传/索引/检索/切片、连续性事实创建、笔记创建、设置保存、英文界面关键页面。

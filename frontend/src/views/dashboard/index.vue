@@ -1,41 +1,44 @@
+<!--
+  仪表盘：创作概览 + 趋势 + 今日目标 + 项目卡片。
+  项目卡片是主入口，点击进入写作台；新建/编辑复用独立抽屉组件。
+-->
 <script setup lang="ts">
-
-// 仪表盘页：字数与项目统计卡、趋势图与项目管理。
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import * as echarts from 'echarts'
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { computed, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { get } from '@/api/http'
-import { createProject, deleteProject, listProjects, updateProject } from '@/api/project'
-import type { NWProjectVo, NWStatsOverviewVo } from '@/api/contracts'
+import { deleteProject, listProjects } from '@/api/project'
+import type { NWProjectVo, NWSettingItemVo, NWStatsOverviewVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
-import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
-import NWLoading from '@/components/NWLoading.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
+import NWStatTile from '@/components/NWStatTile.vue'
+import { useAuthStore } from '@/stores/auth'
+import { useProjectStore } from '@/stores/project'
+import DashboardProjectCard from './DashboardProjectCard.vue'
+import DashboardProjectDrawer from './DashboardProjectDrawer.vue'
+import DashboardTrendCard from './DashboardTrendCard.vue'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
+const authStore = useAuthStore()
+const projectStore = useProjectStore()
 
-// 趋势图配色（对齐设计系统品牌色）
-const NW_TREND_BAR_COLOR = '#6366f1'
-const NW_TREND_LINE_COLOR = '#818cf8'
-
-// 项目封面色块取色板（设计系统五色 + 语义色派生）
-const NW_COVER_COLOR_LIST = ['#6366f1', '#818cf8', '#3b82f6', '#10b981', '#f59e0b', '#1e293b']
-
-/** 项目列表分页大小 */
-const NW_PROJECT_PAGE_SIZE = 10
+const NW_PROJECT_PAGE_SIZE = 12
 
 const statsLoading = ref(false)
 const projectLoading = ref(false)
 const projectList = ref<NWProjectVo[]>([])
 const projectTotal = ref(0)
 const projectPageNum = ref(1)
-const createDialogVisible = ref(false)
-const createSaving = ref(false)
-const editingProjectUlid = ref('')
-const createFormRef = ref<FormInstance>()
+const statusFilter = ref('')
+const keywordText = ref('')
+const dailyGoal = ref(2000)
+const drawerVisible = ref(false)
+const editingProject = ref<NWProjectVo | null>(null)
+
 const statsOverview = ref<NWStatsOverviewVo>({
   project_count: 0,
   total_word_count: 0,
@@ -44,111 +47,92 @@ const statsOverview = ref<NWStatsOverviewVo>({
   trend_list: [],
 })
 
-/** 新建项目表单状态 */
-interface ProjectFormState {
-  project_name: string
-  genre_code: string
-  style_text: string
-  synopsis_text: string
-  project_status: string
-}
-
-const createForm = reactive<ProjectFormState>({
-  project_name: '',
-  genre_code: '',
-  style_text: '',
-  synopsis_text: '',
-  project_status: 'draft',
-})
-
-const projectEditMode = computed(() => editingProjectUlid.value !== '')
-
-const createRules = computed<FormRules>(() => ({
-  project_name: [
-    { required: true, message: t('dashboard.ruleProjectNameRequired'), trigger: 'blur' },
-    { max: 128, message: t('dashboard.ruleProjectNameMax'), trigger: 'blur' },
-  ],
-}))
-
-const trendChartElement = ref<HTMLDivElement | null>(null)
-let trendChartInstance: echarts.ECharts | null = null
-
-const statCardList = computed(() => [
-  {
-    stat_key: 'project_count',
-    stat_label: t('dashboard.projectCount'),
-    stat_value: statsOverview.value.project_count,
-    stat_class: 'stat-card--indigo',
-  },
-  {
-    stat_key: 'total_word_count',
-    stat_label: t('dashboard.totalWords'),
-    stat_value: statsOverview.value.total_word_count,
-    stat_class: 'stat-card--slate',
-  },
-  {
-    stat_key: 'today_word_delta',
-    stat_label: t('dashboard.todayWords'),
-    stat_value: statsOverview.value.today_word_delta,
-    stat_class: 'stat-card--violet',
-  },
-  {
-    stat_key: 'ai_word_total',
-    stat_label: t('dashboard.aiWords'),
-    stat_value: statsOverview.value.ai_word_total,
-    stat_class: 'stat-card--blue',
-  },
+const projectStatusOptions = computed(() => [
+  { value: '', label: t('dashboard.statusAll') },
+  { value: 'draft', label: t('dashboard.statusDraft') },
+  { value: 'serial', label: t('dashboard.statusSerial') },
+  { value: 'completed', label: t('dashboard.statusCompleted') },
 ])
 
-/** 渲染近 30 天趋势图（双系列：柱状 word_delta + 折线 ai_word_delta） */
-function renderTrendChart(): void {
-  if (!trendChartElement.value) {
-    return
+const greetText = computed(() => {
+  const hour = new Date().getHours()
+  if (hour < 6) return t('dashboard.greetNight')
+  if (hour < 12) return t('dashboard.greetMorning')
+  if (hour < 18) return t('dashboard.greetAfternoon')
+  return t('dashboard.greetEvening')
+})
+
+const todayDateText = computed(() =>
+  new Date().toLocaleDateString(locale.value, { month: 'long', day: 'numeric', weekday: 'long' }),
+)
+
+const goalPercent = computed(() => {
+  if (dailyGoal.value <= 0) return 0
+  return Math.min(100, Math.round((statsOverview.value.today_word_delta / dailyGoal.value) * 100))
+})
+
+const continueProject = computed(() => {
+  const currentUlid = projectStore.current_project_ulid
+  return (
+    projectList.value.find((item) => item.project_ulid === currentUlid) ??
+    projectList.value[0] ??
+    null
+  )
+})
+
+function genreLabel(genreCode: string): string {
+  const genreKeyMap: Record<string, string> = {
+    fantasy: t('dashboard.genreFantasy'),
+    scifi: t('dashboard.genreScifi'),
+    romance: t('dashboard.genreRomance'),
+    suspense: t('dashboard.genreSuspense'),
+    wuxia: t('dashboard.genreWuxia'),
+    urban: t('dashboard.genreUrban'),
+    history: t('dashboard.genreHistory'),
   }
-  if (!trendChartInstance) {
-    trendChartInstance = echarts.init(trendChartElement.value)
-  }
-  const trendList = statsOverview.value.trend_list
-  trendChartInstance.setOption({
-    color: [NW_TREND_BAR_COLOR, NW_TREND_LINE_COLOR],
-    tooltip: { trigger: 'axis' },
-    legend: {
-      data: [t('dashboard.trendWordDelta'), t('dashboard.trendAiWordDelta')],
-      top: 0,
-    },
-    grid: { left: 56, right: 24, top: 44, bottom: 36 },
-    xAxis: {
-      type: 'category',
-      data: trendList.map((trendItem) => trendItem.stat_date),
-      boundaryGap: true,
-    },
-    yAxis: { type: 'value' },
-    series: [
-      {
-        name: t('dashboard.trendWordDelta'),
-        type: 'bar',
-        data: trendList.map((trendItem) => trendItem.word_delta),
-        itemStyle: { color: NW_TREND_BAR_COLOR, borderRadius: [4, 4, 0, 0] },
-        barMaxWidth: 18,
-      },
-      {
-        name: t('dashboard.trendAiWordDelta'),
-        type: 'line',
-        smooth: true,
-        data: trendList.map((trendItem) => trendItem.ai_word_delta),
-        itemStyle: { color: NW_TREND_LINE_COLOR },
-        lineStyle: { width: 2 },
-        symbolSize: 6,
-      },
-    ],
-  })
+  return genreKeyMap[genreCode] ?? (genreCode || t('dashboard.genreUnset'))
 }
 
-function handleWindowResize(): void {
-  trendChartInstance?.resize()
+function statusLabel(statusCode: string): string {
+  return projectStatusOptions.value.find((option) => option.value === statusCode)?.label ?? statusCode
 }
 
-/** 加载统计概览 */
+function statusBadgeClass(statusCode: string): string {
+  if (statusCode === 'serial') return 'nw-badge--success'
+  if (statusCode === 'completed') return 'nw-badge--info'
+  return 'nw-badge--warning'
+}
+
+/** 封面色（按书名稳定散列，刷新不跳变） */
+function coverGradient(projectName: string): string {
+  const paletteList = [
+    ['#6366f1', '#818cf8'],
+    ['#0f172a', '#475569'],
+    ['#0ea5e9', '#38bdf8'],
+    ['#059669', '#34d399'],
+    ['#d97706', '#fbbf24'],
+    ['#7c3aed', '#a78bfa'],
+  ]
+  let hashValue = 0
+  for (const charText of projectName) {
+    hashValue = (hashValue * 31 + (charText.codePointAt(0) ?? 0)) % 997
+  }
+  const [fromColor, toColor] = paletteList[hashValue % paletteList.length]
+  return `linear-gradient(150deg, ${fromColor}, ${toColor})`
+}
+
+function formatRelativeTime(timeMs: number): string {
+  const diffMs = Date.now() - timeMs
+  const minuteMs = 60 * 1000
+  const hourMs = 60 * minuteMs
+  const dayMs = 24 * hourMs
+  if (diffMs < minuteMs) return t('dashboard.timeJustNow')
+  if (diffMs < hourMs) return t('dashboard.timeMinutesAgo', { count: Math.floor(diffMs / minuteMs) })
+  if (diffMs < dayMs) return t('dashboard.timeHoursAgo', { count: Math.floor(diffMs / hourMs) })
+  if (diffMs < 7 * dayMs) return t('dashboard.timeDaysAgo', { count: Math.floor(diffMs / dayMs) })
+  return new Date(timeMs).toLocaleDateString()
+}
+
 async function loadStatsOverview(): Promise<void> {
   statsLoading.value = true
   try {
@@ -160,7 +144,6 @@ async function loadStatsOverview(): Promise<void> {
       ai_word_total: statsData.ai_word_total ?? 0,
       trend_list: Array.isArray(statsData.trend_list) ? statsData.trend_list : [],
     }
-    renderTrendChart()
   } catch {
     // 失败提示由 http 层统一弹出
   } finally {
@@ -168,13 +151,26 @@ async function loadStatsOverview(): Promise<void> {
   }
 }
 
-/** 加载项目分页列表（接口未就绪时静默失败，仅展示空态） */
+async function loadDailyGoal(): Promise<void> {
+  try {
+    const settingList = await get<NWSettingItemVo[]>('/setting/list')
+    const goalValue = Number(
+      settingList.find((item) => item.setting_key === 'daily_word_goal')?.setting_value ?? '',
+    )
+    dailyGoal.value = Number.isFinite(goalValue) && goalValue > 0 ? goalValue : 2000
+  } catch {
+    dailyGoal.value = 2000
+  }
+}
+
 async function loadProjectList(): Promise<void> {
   projectLoading.value = true
   try {
     const pageData = await listProjects({
       page_num: projectPageNum.value,
       page_size: NW_PROJECT_PAGE_SIZE,
+      keyword_text: keywordText.value.trim() || undefined,
+      project_status: statusFilter.value || undefined,
     })
     projectList.value = pageData.items ?? []
     projectTotal.value = pageData.total ?? 0
@@ -186,283 +182,216 @@ async function loadProjectList(): Promise<void> {
   }
 }
 
-/** 项目状态转展示文案 */
-function projectStatusText(projectStatus: string): string {
-  switch (projectStatus) {
-    case 'draft':
-      return t('dashboard.statusDraft')
-    case 'serial':
-      return t('dashboard.statusSerial')
-    case 'completed':
-      return t('dashboard.statusCompleted')
-    default:
-      return projectStatus
-  }
+function handleSearch(): void {
+  projectPageNum.value = 1
+  void loadProjectList()
 }
 
-/** 封面色块取色（按书名散列稳定取色） */
-function coverColor(projectName: string): string {
-  let hashValue = 0
-  for (const charText of projectName) {
-    hashValue = (hashValue * 31 + charText.codePointAt(0)!) % 997
-  }
-  return NW_COVER_COLOR_LIST[hashValue % NW_COVER_COLOR_LIST.length]
+function handleStatusChange(statusCode: string): void {
+  statusFilter.value = statusCode
+  handleSearch()
 }
 
-/** 毫秒时间戳转本地时间文案 */
-function formatTimestamp(timestampMs: number): string {
-  return new Date(timestampMs).toLocaleString()
+function openProjectDrawer(projectVo?: NWProjectVo): void {
+  editingProject.value = projectVo ?? null
+  drawerVisible.value = true
 }
 
-/** 行点击进入写作台 */
-function handleProjectRowClick(row: NWProjectVo): void {
-  void router.push(`/workspace/${row.project_ulid}`)
+async function handleProjectSaved(): Promise<void> {
+  await Promise.all([loadProjectList(), loadStatsOverview(), projectStore.loadProjectList()])
 }
 
-function handleCreateProject(): void {
-  editingProjectUlid.value = ''
-  createForm.project_name = ''
-  createForm.genre_code = ''
-  createForm.style_text = ''
-  createForm.synopsis_text = ''
-  createForm.project_status = 'draft'
-  createDialogVisible.value = true
-}
-
-/** 编辑项目：复用新建弹窗，回填可编辑字段 */
-function handleEditProject(row: NWProjectVo): void {
-  editingProjectUlid.value = row.project_ulid
-  createForm.project_name = row.project_name
-  createForm.genre_code = row.genre_code
-  createForm.style_text = row.style_text
-  createForm.synopsis_text = row.synopsis_text
-  createForm.project_status = row.project_status || 'draft'
-  createDialogVisible.value = true
-}
-
-/** 保存新项目 */
-async function handleCreateSubmit(): Promise<void> {
-  if (!createFormRef.value) {
-    return
-  }
-  try {
-    await createFormRef.value.validate()
-  } catch {
-    return
-  }
-  createSaving.value = true
-  try {
-    if (editingProjectUlid.value) {
-      await updateProject({
-        project_ulid: editingProjectUlid.value,
-        project_name: createForm.project_name,
-        genre_code: createForm.genre_code,
-        style_text: createForm.style_text,
-        synopsis_text: createForm.synopsis_text,
-        project_status: createForm.project_status,
-      })
-      ElMessage.success(t('dashboard.updateSuccess'))
-    } else {
-      await createProject({
-        project_name: createForm.project_name,
-        genre_code: createForm.genre_code || undefined,
-        style_text: createForm.style_text || undefined,
-        synopsis_text: createForm.synopsis_text || undefined,
-      })
-      ElMessage.success(t('dashboard.createSuccess'))
-    }
-    createDialogVisible.value = false
-    projectPageNum.value = 1
-    await loadProjectList()
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    createSaving.value = false
-  }
-}
-
-/** 删除项目（二次确认，级联删卷/章/设定） */
-async function handleDeleteProject(row: NWProjectVo): Promise<void> {
+async function handleDeleteProject(projectVo: NWProjectVo): Promise<void> {
   try {
     await ElMessageBox.confirm(
       t('dashboard.deleteProjectConfirm'),
       t('dashboard.deleteProject'),
-      { type: 'warning' },
+      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') },
     )
   } catch {
     return
   }
   try {
-    await deleteProject(row.project_ulid)
+    await deleteProject(projectVo.project_ulid)
     ElMessage.success(t('dashboard.deleteSuccess'))
-    await loadProjectList()
+    await Promise.all([loadProjectList(), loadStatsOverview(), projectStore.loadProjectList()])
   } catch {
     // 失败提示由 http 层统一弹出
   }
 }
 
-function handleProjectPageChange(pageNum: number): void {
+function openProject(projectVo: NWProjectVo): void {
+  projectStore.setCurrentProject(projectVo.project_ulid)
+  void router.push(`/workspace/${projectVo.project_ulid}`)
+}
+
+function handlePageChange(pageNum: number): void {
   projectPageNum.value = pageNum
   void loadProjectList()
 }
 
 onMounted(() => {
   void loadStatsOverview()
+  void loadDailyGoal()
   void loadProjectList()
-  window.addEventListener('resize', handleWindowResize)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', handleWindowResize)
-  trendChartInstance?.dispose()
-  trendChartInstance = null
 })
 </script>
 
 <template>
-  <div class="dashboard-page">
-    <h2 class="dashboard-page__title">{{ t('dashboard.title') }}</h2>
-
-    <!-- 统计卡片 -->
-    <NWLoading v-if="statsLoading" />
-    <div v-else class="dashboard-page__stats">
-      <NWCard
-        v-for="statItem in statCardList"
-        :key="statItem.stat_key"
-        class="dashboard-page__stat-card"
-      >
-        <div class="stat-card" :class="statItem.stat_class">
-          <span class="stat-card__label">{{ statItem.stat_label }}</span>
-          <span class="stat-card__value">{{ statItem.stat_value }}</span>
-        </div>
-      </NWCard>
-    </div>
-
-    <!-- 近 30 天趋势 -->
-    <NWCard :title="t('dashboard.trendTitle')" class="dashboard-page__trend-card">
-      <div ref="trendChartElement" class="dashboard-page__trend-chart" />
-    </NWCard>
-
-    <!-- 项目列表 -->
-    <NWCard class="dashboard-page__project-card">
-      <template #header>
-        <h3 class="nw-card__title">{{ t('dashboard.projectList') }}</h3>
-        <NWButton type="primary" size="small" @click="handleCreateProject">
+  <div class="nw-page dashboard-page">
+    <NWPageHeader
+      :eyebrow_text="todayDateText"
+      :title_text="t('dashboard.greetTitle', { name: authStore.user_vo?.user_name || t('dashboard.greetWriter'), greet: greetText })"
+      :subtitle_text="t('dashboard.greetSubtitle')"
+      icon_code="sparkles"
+    >
+      <template #actions>
+        <NWButton @click="openProjectDrawer()">
+          <NWIcon icon_code="plus" :size_px="15" />
           {{ t('dashboard.createProject') }}
         </NWButton>
-      </template>
-
-      <NWLoading v-if="projectLoading" />
-      <template v-else>
-        <el-table :data="projectList" class="dashboard-page__project-table" @row-click="handleProjectRowClick">
-          <el-table-column :label="t('dashboard.projectCover')" width="72">
-            <template #default="{ row }">
-              <div
-                class="project-cover"
-                :style="{ backgroundColor: coverColor(row.project_name) }"
-              >
-                {{ (row.project_name || '?').slice(0, 1) }}
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="project_name" :label="t('dashboard.projectName')" min-width="180" />
-          <el-table-column :label="t('dashboard.projectStatus')" width="110">
-            <template #default="{ row }">
-              <span class="project-status">{{ projectStatusText(row.project_status) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="total_word_count" :label="t('dashboard.projectWordCount')" width="120" />
-          <el-table-column prop="chapter_count" :label="t('dashboard.projectChapterCount')" width="100" />
-          <el-table-column :label="t('dashboard.projectUpdatedAt')" width="180">
-            <template #default="{ row }">
-              {{ formatTimestamp(row.updated_at_ms) }}
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('common.action')" width="160" fixed="right">
-            <template #default="{ row }">
-              <NWButton size="small" @click.stop="handleEditProject(row)">
-                {{ t('dashboard.editProject') }}
-              </NWButton>
-              <NWButton
-                type="danger-text"
-                size="small"
-                @click.stop="handleDeleteProject(row)"
-              >
-                {{ t('common.delete') }}
-              </NWButton>
-            </template>
-          </el-table-column>
-          <template #empty>
-            <NWEmpty :description_text="t('dashboard.projectEmptyTip')" />
-          </template>
-        </el-table>
-
-        <el-pagination
-          v-if="projectTotal > NW_PROJECT_PAGE_SIZE"
-          class="dashboard-page__pagination"
-          layout="prev, pager, next"
-          :total="projectTotal"
-          :page-size="NW_PROJECT_PAGE_SIZE"
-          :current-page="projectPageNum"
-          @current-change="handleProjectPageChange"
-        />
-      </template>
-    </NWCard>
-
-    <!-- 新建项目对话框 -->
-    <el-dialog
-      v-model="createDialogVisible"
-      :title="projectEditMode ? t('dashboard.editProjectTitle') : t('dashboard.createProjectTitle')"
-      width="520px"
-    >
-      <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-width="88px">
-        <el-form-item :label="t('dashboard.projectName')" prop="project_name">
-          <el-input
-            v-model="createForm.project_name"
-            maxlength="128"
-            :placeholder="t('dashboard.projectNamePlaceholder')"
-          />
-        </el-form-item>
-        <el-form-item v-if="projectEditMode" :label="t('dashboard.projectStatus')">
-          <el-select v-model="createForm.project_status">
-            <el-option value="draft" :label="t('dashboard.statusDraft')" />
-            <el-option value="serial" :label="t('dashboard.statusSerial')" />
-            <el-option value="completed" :label="t('dashboard.statusCompleted')" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="t('dashboard.genreCode')" prop="genre_code">
-          <el-input
-            v-model="createForm.genre_code"
-            maxlength="32"
-            :placeholder="t('dashboard.genrePlaceholder')"
-          />
-        </el-form-item>
-        <el-form-item :label="t('dashboard.styleText')" prop="style_text">
-          <el-input
-            v-model="createForm.style_text"
-            type="textarea"
-            :rows="3"
-            maxlength="1024"
-            :placeholder="t('dashboard.stylePlaceholder')"
-          />
-        </el-form-item>
-        <el-form-item :label="t('dashboard.synopsisText')" prop="synopsis_text">
-          <el-input
-            v-model="createForm.synopsis_text"
-            type="textarea"
-            :rows="3"
-            maxlength="4096"
-            :placeholder="t('dashboard.synopsisPlaceholder')"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <NWButton @click="createDialogVisible = false">{{ t('common.cancel') }}</NWButton>
-        <NWButton type="primary" :loading="createSaving" @click="handleCreateSubmit">
-          {{ t('common.confirm') }}
+        <NWButton v-if="continueProject" type="primary" @click="openProject(continueProject)">
+          <NWIcon icon_code="play" :size_px="14" />
+          {{ t('dashboard.continueWriting') }}
         </NWButton>
       </template>
-    </el-dialog>
+    </NWPageHeader>
+
+    <div class="nw-stat-grid">
+      <NWStatTile :label_text="t('dashboard.projectCount')" :value_number="statsOverview.project_count" :hint_text="t('dashboard.projectCountHint')" icon_code="bookOpen" tone_code="primary" />
+      <NWStatTile :label_text="t('dashboard.totalWords')" :value_number="statsOverview.total_word_count" :hint_text="t('dashboard.totalWordsHint')" icon_code="pen" tone_code="neutral" />
+      <NWStatTile :label_text="t('dashboard.todayWords')" :value_number="statsOverview.today_word_delta" :hint_text="t('dashboard.todayWordsHint')" icon_code="flame" tone_code="warning" />
+      <NWStatTile :label_text="t('dashboard.aiWords')" :value_number="statsOverview.ai_word_total" :hint_text="t('dashboard.aiWordsHint')" icon_code="sparkles" tone_code="info" />
+    </div>
+
+    <div class="dashboard-page__main-grid">
+      <DashboardTrendCard :overview="statsOverview" :loading="statsLoading" />
+
+      <section class="nw-panel dashboard-page__goal-panel">
+        <header class="nw-panel__header">
+          <div>
+            <h3 class="nw-panel__title">{{ t('dashboard.todayGoal') }}</h3>
+            <p class="nw-panel__subtitle">{{ t('dashboard.todayGoalSubtitle') }}</p>
+          </div>
+        </header>
+        <div class="nw-panel__body">
+          <div class="dashboard-page__goal-value">
+            <strong>{{ statsOverview.today_word_delta }}</strong>
+            <span>/ {{ dailyGoal.toLocaleString() }} {{ t('dashboard.goalUnit') }}</span>
+          </div>
+          <el-progress :percentage="goalPercent" :stroke-width="9" :show-text="false" class="dashboard-page__goal-progress" />
+          <p class="nw-hint">
+            {{ goalPercent >= 100 ? t('dashboard.goalDone') : t('dashboard.goalRemain', { count: Math.max(0, dailyGoal - statsOverview.today_word_delta) }) }}
+          </p>
+
+          <div class="dashboard-page__quick-list">
+            <button v-if="continueProject" type="button" class="dashboard-page__quick-item" @click="openProject(continueProject)">
+              <span class="dashboard-page__quick-icon"><NWIcon icon_code="edit" :size_px="16" /></span>
+              <span class="dashboard-page__quick-text">
+                <strong>{{ t('dashboard.quickContinue') }}</strong>
+                <small>{{ continueProject.project_name }}</small>
+              </span>
+              <NWIcon icon_code="chevronRight" :size_px="14" />
+            </button>
+            <button type="button" class="dashboard-page__quick-item" @click="openProjectDrawer()">
+              <span class="dashboard-page__quick-icon"><NWIcon icon_code="plus" :size_px="16" /></span>
+              <span class="dashboard-page__quick-text">
+                <strong>{{ t('dashboard.quickNewProject') }}</strong>
+                <small>{{ t('dashboard.quickNewProjectHint') }}</small>
+              </span>
+              <NWIcon icon_code="chevronRight" :size_px="14" />
+            </button>
+            <button v-if="continueProject" type="button" class="dashboard-page__quick-item" @click="router.push(`/knowledge/${continueProject.project_ulid}`)">
+              <span class="dashboard-page__quick-icon"><NWIcon icon_code="database" :size_px="16" /></span>
+              <span class="dashboard-page__quick-text">
+                <strong>{{ t('dashboard.quickKnowledge') }}</strong>
+                <small>{{ t('dashboard.quickKnowledgeHint') }}</small>
+              </span>
+              <NWIcon icon_code="chevronRight" :size_px="14" />
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="nw-panel dashboard-page__project-panel">
+      <header class="nw-panel__header">
+        <div>
+          <h3 class="nw-panel__title">{{ t('dashboard.myProjects') }}</h3>
+          <p class="nw-panel__subtitle">{{ t('dashboard.myProjectsSubtitle', { count: projectTotal }) }}</p>
+        </div>
+        <div class="dashboard-page__project-actions">
+          <el-input v-model="keywordText" class="dashboard-page__search" clearable :placeholder="t('dashboard.searchProject')" @keyup.enter="handleSearch" @clear="handleSearch">
+            <template #prefix><NWIcon icon_code="search" :size_px="14" /></template>
+          </el-input>
+          <div class="dashboard-page__status-tabs">
+            <button
+              v-for="statusOption in projectStatusOptions"
+              :key="statusOption.value"
+              type="button"
+              class="dashboard-page__status-tab"
+              :class="{ 'is-active': statusFilter === statusOption.value }"
+              @click="handleStatusChange(statusOption.value)"
+            >
+              {{ statusOption.label }}
+            </button>
+          </div>
+          <NWButton size="small" type="primary" @click="openProjectDrawer()">
+            <NWIcon icon_code="plus" :size_px="14" />
+            {{ t('dashboard.createProject') }}
+          </NWButton>
+        </div>
+      </header>
+
+      <div class="nw-panel__body">
+        <div v-if="projectLoading" class="dashboard-page__project-skeleton">
+          <div v-for="index in 3" :key="index" class="dashboard-page__project-skeleton-item" />
+        </div>
+        <NWEmpty
+          v-else-if="projectList.length === 0"
+          icon_code="bookOpen"
+          :title_text="t('dashboard.projectEmptyTitle')"
+          :description_text="t('dashboard.projectEmptyDesc')"
+        >
+          <template #actions>
+            <NWButton type="primary" @click="openProjectDrawer()">
+              <NWIcon icon_code="plus" :size_px="14" />
+              {{ t('dashboard.createProject') }}
+            </NWButton>
+          </template>
+        </NWEmpty>
+        <template v-else>
+          <div class="dashboard-page__project-grid">
+            <DashboardProjectCard
+              v-for="projectVo in projectList"
+              :key="projectVo.project_ulid"
+              :project="projectVo"
+              :genre_text="genreLabel(projectVo.genre_code)"
+              :status_text="statusLabel(projectVo.project_status)"
+              :status_class="statusBadgeClass(projectVo.project_status)"
+              :cover_style="coverGradient(projectVo.project_name)"
+              :relative_text="formatRelativeTime(projectVo.updated_at_ms)"
+              @open="openProject(projectVo)"
+              @edit="openProjectDrawer(projectVo)"
+              @remove="handleDeleteProject(projectVo)"
+            />
+          </div>
+
+          <el-pagination
+            v-if="projectTotal > NW_PROJECT_PAGE_SIZE"
+            class="dashboard-page__pagination"
+            layout="total, prev, pager, next"
+            :total="projectTotal"
+            :page-size="NW_PROJECT_PAGE_SIZE"
+            :current-page="projectPageNum"
+            background
+            @current-change="handlePageChange"
+          />
+        </template>
+      </div>
+    </section>
+
+    <DashboardProjectDrawer v-model:visible="drawerVisible" :project="editingProject" @saved="handleProjectSaved" />
   </div>
 </template>
 

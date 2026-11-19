@@ -62,3 +62,12 @@ func (r *SettingRepo) UpdateValue(ctx context.Context, settingKey, settingValue 
 	}
 	return nil
 }
+
+// UpdateDescription 更新配置说明（内置配置文案升级时使用）。
+func (r *SettingRepo) UpdateDescription(ctx context.Context, settingKey, settingDesc string) error {
+	if err := r.db.WithContext(ctx).Model(&domain.AppSettingDO{}).
+		Where("setting_key = ?", settingKey).Update("setting_desc", settingDesc).Error; err != nil {
+		return fmt.Errorf("update setting description: %w", err)
+	}
+	return nil
+}

@@ -7,6 +7,7 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listAdminLoginLogs, type NWLoginLogVo } from '@/api/admin'
 import NWButton from '@/components/NWButton.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
@@ -98,17 +99,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="login-log-page">
+  <div class="nw-page login-log-page">
+    <NWPageHeader
+      :title_text="t('admin.loginLogs.title')"
+      :subtitle_text="t('admin.loginLogs.subtitle')"
+      icon_code="lock"
+    />
     <NWCard :hoverable="false">
-      <template #header>
-        <div class="login-log-page__header">
-          <div>
-            <h3 class="nw-card__title">{{ t('admin.loginLogs.title') }}</h3>
-            <p class="login-log-page__subtitle">{{ t('admin.loginLogs.subtitle') }}</p>
-          </div>
-        </div>
-      </template>
-
       <div class="login-log-page__toolbar">
         <el-input
           v-model="keywordText"

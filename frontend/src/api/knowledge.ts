@@ -8,6 +8,22 @@ import type {
   NWPageDto,
 } from './contracts'
 
+/** 知识库概览（文档状态与切片总量） */
+export interface NWKnowledgeStatsVo {
+  total_count: number
+  indexed_count: number
+  pending_count: number
+  failed_count: number
+  chunk_count: number
+}
+
+/** 项目知识库概览 */
+export function getKnowledgeStats(projectUlid: string): Promise<NWKnowledgeStatsVo> {
+  return get<NWKnowledgeStatsVo>(`/knowledge/stats/${encodeURIComponent(projectUlid)}`, {
+    silent_error: true,
+  })
+}
+
 /** 知识库检索请求（字段对齐后端 KnowledgeSearchREQ） */
 export interface NWKnowledgeSearchReqVo {
   project_ulid: string
@@ -86,7 +102,7 @@ export function listKnowledgeChunks(params: {
 }): Promise<NWPageDto<NWKnowledgeChunkVo>> {
   return get<NWPageDto<NWKnowledgeChunkVo>>(
     `/knowledge/chunk/list/${encodeURIComponent(params.docUlid)}` +
-      `&page_num=${params.pageNum}&page_size=${params.pageSize}`,
+      `?page_num=${params.pageNum}&page_size=${params.pageSize}`,
     { silent_error: true },
   )
 }

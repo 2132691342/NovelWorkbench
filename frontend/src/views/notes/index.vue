@@ -16,6 +16,8 @@ import {
   type NWLoreVo,
 } from '@/api/lore'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
@@ -49,13 +51,28 @@ let dirtyFlag = false
 /** 程序化回填内容期间抑制 change 事件触发自动保存 */
 let suppressChangeFlag = false
 
-/** 过滤后的笔记列表（按标题模糊匹配） */
+/** 去掉富文本标签，得到纯文本片段 */
+function plainTextOf(htmlText: string): string {
+  return htmlText.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/** 笔记正文片段 */
+function noteSnippet(noteVo: NWLoreVo): string {
+  const plainText = plainTextOf(noteVo.content_text || '')
+  return plainText.length > 60 ? plainText.slice(0, 60) + '…' : plainText || t('notes.emptySnippet')
+}
+
+/** 过滤后的笔记列表（标题或正文模糊匹配） */
 const filteredNoteList = computed<NWLoreVo[]>(() => {
   const keyword = searchText.value.trim().toLowerCase()
   if (!keyword) {
     return noteList.value
   }
-  return noteList.value.filter((item) => item.lore_name.toLowerCase().includes(keyword))
+  return noteList.value.filter(
+    (item) =>
+      item.lore_name.toLowerCase().includes(keyword) ||
+      plainTextOf(item.content_text || '').toLowerCase().includes(keyword),
+  )
 })
 
 /** 毫秒时间戳转本地时间 */
@@ -83,7 +100,7 @@ async function loadNotes(): Promise<void> {
 /** 安排防抖自动保存 */
 function scheduleSave(): void {
   dirtyFlag = true
-  saveStatus.value = 'idle'
+  saveStatus.value = 'saved'
   if (saveTimer !== null) {
     window.clearTimeout(saveTimer)
   }
@@ -157,7 +174,7 @@ async function selectNote(noteVo: NWLoreVo): Promise<void> {
   currentNote.value = noteVo
   noteName.value = noteVo.lore_name
   applyNoteContent(noteVo.content_text)
-  saveStatus.value = 'idle'
+  saveStatus.value = 'saved'
 }
 
 /** 新建笔记（立即落库占位，后续编辑走自动保存） */
@@ -234,94 +251,124 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="notes-page">
+  <div class="nw-page notes-page">
     <ProjectPageHeader :project-ulid="projectUlid" />
 
-    <NWCard :title="t('notes.title')" :hoverable="false">
-      <div class="notes-page__main">
-        <!-- 左侧笔记列表 -->
-        <aside class="notes-page__list">
-          <div class="notes-page__list-bar">
-            <el-input
-              v-model="searchText"
-              size="small"
-              clearable
-              :placeholder="t('notes.searchPlaceholder')"
-            />
-            <NWButton size="small" type="primary" :loading="creatingFlag" @click="handleCreate">
-              {{ t('notes.create') }}
-            </NWButton>
-          </div>
-          <NWLoading v-if="listLoading && noteList.length === 0" />
-          <NWEmpty
-            v-else-if="filteredNoteList.length === 0"
-            :description_text="t('notes.emptyGuide')"
-          />
-          <ul v-else class="notes-page__items">
-            <li
-              v-for="noteVo in filteredNoteList"
-              :key="noteVo.lore_ulid"
-              class="notes-page__item"
-              :class="{ 'is-active': currentNote?.lore_ulid === noteVo.lore_ulid }"
-              @click="selectNote(noteVo)"
-            >
-              <div class="notes-page__item-info">
-                <span class="notes-page__item-name" :title="noteVo.lore_name">
-                  {{ noteVo.lore_name }}
-                </span>
-                <span class="notes-page__item-time">{{ formatTime(noteVo.updated_at_ms) }}</span>
-              </div>
-              <NWButton size="small" type="danger-text" @click.stop="handleDelete(noteVo)">
-                {{ t('common.delete') }}
-              </NWButton>
-            </li>
-          </ul>
-        </aside>
+    <NWPageHeader
+      :title_text="t('notes.title')"
+      :subtitle_text="t('notes.pageSubtitle')"
+      icon_code="note"
+    >
+      <template #actions>
+        <NWButton type="primary" :loading="creatingFlag" @click="handleCreate">
+          <NWIcon icon_code="plus" :size_px="15" />
+          {{ t('notes.create') }}
+        </NWButton>
+      </template>
+    </NWPageHeader>
 
-        <!-- 右侧编辑区 -->
-        <section class="notes-page__editor">
-          <template v-if="currentNote">
-            <div class="notes-page__editor-bar">
-              <el-input
-                v-model="noteName"
-                class="notes-page__name-input"
-                maxlength="128"
-                :placeholder="t('notes.namePlaceholder')"
-                @input="handleNameInput"
+    <div class="notes-page__main">
+      <!-- 左侧笔记列表 -->
+      <aside class="notes-page__list">
+        <div class="notes-page__list-head">
+          <el-input
+            v-model="searchText"
+            size="small"
+            clearable
+            :placeholder="t('notes.searchPlaceholder')"
+          >
+            <template #prefix><NWIcon icon_code="search" :size_px="13" /></template>
+          </el-input>
+          <button type="button" class="notes-page__new-btn" :title="t('notes.create')" @click="handleCreate">
+            <NWIcon icon_code="plus" :size_px="15" />
+          </button>
+        </div>
+        <div class="notes-page__list-meta">{{ t('notes.countLabel', { count: filteredNoteList.length }) }}</div>
+        <NWLoading v-if="listLoading && noteList.length === 0" />
+        <NWEmpty
+          v-else-if="filteredNoteList.length === 0"
+          compact_flag
+          icon_code="note"
+          :title_text="t('notes.emptyTitle')"
+          :description_text="t('notes.emptyGuide')"
+        />
+        <ul v-else class="notes-page__items">
+          <li
+            v-for="noteVo in filteredNoteList"
+            :key="noteVo.lore_ulid"
+            class="notes-page__item"
+            :class="{ 'is-active': currentNote?.lore_ulid === noteVo.lore_ulid }"
+            @click="selectNote(noteVo)"
+          >
+            <span class="notes-page__item-name" :title="noteVo.lore_name">{{ noteVo.lore_name }}</span>
+            <span class="notes-page__item-snippet">{{ noteSnippet(noteVo) }}</span>
+            <span class="notes-page__item-foot">
+              <span class="notes-page__item-time">{{ formatTime(noteVo.updated_at_ms) }}</span>
+              <button type="button" class="notes-page__item-delete" @click.stop="handleDelete(noteVo)">
+                <NWIcon icon_code="trash" :size_px="12" />
+              </button>
+            </span>
+          </li>
+        </ul>
+      </aside>
+
+      <!-- 右侧编辑区 -->
+      <section class="notes-page__editor">
+        <template v-if="currentNote">
+          <div class="notes-page__editor-bar">
+            <el-input
+              v-model="noteName"
+              class="notes-page__name-input"
+              maxlength="128"
+              :placeholder="t('notes.namePlaceholder')"
+              @input="handleNameInput"
+            />
+            <el-radio-group v-model="editorMode" size="small" class="notes-page__editor-mode">
+              <el-radio-button value="rich">{{ t('markdownNote.modeRich') }}</el-radio-button>
+              <el-radio-button value="markdown">{{ t('markdownNote.modeMarkdown') }}</el-radio-button>
+            </el-radio-group>
+            <span class="notes-page__save-state" :class="`is-${saveStatus}`">
+              <NWIcon
+                :icon_code="saveStatus === 'failed' ? 'alertCircle' : saveStatus === 'saved' ? 'checkCircle' : 'clock'"
+                :size_px="13"
               />
-              <el-radio-group v-model="editorMode" size="small" class="notes-page__editor-mode">
-                <el-radio-button value="rich">{{ t('markdownNote.modeRich') }}</el-radio-button>
-                <el-radio-button value="markdown">{{ t('markdownNote.modeMarkdown') }}</el-radio-button>
-              </el-radio-group>
-              <span class="notes-page__save-state" :class="`is-${saveStatus}`">
-                <template v-if="saveStatus === 'saving'">{{ t('notes.saveStatus.saving') }}</template>
-                <template v-else-if="saveStatus === 'saved'">{{ t('notes.saveStatus.saved') }}</template>
-                <template v-else-if="saveStatus === 'failed'">
-                  {{ t('notes.saveStatus.saveFailed') }}
-                  <NWButton size="small" @click="saveNote">{{ t('notes.saveStatus.retry') }}</NWButton>
-                </template>
-                <template v-else>{{ t('notes.saveStatus.unsaved') }}</template>
-              </span>
-            </div>
-            <MarkdownNoteEditor
-              v-if="editorMode === 'markdown'"
-              v-model="contentHtml"
-              class="notes-page__editor-body"
-              :placeholder="t('markdownNote.editorTip')"
-              @change="handleContentChange"
-            />
-            <NoteEditor
-              v-else
-              v-model="contentHtml"
-              class="notes-page__editor-body"
-              :placeholder="t('notes.contentPlaceholder')"
-              @change="handleContentChange"
-            />
-          </template>
-          <NWEmpty v-else :description_text="t('notes.selectGuide')" />
-        </section>
-      </div>
-    </NWCard>
+              <template v-if="saveStatus === 'saving'">{{ t('notes.saveStatus.saving') }}</template>
+              <template v-else-if="saveStatus === 'saved'">{{ t('notes.saveStatus.saved') }}</template>
+              <template v-else-if="saveStatus === 'failed'">
+                {{ t('notes.saveStatus.saveFailed') }}
+                <button type="button" class="notes-page__retry" @click="saveNote">{{ t('notes.saveStatus.retry') }}</button>
+              </template>
+              <template v-else>{{ t('notes.saveStatus.unsaved') }}</template>
+            </span>
+          </div>
+          <MarkdownNoteEditor
+            v-if="editorMode === 'markdown'"
+            v-model="contentHtml"
+            class="notes-page__editor-body"
+            :placeholder="t('markdownNote.editorTip')"
+            @change="handleContentChange"
+          />
+          <NoteEditor
+            v-else
+            v-model="contentHtml"
+            class="notes-page__editor-body"
+            :placeholder="t('notes.contentPlaceholder')"
+            @change="handleContentChange"
+          />
+        </template>
+        <div v-else class="notes-page__editor-empty">
+          <NWEmpty
+            icon_code="note"
+            :title_text="t('notes.selectTitle')"
+            :description_text="t('notes.selectGuide')"
+          >
+            <template #actions>
+              <NWButton size="small" type="primary" :loading="creatingFlag" @click="handleCreate">{{ t('notes.create') }}</NWButton>
+            </template>
+          </NWEmpty>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 

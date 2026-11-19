@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n'
 import { fetchPermCatalog } from '@/api/menu'
 import type { NWPermGroupVo } from '@/api/contracts'
 import NWCard from '@/components/NWCard.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 
@@ -47,15 +48,18 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="admin-perms-page">
-    <NWCard :hoverable="false">
-      <template #header>
-        <h3 class="nw-card__title">{{ t('admin.perms.title') }}</h3>
-        <span class="admin-perms-page__count">
-          {{ t('admin.perms.totalCount', { count: totalPermCount }) }}
-        </span>
+  <div class="nw-page admin-perms-page">
+    <NWPageHeader
+      :title_text="t('admin.perms.title')"
+      :subtitle_text="t('admin.perms.pageSubtitle')"
+      icon_code="key"
+    >
+      <template #badge>
+        <span class="nw-badge nw-badge--primary">{{ t('admin.perms.totalCount', { count: totalPermCount }) }}</span>
       </template>
+    </NWPageHeader>
 
+    <NWCard :hoverable="false">
       <p class="admin-perms-page__hint">{{ t('admin.perms.hint') }}</p>
 
       <NWLoading v-if="listLoading" />

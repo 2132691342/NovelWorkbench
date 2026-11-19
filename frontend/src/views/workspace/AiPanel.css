@@ -1,107 +1,262 @@
+/* AI 面板：头部 / 控制区 / 消息流 / 欢迎态 */
 .ai-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
-  gap: 8px;
   min-height: 0;
+  gap: 8px;
 }
 
 .ai-panel__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  flex-shrink: 0;
+}
+
+.ai-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ai-panel__title-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: var(--primary);
+  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
 }
 
 .ai-panel__title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-main);
+  color: var(--text-strong);
+  font-size: 13.5px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
-.ai-panel__model-select {
-  width: 150px;
+.ai-panel__count {
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  color: var(--text-placeholder);
+  font-size: 10px;
+  line-height: 16px;
 }
 
-.ai-panel__notice {
-  padding: 8px 10px;
-  border-radius: var(--radius-base);
-  font-size: 12px;
-  line-height: 1.6;
+.ai-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
 }
 
-.ai-panel__notice.is-down {
-  background-color: var(--error-bg);
-  color: var(--error-text);
+.ai-panel__session-select {
+  width: 108px;
 }
 
+.ai-panel__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
 
-.ai-panel__sessions {
-  max-height: 120px;
-  overflow-y: auto;
+.ai-panel__icon-btn:hover:not(:disabled) {
+  border-color: var(--primary-hover);
+  color: var(--primary);
+  background: var(--primary-soft);
+  transform: scale(1.04);
+}
+
+.ai-panel__icon-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.ai-panel__icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ai-panel__icon-btn.is-danger:hover:not(:disabled) {
+  border-color: var(--error-border);
+  color: var(--error);
+  background: var(--error-bg);
+}
+
+/* 控制区 */
+.ai-panel__controls {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+  padding: 8px 10px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
 }
 
-.ai-panel__sessions-empty {
-  padding: 8px;
-  font-size: 12px;
-  color: var(--text-placeholder);
-  text-align: center;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-base);
-}
-
-.session-item {
+.ai-panel__control-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
-  border-radius: var(--radius-base);
-  cursor: pointer;
-  transition: background-color var(--transition-base);
+  min-width: 0;
 }
 
-.session-item:hover {
-  background-color: var(--bg-hover);
+.ai-panel__control-label {
+  flex-shrink: 0;
+  color: var(--text-placeholder);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
 }
 
-.session-item.is-active {
-  background-color: var(--primary-light);
-}
-
-.session-item__name {
+.ai-panel__model-select {
   flex: 1;
   min-width: 0;
+}
+
+.ai-panel__model-empty {
+  color: var(--warning-text);
+  font-size: 11px;
+}
+
+.ai-panel__context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 210px;
+  height: 23px;
+  padding: 0 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
-  color: var(--text-main);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: all var(--transition-base);
 }
 
-.session-item__count {
-  font-size: 12px;
-  color: var(--text-secondary);
+.ai-panel__context-chip.is-active {
+  border-color: #c7d2fe;
+  background: var(--primary-soft);
+  color: var(--primary-active);
+}
+
+.ai-panel__context-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ai-panel__context-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ai-panel__context-hint {
+  margin-left: auto;
+  color: var(--text-placeholder);
+  font-size: 10px;
   white-space: nowrap;
 }
 
-.session-item__delete.nw-button {
-  height: 22px;
-  padding: 0 4px;
-  color: var(--text-placeholder);
-}
-
-.session-item__delete.nw-button:hover {
-  color: var(--error);
-  background-color: transparent;
-}
-
-
+/* 消息流 */
 .ai-panel__messages {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 2px 2px 2px 0;
+}
+
+/* 欢迎态 */
+.ai-panel__welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 6px;
+}
+
+.ai-panel__welcome-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.ai-panel__welcome-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 13px;
+  color: var(--primary);
+  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+  border: 1px solid #e0e7ff;
+}
+
+.ai-panel__welcome-title {
+  margin: 2px 0 4px;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ai-panel__welcome-desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.ai-panel__quick-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-panel__quick-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.ai-panel__quick-card:hover {
+  border-color: var(--primary-hover);
+  background: var(--primary-soft);
+  transform: translateX(2px);
+}
+
+.ai-panel__quick-card strong {
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-panel__quick-card small {
+  color: var(--text-placeholder);
+  font-size: 10.5px;
 }

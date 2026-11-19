@@ -1,7 +1,4 @@
-<!--
-  菜单管理页：左侧菜单树（分组/页面/动作三层可视）+ 右侧编辑抽屉。
-  菜单表同时是权限码登记处：page 行承载页面权限码，action 行只登记动作权限码。
--->
+<!-- 菜单管理页：菜单树维护（分组/页面/动作），菜单表同时是权限码登记处。 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
@@ -9,22 +6,18 @@ import { useI18n } from 'vue-i18n'
 import { deleteMenu, listMenus, saveMenu, type NWMenuSaveReqVo } from '@/api/menu'
 import type { NWMenuVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { NW_ICON_CODE_LIST } from './menuIcons'
 
 const { t } = useI18n()
 
 /** 菜单类型与作用域选项 */
 const NW_MENU_TYPE_LIST = ['group', 'page', 'action'] as const
 const NW_SCOPE_LIST = ['global', 'project'] as const
-
-/** 图标编码选项（与 NWIcon 路径表对应） */
-const NW_ICON_CODE_LIST = [
-  'dashboard', 'book', 'edit', 'tree', 'shield', 'user', 'globe', 'database', 'note',
-  'layers', 'model', 'wand', 'settings', 'users', 'key', 'menu', 'lock', 'history',
-  'chart', 'pulse', 'sliders', 'folder',
-] as const
 
 /** 树节点：在菜单视图对象上附加层级深度与子节点 */
 interface NWMenuTreeNode extends NWMenuVo {
@@ -256,10 +249,22 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="admin-menus-page">
+  <div class="nw-page admin-menus-page">
+    <NWPageHeader
+      :title_text="t('admin.menus.title')"
+      :subtitle_text="t('admin.menus.pageSubtitle')"
+      icon_code="menu"
+    >
+      <template #actions>
+        <NWButton type="primary" @click="handleCreateMenu()">
+          <NWIcon icon_code="plus" :size_px="15" />
+          {{ t('common.create') }}
+        </NWButton>
+      </template>
+    </NWPageHeader>
+
     <NWCard :hoverable="false">
       <template #header>
-        <h3 class="nw-card__title">{{ t('admin.menus.title') }}</h3>
         <div class="admin-menus-page__header-actions">
           <el-input
             v-model="keywordText"
@@ -278,7 +283,6 @@ onMounted(() => {
           </el-select>
           <NWButton @click="handleSearch">{{ t('admin.search') }}</NWButton>
           <NWButton @click="handleResetFilters">{{ t('admin.reset') }}</NWButton>
-          <NWButton type="primary" @click="handleCreateMenu()">{{ t('common.create') }}</NWButton>
         </div>
       </template>
 

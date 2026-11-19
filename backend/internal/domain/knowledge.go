@@ -144,3 +144,12 @@ type KnowledgeContentDTO struct {
 	DocTypeCode  string // 文档类型（txt/md/docx/pdf）
 	ContentBytes []byte // 原文字节
 }
+
+// KnowledgeStatsVO 项目知识库概览（文档数/索引状态/切片总量）。
+type KnowledgeStatsVO struct {
+	TotalCount   int64 `json:"total_count"`   // 文档总数
+	IndexedCount int64 `json:"indexed_count"` // 已索引文档数
+	PendingCount int64 `json:"pending_count"` // 待处理/索引中文档数
+	FailedCount  int64 `json:"failed_count"`  // 索引失败文档数
+	ChunkCount   int64 `json:"chunk_count"`   // 切片总数
+}

@@ -154,3 +154,13 @@ func (a *KnowledgeAPI) Content(c *gin.Context) {
 	c.Header("Content-Disposition", "inline; filename*=UTF-8''"+url.PathEscape(contentDTO.DocName))
 	c.Data(http.StatusOK, contentType, contentDTO.ContentBytes)
 }
+
+// Stats 项目知识库概览（GET /knowledge/stats/{ProjectULID}）。
+func (a *KnowledgeAPI) Stats(c *gin.Context) {
+	vo, err := a.svc.Stats(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), c.Param("ProjectULID"))
+	if err != nil {
+		respondErr(c, "knowledge.stats", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}

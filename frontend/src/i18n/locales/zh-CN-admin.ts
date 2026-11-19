@@ -47,6 +47,7 @@ export default {
     ruleAPIKeyRequired: '首次创建必须填写 API Key',
   },
   usage: {
+    pageSubtitle: '模型调用次数、Token、延迟与成功率的按日聚合。',
     title: '用量分析',
     subtitle: '模型调用次数、token 消耗、延迟与成功率；数据按日聚合，来自实际调用链路。',
     rangeDays: '近 {days} 天',
@@ -62,6 +63,7 @@ export default {
     emptyTip: '所选区间暂无调用记录',
   },
   status: {
+    pageSubtitle: '进程信息与外部依赖健康；任何一项异常都会直接影响写作体验。',
     title: '运行状态',
     subtitle: '进程信息与外部依赖健康：数据库、缓存、队列、对象存储、全文检索与模型供应商。',
     refresh: '刷新',
@@ -88,6 +90,7 @@ export default {
     search: '搜索',
     reset: '重置',
     users: {
+      pageSubtitle: '账号由管理员分配；这里维护账号状态、角色与登录密码。',
       title: '用户管理',
       createTitle: '新建用户',
       editTitle: '编辑用户',
@@ -120,6 +123,7 @@ export default {
       rulePasswordMin: '密码至少 6 位',
     },
     roles: {
+      pageSubtitle: '角色决定可见菜单与接口权限；权限码来自菜单与权限目录。',
       title: '角色管理',
       createTitle: '新建角色',
       editTitle: '编辑角色',
@@ -141,6 +145,7 @@ export default {
       permHint: '权限码在「菜单管理」中登记，勾选后立即对该角色下的账号生效。',
     },
     menus: {
+      pageSubtitle: '菜单即权限登记：页面、图标、路由与权限码都由这里下发到侧边栏。',
       title: '菜单管理',
       hint: '菜单表同时是权限码登记处：page 行承载页面权限码，action 行只登记动作权限码（不进导航）。导航树由后端下发，改菜单即改侧边栏。',
       keywordPlaceholder: '搜索名称/编码/权限码',
@@ -176,6 +181,7 @@ export default {
       ruleNameRequired: '请输入菜单名称',
     },
     perms: {
+      pageSubtitle: '按业务域汇总的权限码，是角色勾选权限的唯一事实源。',
       title: '权限目录',
       hint: '权限码全部来自菜单登记：新增菜单时填写的 perm_code 即出现在此目录，角色管理按目录勾选。',
       totalCount: '共 {count} 项权限',
@@ -207,6 +213,9 @@ export default {
       emptyTip: '暂无登录日志',
     },
     jobs: {
+      failedHint: '失败任务可重试，失败原因可查看完整文本',
+      docDeleted: '文档已删除',
+      pageSubtitle: '知识库索引等异步任务的状态、失败原因与重试入口。',
       title: '任务中心',
       subtitle: '知识库索引等异步任务由 RabbitMQ worker 消费；失败任务可重置后重新入队。',
       queuedCount: '排队中',
@@ -235,6 +244,7 @@ export default {
       emptyTip: '暂无异步任务',
     },
     audit: {
+      pageSubtitle: '记录关键写操作与登录行为，用于审计与问题追溯。',
       title: '审计日志',
       createdAt: '时间',
       user: '用户',

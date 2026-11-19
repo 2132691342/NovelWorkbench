@@ -9,6 +9,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { deleteCharacter, listCharacters, type NWCharacterVo } from '@/api/character'
 import NWButton from '@/components/NWButton.vue'
+import NWCard from '@/components/NWCard.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
@@ -126,10 +129,23 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="character-page">
+  <div class="nw-page character-page">
     <ProjectPageHeader :project-ulid="projectUlid" />
 
-    <NWCard :title="t('character.title')" :hoverable="false">
+    <NWPageHeader
+      :title_text="t('character.title')"
+      :subtitle_text="t('character.pageSubtitle')"
+      icon_code="users"
+    >
+      <template #actions>
+        <NWButton type="primary" @click="handleCreate">
+          <NWIcon icon_code="plus" :size_px="15" />
+          {{ t('character.create') }}
+        </NWButton>
+      </template>
+    </NWPageHeader>
+
+    <NWCard :hoverable="false">
       <el-tabs v-model="activeTab">
         <!-- 角色列表页签 -->
         <el-tab-pane :label="t('character.listTab')" name="list">
@@ -156,17 +172,25 @@ onMounted(() => {
               @keyup.enter="loadCharacters"
               @clear="loadCharacters"
             />
-            <NWButton size="small" @click="loadCharacters">{{ t('character.search') }}</NWButton>
-            <NWButton size="small" type="primary" @click="handleCreate">
-              {{ t('character.create') }}
+            <NWButton size="small" @click="loadCharacters">
+              <NWIcon icon_code="search" :size_px="14" />
+              {{ t('character.search') }}
             </NWButton>
+            <span class="nw-toolbar__spacer" />
+            <span class="character-page__count">{{ t('character.countLabel', { count: characterList.length }) }}</span>
           </div>
 
           <NWLoading v-if="listLoading && characterList.length === 0" />
           <NWEmpty
             v-else-if="characterList.length === 0"
+            icon_code="users"
+            :title_text="t('character.emptyTitle')"
             :description_text="t('character.emptyTip')"
-          />
+          >
+            <template #actions>
+              <NWButton size="small" type="primary" @click="handleCreate">{{ t('character.create') }}</NWButton>
+            </template>
+          </NWEmpty>
           <div v-else class="character-page__grid">
             <article
               v-for="characterVo in characterList"

@@ -6,6 +6,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
 import type { NWChatDisplayMessage } from './chatTypes'
 
 const props = defineProps<{
@@ -70,7 +71,12 @@ function chunkPreview(chunkText: string): string {
           class="chat-message__toggle"
           @click="referenceExpanded = !referenceExpanded"
         >
-          <span :class="{ 'is-expanded': referenceExpanded }">></span>
+          <NWIcon
+            icon_code="chevronRight"
+            :size_px="12"
+            class="chat-message__toggle-arrow"
+            :class="{ 'is-expanded': referenceExpanded }"
+          />
           {{ t('workspace.ai.references') }}
           <template v-if="message.reference_list.length > 0">
             ({{ message.reference_list.length }})
@@ -110,7 +116,13 @@ function chunkPreview(chunkText: string): string {
 <style scoped>
 .chat-message {
   display: flex;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
+  animation: chat-message-in 0.22s ease both;
+}
+
+@keyframes chat-message-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
 }
 
 .chat-message--user {
@@ -122,43 +134,52 @@ function chunkPreview(chunkText: string): string {
 }
 
 .chat-message__bubble {
-  max-width: 88%;
-  padding: 10px 12px;
-  border-radius: var(--radius-lg);
+  max-width: 92%;
+  padding: 9px 11px;
+  border-radius: 12px;
   border: 1px solid var(--border-light);
-  background-color: var(--bg-card);
+  background-color: var(--bg-subtle);
 }
 
 .chat-message--user .chat-message__bubble {
-  background-color: var(--primary-light);
-  border-color: var(--primary-light);
+  border-color: #dbe3ff;
+  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
 }
 
 .chat-message__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--text-placeholder);
+  font-size: 10.5px;
 }
 
 .chat-message__role {
-  font-weight: 600;
-  color: var(--text-main);
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.chat-message--assistant .chat-message__role {
+  color: var(--primary-active);
 }
 
 .chat-message__skill {
   padding: 0 6px;
   border-radius: var(--radius-pill);
-  background-color: var(--bg-hover);
+  background-color: var(--bg-card);
   color: var(--primary-active);
+  font-size: 10px;
+}
+
+.chat-message__time {
+  margin-left: auto;
 }
 
 .chat-message__content {
-  font-size: 14px;
-  line-height: 1.7;
   color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.72;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -166,7 +187,7 @@ function chunkPreview(chunkText: string): string {
 .chat-message__cursor {
   display: inline-block;
   width: 2px;
-  height: 15px;
+  height: 13px;
   margin-left: 2px;
   vertical-align: text-bottom;
   background-color: var(--primary);
@@ -174,9 +195,7 @@ function chunkPreview(chunkText: string): string {
 }
 
 @keyframes chat-cursor-blink {
-  50% {
-    opacity: 0;
-  }
+  50% { opacity: 0; }
 }
 
 .chat-message__error {
@@ -184,41 +203,70 @@ function chunkPreview(chunkText: string): string {
   align-items: center;
   gap: 8px;
   margin-top: 8px;
-  padding: 6px 10px;
+  padding: 6px 9px;
   border-radius: var(--radius-base);
-  background-color: var(--bg-hover);
+  background-color: var(--error-bg);
+  color: var(--error-text);
 }
 
 .chat-message__error-text {
-  font-size: 13px;
-  color: var(--error);
+  flex: 1;
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .chat-message__actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 8px;
   margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--border);
 }
 
 .chat-message__toggle.nw-button {
-  height: 24px;
+  height: 22px;
   padding: 0 4px;
-  font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--text-placeholder);
+  font-size: 11px;
 }
 
 .chat-message__toggle.nw-button:hover {
   color: var(--primary);
 }
 
-.chat-message__toggle span {
-  display: inline-block;
+.chat-message__toggle-arrow {
   transition: transform var(--transition-base);
 }
 
-.chat-message__toggle span.is-expanded {
+.chat-message__toggle-arrow.is-expanded {
   transform: rotate(90deg);
+}
+
+.chat-message__insert-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.chat-message__insert-btn:hover {
+  border-color: var(--primary-hover);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.chat-message__insert-btn:active {
+  transform: scale(0.96);
 }
 
 .chat-message__references {
@@ -229,8 +277,8 @@ function chunkPreview(chunkText: string): string {
 
 .chat-message__references-empty {
   margin: 0;
-  font-size: 12px;
   color: var(--text-placeholder);
+  font-size: 11px;
 }
 
 .chat-reference {
@@ -245,25 +293,25 @@ function chunkPreview(chunkText: string): string {
 }
 
 .chat-reference__doc {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--primary-active);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--primary-active);
+  font-size: 11.5px;
+  font-weight: 600;
 }
 
 .chat-reference__score {
-  font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--text-placeholder);
+  font-size: 10px;
   white-space: nowrap;
 }
 
 .chat-reference__text {
   margin: 2px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
   color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 </style>

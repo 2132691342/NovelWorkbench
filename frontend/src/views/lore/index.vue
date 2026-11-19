@@ -10,6 +10,8 @@ import { useI18n } from 'vue-i18n'
 import { deleteLore, saveLore, type NWLoreVo } from '@/api/lore'
 import { post } from '@/api/http'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
@@ -209,8 +211,21 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="lore-page">
+  <div class="nw-page lore-page">
     <ProjectPageHeader :project-ulid="projectUlid" />
+
+    <NWPageHeader
+      :title_text="t('lore.title')"
+      :subtitle_text="t('lore.pageSubtitle')"
+      icon_code="globe"
+    >
+      <template #actions>
+        <NWButton type="primary" @click="handleCreate">
+          <NWIcon icon_code="plus" :size_px="15" />
+          {{ t('lore.create') }}
+        </NWButton>
+      </template>
+    </NWPageHeader>
 
     <div class="lore-page__body">
       <aside class="lore-page__side">
@@ -241,20 +256,31 @@ onMounted(() => {
       <section class="lore-page__main">
         <NWCard :hoverable="false">
           <template #header>
-            <h3 class="nw-card__title">{{ t('lore.title') }}</h3>
+            <h3 class="nw-card__title">{{ t('lore.entriesTitle') }}</h3>
             <div class="lore-page__toolbar">
               <el-input
                 v-model="keywordText"
                 :placeholder="t('lore.searchPlaceholder')"
                 clearable
                 class="lore-page__search"
-              />
-              <NWButton type="primary" @click="handleCreate">{{ t('lore.create') }}</NWButton>
+              >
+                <template #prefix><NWIcon icon_code="search" :size_px="14" /></template>
+              </el-input>
+              <span class="lore-page__count">{{ t('lore.countLabel', { count: filteredLoreList.length }) }}</span>
             </div>
           </template>
 
           <NWLoading v-if="listLoading" />
-          <NWEmpty v-else-if="filteredLoreList.length === 0" :description_text="t('lore.emptyTip')" />
+          <NWEmpty
+            v-else-if="filteredLoreList.length === 0"
+            icon_code="globe"
+            :title_text="t('lore.emptyTitle')"
+            :description_text="t('lore.emptyTip')"
+          >
+            <template #actions>
+              <NWButton size="small" type="primary" @click="handleCreate">{{ t('lore.create') }}</NWButton>
+            </template>
+          </NWEmpty>
           <div v-else class="lore-grid">
             <article
               v-for="loreItem in filteredLoreList"

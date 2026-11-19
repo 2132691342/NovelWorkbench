@@ -1,0 +1,39 @@
+/* ===== 响应式 ===== */
+@media (max-width: 1200px) {
+  .admin-layout__search-btn {
+    width: 190px;
+  }
+
+  .admin-layout__user-role {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .admin-layout__aside {
+    width: var(--layout-sidebar-collapsed-width);
+  }
+
+  .admin-layout__brand-text,
+  .admin-layout__aside-footer kbd {
+    display: none;
+  }
+
+  .admin-layout__content {
+    padding: 16px;
+  }
+
+  .admin-layout__search-btn span,
+  .admin-layout__search-btn kbd {
+    display: none;
+  }
+
+  .admin-layout__search-btn {
+    width: 34px;
+    justify-content: center;
+  }
+
+  .admin-layout__user-text {
+    display: none;
+  }
+}

@@ -3,7 +3,7 @@
   @引用选择器（知识库文档/本项目章节，多选 chips）+ 历史条数 + 发送/停止生成。
 -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listKnowledgeDocuments } from '@/api/knowledge'
 import { listSkills } from '@/api/skill'
@@ -13,6 +13,7 @@ import type {
   NWSkillVo,
 } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
 import type { NWChatRefItem, NWChatSendPayload } from './chatTypes'
 
 const props = defineProps<{
@@ -33,6 +34,7 @@ const SLASH_TOKEN_REGEXP = /(^|\s)\/([^\s]*)$/
 /** 引用触发词（行首或空白后 @xxx） */
 const AT_TOKEN_REGEXP = /(^|\s)@([^\s]*)$/
 
+const inputRef = ref<HTMLTextAreaElement | null>(null)
 const inputText = ref('')
 const cursorPos = ref(0)
 const skillCode = ref('')
@@ -256,7 +258,21 @@ function presetSkill(newSkillCode: string, refChapterUlidList: string[]): void {
   }
 }
 
-defineExpose({ presetSkill })
+/** 外部填入输入框（快捷提示词入口） */
+function setInputText(text: string): void {
+  inputText.value = text
+  void nextTick(() => {
+    inputRef.value?.focus()
+    inputRef.value?.setSelectionRange(text.length, text.length)
+  })
+}
+
+/** 聚焦输入框 */
+function focus(): void {
+  inputRef.value?.focus()
+}
+
+defineExpose({ presetSkill, setInputText, focus })
 
 /** 加载知识库文档（供 @ 引用；接口未就绪降级为空） */
 async function loadKnowledgeList(): Promise<void> {
@@ -402,34 +418,41 @@ onMounted(() => {
     </div>
 
     <div class="chat-composer__toolbar">
-      <label class="chat-composer__history">
-        <span>{{ t('workspace.ai.composer.historyCount') }}</span>
-        <el-select v-model="historyCount" size="small" class="chat-composer__history-select">
-          <el-option
-            v-for="optionItem in historyOptions"
-            :key="optionItem.value"
-            :label="optionItem.label"
-            :value="optionItem.value"
-          />
-        </el-select>
-      </label>
+      <el-tooltip :content="t('workspace.ai.composer.historyHint')" placement="top">
+        <label class="chat-composer__history">
+          <NWIcon icon_code="history" :size_px="13" />
+          <el-select v-model="historyCount" size="small" class="chat-composer__history-select">
+            <el-option
+              v-for="optionItem in historyOptions"
+              :key="optionItem.value"
+              :label="optionItem.label"
+              :value="optionItem.value"
+            />
+          </el-select>
+        </label>
+      </el-tooltip>
 
-      <NWButton size="small" :disabled="disabledFlag" @click="toggleRefPicker">
+      <button type="button" class="chat-composer__tool-btn" :disabled="disabledFlag" @click="toggleRefPicker">
+        <NWIcon icon_code="atSign" :size_px="14" />
         {{ t('workspace.ai.composer.atButton') }}
-      </NWButton>
+      </button>
 
-      <NWButton
+      <span class="chat-composer__hint">Ctrl + Enter</span>
+
+      <button
         v-if="!disabledFlag"
-        type="primary"
-        size="small"
+        type="button"
+        class="chat-composer__send-btn"
         :disabled="!canSend"
         @click="handleSend"
       >
+        <NWIcon icon_code="send" :size_px="14" />
         {{ t('workspace.ai.composer.send') }}
-      </NWButton>
-      <NWButton v-else type="primary" size="small" @click="emit('stop')">
+      </button>
+      <button v-else type="button" class="chat-composer__send-btn is-stop" @click="emit('stop')">
+        <span class="chat-composer__stop-icon" />
         {{ t('workspace.ai.composer.stop') }}
-      </NWButton>
+      </button>
     </div>
   </div>
 </template>

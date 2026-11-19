@@ -1,6 +1,6 @@
 <!--
-  写作工作台：顶栏（项目名/字数统计/快照入口/返回仪表盘）+
-  三栏布局（左目录树 260px / 中章节编辑器 / 右 AI 面板 380px，左右可折叠）。
+  写作工作台：项目栏 + 三栏布局（目录树 / 章节编辑器 / AI 面板）。
+  左右栏可独立折叠；AI 面板默认附带当前章节作为上下文。
 -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
@@ -9,12 +9,9 @@ import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { getChapterDetail } from '@/api/chapter'
 import { getProjectTree } from '@/api/project'
-import type {
-  NWChapterBriefVo,
-  NWChapterDetailVo,
-  NWProjectTreeVo,
-} from '@/api/contracts'
+import type { NWChapterBriefVo, NWChapterDetailVo, NWProjectTreeVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import AiPanel from './AiPanel.vue'
 import ChapterEditor from './ChapterEditor.vue'
@@ -47,6 +44,19 @@ const flatChapterList = computed<NWChapterBriefVo[]>(() => {
 })
 
 const projectWordCount = computed(() => treeData.value?.project_vo.total_word_count ?? 0)
+
+const projectStatusText = computed(() => {
+  switch (treeData.value?.project_vo.project_status) {
+    case 'serial':
+      return t('dashboard.statusSerial')
+    case 'completed':
+      return t('dashboard.statusCompleted')
+    default:
+      return t('dashboard.statusDraft')
+  }
+})
+
+const currentChapterName = computed(() => currentChapterDetail.value?.chapter_name ?? '')
 
 /** 加载目录树；当前章节被删除时清空编辑器，初次加载自动选中第一章 */
 async function loadTree(initialFlag = false): Promise<void> {
@@ -99,7 +109,7 @@ function handleChapterRenamed(chapterUlid: string, chapterName: string): void {
   }
 }
 
-/** 新建章节后自动打开编辑器（创建成功即可拉取详情，无需等待目录重载） */
+/** 新建章节后自动打开编辑器 */
 function handleChapterCreated(chapterUlid: string): void {
   void selectChapter(chapterUlid)
 }
@@ -142,14 +152,29 @@ function handleWordCountChange(wordCount: number): void {
 
 /** AI 续写：预置 skill_code=continue + 引用当前章节 */
 function handleAiContinue(): void {
+  if (rightCollapsed.value) {
+    rightCollapsed.value = false
+  }
   const refList = currentChapterDetail.value ? [currentChapterDetail.value.chapter_ulid] : []
   aiPanelRef.value?.presetSkill('continue', refList)
 }
 
 /** AI 润色：预置 skill_code=polish + 引用当前章节 */
 function handleAiPolish(): void {
+  if (rightCollapsed.value) {
+    rightCollapsed.value = false
+  }
   const refList = currentChapterDetail.value ? [currentChapterDetail.value.chapter_ulid] : []
   aiPanelRef.value?.presetSkill('polish', refList)
+}
+
+/** AI 生成梗概：预置 skill_code=summary + 引用当前章节 */
+function handleAiSummary(): void {
+  if (rightCollapsed.value) {
+    rightCollapsed.value = false
+  }
+  const refList = currentChapterDetail.value ? [currentChapterDetail.value.chapter_ulid] : []
+  aiPanelRef.value?.presetSkill('summary', refList)
 }
 
 /** AI 回复插入编辑器光标处（走编辑器同一自动保存通道） */
@@ -162,7 +187,7 @@ function handleInsertToChapter(contentText: string): void {
   ElMessage.success(t('workspace.insertSuccess'))
 }
 
-/** 快照入口（顶栏与编辑器工具条共用）；打开前先落盘防抖内容，保证留档/回滚基于最新正文 */
+/** 快照入口：打开前先落盘，保证留档/回滚基于最新正文 */
 async function handleOpenSnapshot(): Promise<void> {
   if (!currentChapterDetail.value) {
     ElMessage.warning(t('workspace.insertNoChapter'))
@@ -182,6 +207,15 @@ function handleBack(): void {
   void router.push('/')
 }
 
+/** 专注模式：同时收起左右栏 */
+function toggleFocusMode(): void {
+  const focusFlag = !(leftCollapsed.value && rightCollapsed.value)
+  leftCollapsed.value = focusFlag
+  rightCollapsed.value = focusFlag
+}
+
+const focusModeFlag = computed(() => leftCollapsed.value && rightCollapsed.value)
+
 watch(projectUlid, () => {
   currentChapterDetail.value = null
   liveWordCount.value = 0
@@ -195,28 +229,62 @@ onMounted(() => {
 
 <template>
   <div class="workspace-page">
-    <!-- 顶栏 -->
+    <!-- 工作台顶栏 -->
     <header class="workspace-page__topbar">
-      <NWButton size="small" @click="handleBack">
-        {{ t('workspace.backToDashboard') }}
-      </NWButton>
-      <h2 class="workspace-page__project-name">
-        {{ treeData?.project_vo.project_name ?? '' }}
-      </h2>
-      <span class="workspace-page__words">
-        {{ t('workspace.projectWords') }} {{ projectWordCount }}
-        /
-        {{ t('workspace.chapterWords') }} {{ liveWordCount }}
+      <button type="button" class="workspace-page__back" :title="t('workspace.backToDashboard')" @click="handleBack">
+        <NWIcon icon_code="arrowLeft" :size_px="16" />
+      </button>
+
+      <span class="workspace-page__project-cover">
+        {{ (treeData?.project_vo.project_name || 'N').slice(0, 1) }}
       </span>
+      <div class="workspace-page__project-info">
+        <div class="workspace-page__project-row">
+          <h2 class="workspace-page__project-name">{{ treeData?.project_vo.project_name || '' }}</h2>
+          <span class="nw-badge nw-badge--primary">{{ projectStatusText }}</span>
+        </div>
+        <span class="workspace-page__words">
+          {{ t('workspace.projectWords') }} <strong>{{ projectWordCount.toLocaleString() }}</strong>
+          <span class="workspace-page__word-divider">/</span>
+          {{ t('workspace.chapterWords') }} <strong>{{ liveWordCount.toLocaleString() }}</strong>
+        </span>
+      </div>
+
       <div class="workspace-page__topbar-actions">
-        <NWButton size="small" @click="leftCollapsed = !leftCollapsed">
-          {{ t('workspace.toggleTree') }}
-        </NWButton>
+        <el-tooltip :content="t('workspace.focusMode')" placement="bottom">
+          <button
+            type="button"
+            class="workspace-page__icon-btn"
+            :class="{ 'is-active': focusModeFlag }"
+            @click="toggleFocusMode"
+          >
+            <NWIcon icon_code="maximize" :size_px="17" />
+          </button>
+        </el-tooltip>
+        <el-tooltip :content="t('workspace.toggleTree')" placement="bottom">
+          <button
+            type="button"
+            class="workspace-page__icon-btn"
+            :class="{ 'is-active': !leftCollapsed }"
+            @click="leftCollapsed = !leftCollapsed"
+          >
+            <NWIcon icon_code="panelLeft" :size_px="17" />
+          </button>
+        </el-tooltip>
+        <el-tooltip :content="t('workspace.toggleAi')" placement="bottom">
+          <button
+            type="button"
+            class="workspace-page__icon-btn"
+            :class="{ 'is-active': !rightCollapsed }"
+            @click="rightCollapsed = !rightCollapsed"
+          >
+            <NWIcon icon_code="panelRight" :size_px="17" />
+          </button>
+        </el-tooltip>
+        <span class="workspace-page__action-divider" />
         <NWButton size="small" @click="handleOpenSnapshot">
+          <NWIcon icon_code="history" :size_px="14" />
           {{ t('workspace.snapshotEntry') }}
-        </NWButton>
-        <NWButton size="small" @click="rightCollapsed = !rightCollapsed">
-          {{ t('workspace.toggleAi') }}
         </NWButton>
       </div>
     </header>
@@ -246,6 +314,7 @@ onMounted(() => {
           @word-count-change="handleWordCountChange"
           @ai-continue="handleAiContinue"
           @ai-polish="handleAiPolish"
+          @ai-summary="handleAiSummary"
           @open-snapshot="handleOpenSnapshot"
         />
       </section>
@@ -255,6 +324,8 @@ onMounted(() => {
           ref="aiPanelRef"
           :project-ulid="projectUlid"
           :chapter-list="flatChapterList"
+          :current-chapter-ulid="currentChapterDetail?.chapter_ulid ?? ''"
+          :current-chapter-name="currentChapterName"
           @insert-to-chapter="handleInsertToChapter"
         />
       </aside>
@@ -268,86 +339,4 @@ onMounted(() => {
   </div>
 </template>
 
-<style scoped>
-.workspace-page {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.workspace-page__topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  margin-bottom: 12px;
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-}
-
-.workspace-page__project-name {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-main);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-page__words {
-  font-size: 13px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.workspace-page__topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
-.workspace-page__main {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  gap: 12px;
-}
-
-.workspace-page__left {
-  width: 260px;
-  flex-shrink: 0;
-  padding: 12px;
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
-}
-
-.workspace-page__center {
-  flex: 1;
-  min-width: 0;
-  padding: 16px;
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
-}
-
-.workspace-page__right {
-  width: 380px;
-  flex-shrink: 0;
-  padding: 12px;
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
-}
-</style>
+<style scoped src="./workspace.css"></style>

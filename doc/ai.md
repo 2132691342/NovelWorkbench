@@ -551,3 +551,11 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 | 私人笔记排除 | `lore_type_code == "note"` 的设定条目不进 AI 上下文（`formatLoreBlock` 跳过，且无可用条目时整块不生成） | `chat_context.go` |
 | 显式插入 | AI 产出只写入 `chat_messages`；插入章节由用户在前端显式点击"插入到章节" | `chat_service.go`、`frontend/src/views/workspace/ChatMessage.vue` |
 | 供应商默认唯一 | 置默认前先 `ClearDefault`，默认供应商不可删除 | `model_provider_service.go` |
+
+## 12. 当前 AI 工作台行为（2026-11）
+
+- 写作台 AI 面板默认把**当前章节**并入 `ref_chapter_ulid_list`；用户可在「上下文」开关中关闭。显式 @ 引用的章节与当前章会去重。
+- 上下文装配顺序不变：当前章节 → 显式引用章节 → 引用文档 → RAG 召回 → 相邻章节摘要 → 角色卡 → 设定条目（`note` 类型不注入）→ 对话历史。
+- 快捷指令：续写（`/continue`）、一致性检查、三个情节走向；点击后只填入输入框与技能徽标，不直接消耗调用。
+- 知识库重排成功时 `trace.rerank_note` 返回中文「已由对话模型重排」，便于界面直接展示。
+- 系统仍不接入向量模型；知识库召回由 Manticore 关键词/短语通道、RRF 融合与对话模型重排组成。

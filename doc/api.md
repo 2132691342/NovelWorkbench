@@ -234,8 +234,9 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | POST | `/knowledge/delete` | 登录用户 | `KnowledgeDeleteREQ` | `null` | `KnowledgeAPI.Delete` |
 | POST | `/knowledge/search` | 登录用户 | `KnowledgeSearchREQ` | `KnowledgeSearchDTO` | `KnowledgeAPI.Search` |
 | POST | `/knowledge/reindex` | 登录用户 | `KnowledgeReindexREQ` | `null` | `KnowledgeAPI.Reindex` |
-| GET | `/knowledge/chunk/list` | 登录用户 | `doc_ulid`、`page_num`、`page_size` | `PageDTO<KnowledgeChunkVO>` | `KnowledgeAPI.ChunkList` |
-| GET | `/knowledge/content` | 登录用户 | `doc_ulid` | 原始字节（非包络，见 §7.2） | `KnowledgeAPI.Content` |
+| GET | `/knowledge/chunk/list/{DocULID}` | 登录用户 | query：`page_num`、`page_size` | `PageDTO<KnowledgeChunkVO>` | `KnowledgeAPI.ChunkList` |
+| GET | `/knowledge/content/{DocULID}` | 登录用户 | 无 | 原始字节（非包络，见 §7.2） | `KnowledgeAPI.Content` |
+| GET | `/knowledge/stats/{ProjectULID}` | 登录用户 | 无 | `KnowledgeStatsVO` | `KnowledgeAPI.Stats` |
 
 `KnowledgeSearchREQ`：`project_ulid`(必填)、`keyword_text`(≤512，非空，否则
 `ERR_INVALID_PARAM`)、`search_mode`（`keyword`/`hybrid`，缺省或非法值一律按
@@ -381,8 +382,13 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | --- | --- | --- |
 | `chat_history_count` | 5 | AI 对话历史注入条数（生效）：`ChatService.resolveHistoryLimit` 读取，优先级为请求 `history_count` > 本配置 > 全局配置 |
 | `rag_top_k` | 6 | 知识库检索默认召回条数（生效）：`KnowledgeService.resolveRAGTopK` 读取，优先级为请求 `top_k_count` > 本配置 > 全局配置 `NW_APP_RAG_TOP_K` |
+| `daily_word_goal` | 2000 | 仪表盘「今日写作目标」字数（前端读取；只影响展示，不限制写作） |
 
-更新时键须在白名单内、值须为正整数，否则返回 `ERR_INVALID_PARAM`。
+更新时键须在白名单内，值须为整数且落在区间：`chat_history_count` 0–50、
+`rag_top_k` 1–20、`daily_word_goal` 100–100000；越界返回 `ERR_INVALID_PARAM`。
+
+`KnowledgeStatsVO`：`total_count`（文档总数）、`indexed_count`（已索引）、
+`pending_count`（pending + indexing）、`failed_count`、`chunk_count`（切片总量）。
 
 ### 6.13 数据总览
 
@@ -561,7 +567,7 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | --- | --- |
 | `POST /project/list` | JSON body |
 | `POST /knowledge/list` | JSON body |
-| `GET /knowledge/chunk/list/{DocULID}` | query（分页参数） |
+| `GET /knowledge/chunk/list/{DocULID}` | query（`?page_num=&page_size=`） |
 | `POST /chat/history` | JSON body |
 | `POST /admin/user/list` | JSON body |
 | `POST /admin/role/list` | JSON body |

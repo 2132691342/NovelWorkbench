@@ -10,6 +10,8 @@ import { deleteSkill, listSkills, saveSkill, type NWSkillSaveReqVo } from '@/api
 import type { NWSkillVariableVo, NWSkillVo } from '@/api/contracts'
 import { useProjectStore } from '@/stores/project'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
@@ -245,10 +247,22 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="skills-page">
+  <div class="nw-page skills-page">
+    <NWPageHeader
+      :title_text="t('skills.title')"
+      :subtitle_text="t('skills.hint')"
+      icon_code="wand"
+    >
+      <template #actions>
+        <NWButton type="primary" @click="handleCreateSkill">
+          <NWIcon icon_code="plus" :size_px="15" />
+          {{ t('common.create') }}
+        </NWButton>
+      </template>
+    </NWPageHeader>
+
     <NWCard :hoverable="false">
       <template #header>
-        <h3 class="nw-card__title">{{ t('skills.title') }}</h3>
         <div class="skills-page__header-actions">
           <el-radio-group :model-value="scopeFilter" @change="handleScopeChange">
             <el-radio-button value="project">{{ t('skills.scopeProject') }}</el-radio-button>
@@ -272,11 +286,9 @@ onMounted(() => {
           <el-checkbox v-model="enabledOnlyFilter" @change="handleSearch">{{ t('skills.enabledOnly') }}</el-checkbox>
           <NWButton @click="handleSearch">{{ t('admin.search') }}</NWButton>
           <NWButton @click="handleResetFilters">{{ t('admin.reset') }}</NWButton>
-          <NWButton type="primary" @click="handleCreateSkill">{{ t('common.create') }}</NWButton>
         </div>
       </template>
 
-      <p class="skills-page__hint">{{ t('skills.hint') }}</p>
 
       <NWLoading v-if="listLoading" />
       <el-table v-else :data="skillList">

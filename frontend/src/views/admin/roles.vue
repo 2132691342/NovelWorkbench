@@ -15,6 +15,8 @@ import {
 import { fetchPermCatalog } from '@/api/menu'
 import type { NWPermItemVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
@@ -190,12 +192,21 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="admin-roles-page">
-    <NWCard :hoverable="false">
-      <template #header>
-        <h3 class="nw-card__title">{{ t('admin.roles.title') }}</h3>
-        <NWButton type="primary" @click="handleCreateRole">{{ t('common.create') }}</NWButton>
+  <div class="nw-page admin-roles-page">
+    <NWPageHeader
+      :title_text="t('admin.roles.title')"
+      :subtitle_text="t('admin.roles.pageSubtitle')"
+      icon_code="shield"
+    >
+      <template #actions>
+        <NWButton type="primary" @click="handleCreateRole">
+          <NWIcon icon_code="plus" :size_px="15" />
+          {{ t('common.create') }}
+        </NWButton>
       </template>
+    </NWPageHeader>
+
+    <NWCard :hoverable="false">
 
       <NWLoading v-if="listLoading" />
       <template v-else>

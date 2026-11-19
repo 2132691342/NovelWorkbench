@@ -266,7 +266,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="models-page">
+  <div class="nw-page models-page">
     <header class="models-page__header">
       <div>
         <h2 class="models-page__title">{{ t('models.title') }}</h2>

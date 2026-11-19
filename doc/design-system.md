@@ -177,3 +177,66 @@
 - 禁止静默吞掉失败；至少保留旧数据并给出提示。
 - 禁止在列表页一次性拉全量数据；统一分页。
 - 禁止在表格里放超过两个主操作；次要操作收进更多菜单。
+
+## 12. 2026-11 视觉与交互升级（现状）
+
+本节记录当前实现，覆盖前文较早的描述；冲突时以本节为准。
+
+### 12.1 外壳
+
+- 侧边栏 `--layout-sidebar-width: 236px`，折叠后 `72px`；底部固定「收起侧栏 / Ctrl B」。
+- 顶栏 `--layout-header-height: 60px`，只保留面包屑（页面标题在内容区），右侧依次为页面搜索（Ctrl K）、通知、语言、用户。
+- 内容区 `padding: 22px 26px 32px`，最大宽度 `--layout-content-max-width: 1560px`；工作台路由使用 `is-workspace` 修饰符，改为 14px 边距且不滚动。
+- 页面统一 `nw-page`：纵向 `gap: 16px`、居中、进入动画 0.28s。
+- 项目内页面统一 `ProjectPageHeader`：返回工作台、项目封面/名称/状态、字数与章节数、七个项目内导航页签。
+
+### 12.2 新增基础组件
+
+| 组件 | 文件 | 职责 |
+| --- | --- | --- |
+| `NWPageHeader` | `components/NWPageHeader.vue` | 页面标题、说明、图标、徽标、右侧操作区与返回入口 |
+| `NWStatTile` | `components/NWStatTile.vue` | 统计磁贴：图标、标签、数值、辅助说明，五种色调 |
+| `CommandPalette` | `layout/CommandPalette.vue` | Ctrl/Cmd+K 页面搜索，按菜单分组、支持禁用态 |
+| `ProjectPageHeader` | `components/ProjectPageHeader.vue` | 项目身份条 + 项目内导航，所有项目页复用 |
+| `DashboardTrendCard` | `views/dashboard/DashboardTrendCard.vue` | 近 30 天双系列图与空态 |
+| `DashboardProjectCard` | `views/dashboard/DashboardProjectCard.vue` | 项目卡片：封面、状态、指标、卡片内操作 |
+| `DashboardProjectDrawer` | `views/dashboard/DashboardProjectDrawer.vue` | 新建/编辑项目抽屉 |
+
+### 12.3 样式分层
+
+`main.ts` 的加载顺序：
+
+1. Element Plus 基础样式
+2. `variables.css`：品牌五色、语义令牌、Element Plus 变量桥接
+3. `element-theme.css`：Element Plus 组件外观收敛（圆角、表格、弹层、表单）
+4. `button-states.css`：按钮五态与自定义按钮
+5. `page.css`：页面骨架、标题区、统计栅格、空态、卡片网格
+6. `global.css`：基础排版、路由过渡、通知浮层、滚动条、命令面板全局样式
+
+页面内不再散写品牌十六进制；确需渐变时使用 `var(--primary)` / `var(--primary-hover)` 或语义色。
+
+### 12.4 交互细节
+
+- 侧栏/导航/卡片/图标按钮统一 hover 微放大或位移、active 缩小。
+- 所有表格页提供加载、空态、错误提示；知识库索引中每 3s 轮询并在顶部提示处理中数量。
+- 所有图标按钮带 `title` 或 `el-tooltip`，键盘可聚焦。
+- 搜索、设置、AI 面板、知识库检索均提供明确的空态与下一步 CTA。
+- 写作用编辑器与笔记的初始保存状态显示「已保存」，改动后才进入「未保存 / 保存中 / 保存失败」。
+
+### 12.5 动效清单（当前）
+
+| 场景 | 动效 |
+| --- | --- |
+| 页面进入 | `opacity + translateY(6px)`，0.28s |
+| 路由切换 | `fade-slide` 0.2s |
+| 按钮 hover / active | `scale(1.05)` / `scale(0.95)`（图标按钮幅度更小） |
+| 卡片 hover | `translateY(-4px)` + 阴影加深 |
+| 项目封面 | 按书名稳定散列渐变，刷新不跳变 |
+| 检索结果 | 骨架屏 1.3s 扫光 |
+| 命令面板 | 弹层淡入 + 菜单项位移 2px |
+| 加载 | spinner 0.8s / 按钮微光 1.2s |
+
+### 12.6 国际化文件
+
+语言包已拆分为 `common / workspace / assets / admin / extensions` 五个分片；
+`assets` 承载连续性看板与创作规划文案。新增键必须同时补齐中英两份。

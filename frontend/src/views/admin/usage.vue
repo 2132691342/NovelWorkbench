@@ -172,7 +172,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="usage-page">
+  <div class="nw-page usage-page">
     <header class="usage-page__header">
       <div>
         <h2 class="usage-page__title">{{ t('usage.title') }}</h2>

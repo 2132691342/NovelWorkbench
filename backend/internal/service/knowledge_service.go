@@ -261,3 +261,11 @@ func toDocumentVO(do *domain.KnowledgeDocumentDO) domain.KnowledgeDocumentVO {
 		CreatedAtMs:     do.CreatedAt.UnixMilli(),
 	}
 }
+
+// Stats 查询项目知识库概览（文档状态与切片总量）。
+func (s *KnowledgeService) Stats(ctx context.Context, userULID, projectULID string) (domain.KnowledgeStatsVO, error) {
+	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, projectULID); err != nil {
+		return domain.KnowledgeStatsVO{}, err
+	}
+	return s.knowledgeRepo.StatsByProject(ctx, projectULID)
+}

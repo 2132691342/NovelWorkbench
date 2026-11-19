@@ -146,3 +146,58 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* 页面骨架与表单 */
+.outline-page {
+  min-height: 100%;
+}
+
+.outline-page__body {
+  align-items: stretch;
+}
+
+.outline-page__side,
+.outline-page__main {
+  min-height: 620px;
+}
+
+.outline-form-control {
+  width: 100%;
+}
+
+.outline-page .nw-card__body {
+  padding: 14px;
+}
+
+.outline-tree-toolbar {
+  margin-bottom: 10px;
+}
+
+.outline-tree-node__actions .nw-button {
+  height: 22px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.outline-scene-card {
+  border-color: var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.outline-scene-card__head strong {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.outline-scene-card__grid {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.outline-scene-card__label {
+  margin-bottom: 1px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}

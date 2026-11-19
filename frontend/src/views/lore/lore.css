@@ -165,3 +165,57 @@
   background-color: var(--info-border);
   color: var(--info-text);
 }
+
+/* 页面骨架补充 */
+.lore-page {
+  gap: 16px;
+  min-height: 100%;
+}
+
+.lore-page__body {
+  align-items: stretch;
+}
+
+.lore-page__side {
+  min-height: 620px;
+}
+
+.lore-page__count {
+  color: var(--text-placeholder);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.lore-page__search {
+  width: 240px;
+}
+
+.lore-card {
+  border-color: var(--border-light);
+}
+
+.lore-card__name {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.lore-card__content {
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.lore-type-item {
+  border-radius: var(--radius-base);
+  transition: background-color var(--transition-base), transform var(--transition-base);
+}
+
+.lore-type-item:hover {
+  background: var(--primary-soft);
+  transform: translateX(2px);
+}
+
+.lore-type-item.is-active {
+  background: var(--primary-soft);
+  color: var(--primary-active);
+  font-weight: 600;
+}

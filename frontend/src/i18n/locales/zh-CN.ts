@@ -4,10 +4,12 @@ import common from './zh-CN-common'
 import workspace from './zh-CN-workspace'
 import admin from './zh-CN-admin'
 import extensions from './zh-CN-extensions'
+import assets from './zh-CN-assets'
 
 export default {
   ...common,
   ...workspace,
   ...admin,
   ...extensions,
+  ...assets,
 }

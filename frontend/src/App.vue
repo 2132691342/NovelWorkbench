@@ -17,10 +17,6 @@ const elementPlusLocale = computed(
 
 <template>
   <el-config-provider :locale="elementPlusLocale">
-    <router-view v-slot="{ Component }">
-      <transition name="fade-slide" mode="out-in">
-        <component :is="Component" />
-      </transition>
-    </router-view>
+    <router-view />
   </el-config-provider>
 </template>

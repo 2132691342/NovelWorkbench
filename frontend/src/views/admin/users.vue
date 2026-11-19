@@ -13,6 +13,8 @@ import {
   type NWUserAdminVo,
 } from '@/api/admin'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
@@ -144,10 +146,22 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="admin-users-page">
+  <div class="nw-page admin-users-page">
+    <NWPageHeader
+      :title_text="t('admin.users.title')"
+      :subtitle_text="t('admin.users.pageSubtitle')"
+      icon_code="users"
+    >
+      <template #actions>
+        <NWButton type="primary" @click="handleCreateUser">
+          <NWIcon icon_code="plus" :size_px="15" />
+          {{ t('common.create') }}
+        </NWButton>
+      </template>
+    </NWPageHeader>
+
     <NWCard :hoverable="false">
       <template #header>
-        <h3 class="nw-card__title">{{ t('admin.users.title') }}</h3>
         <div class="admin-users-page__toolbar">
           <el-input
             v-model="keywordText"
@@ -171,7 +185,6 @@ onMounted(() => {
           </el-select>
           <NWButton type="primary" @click="handleSearch">{{ t('admin.search') }}</NWButton>
           <NWButton @click="handleResetFilters">{{ t('admin.reset') }}</NWButton>
-          <NWButton type="primary" @click="handleCreateUser">{{ t('common.create') }}</NWButton>
         </div>
       </template>
 

@@ -1,10 +1,8 @@
-<!--
-  创作规划页：左侧大纲节点树（卷/篇章/情节块/章节），右侧所选节点的详细场景卡片列表。
-  节点按父子关系递归展示；删除节点时若仍有子节点，由后端拒绝并弹出提示。
--->
+<!-- 创作规划页：左侧大纲节点树，右侧所选节点的详细场景卡片列表。 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
   deleteDetailedScene,
@@ -19,13 +17,19 @@ import {
   type NWOutlineNodeVo,
   type NWOutlinePaceCode,
 } from '@/api/outline'
+import { listCharacters, type NWCharacterVo } from '@/api/character'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
+import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
+import { nodeTypeLabel, nodeStatusLabel, paceLabel, nodeTypeOptionList, nodeStatusOptionList, paceOptionList } from './outlineOptions'
 import { useProjectStore } from '@/stores/project'
 import './outline.css'
 
+const { t } = useI18n()
 const route = useRoute()
 const projectStore = useProjectStore()
 
@@ -34,34 +38,12 @@ const projectUlid = computed(
   () => String(route.params.project_ulid ?? '') || projectStore.current_project_ulid || '',
 )
 
-/** 大纲节点类型选项 */
-const nodeTypeOptions: Array<{ value: NWOutlineNodeTypeCode; label: string }> = [
-  { value: 'volume', label: '卷' },
-  { value: 'arc', label: '篇章' },
-  { value: 'storyBlock', label: '情节块' },
-  { value: 'chapter', label: '章节' },
-]
-
-const nodeStatusOptions: Array<{ value: NWOutlineNodeStatusCode; label: string }> = [
-  { value: 'draft', label: '草稿' },
-  { value: 'planning', label: '规划中' },
-  { value: 'ready', label: '待写' },
-  { value: 'done', label: '完成' },
-]
-
-/** 节奏选项 */
-const paceOptions: Array<{ value: NWOutlinePaceCode; label: string }> = [
-  { value: 'slow', label: '舒缓' },
-  { value: 'medium', label: '中等' },
-  { value: 'fast', label: '紧凑' },
-  { value: 'climax', label: '高潮' },
-]
-
 const outlineTree = ref<NWOutlineNodeVo[]>([])
 const treeLoading = ref(false)
 const selectedNodeUlid = ref('')
 const sceneList = ref<NWDetailedSceneVo[]>([])
 const sceneLoading = ref(false)
+const characterList = ref<NWCharacterVo[]>([])
 
 const nodeDialogVisible = ref(false)
 const nodeSaving = ref(false)
@@ -76,12 +58,19 @@ const nodeForm = reactive({
   sort_order: 0,
 })
 
+const nodeFormRules: FormRules = {
+  title_text: [
+    { required: true, message: t('outline.titleLabel'), trigger: 'blur' },
+    { max: 128, message: t('outline.titleLabel') + ' ≤ 128', trigger: 'blur' },
+  ],
+}
+
 const sceneDialogVisible = ref(false)
 const sceneSaving = ref(false)
 const sceneFormRef = ref<FormInstance>()
 const editingSceneUlid = ref('')
 const sceneForm = reactive({
-  character_text: '',
+  character_ulid_list: [] as string[],
   location_text: '',
   conflict_text: '',
   pace_code: '' as NWOutlinePaceCode | '',
@@ -94,36 +83,21 @@ const sceneForm = reactive({
   sort_order: 0,
 })
 
-const nodeFormRules: FormRules = {
-  title_text: [
-    { required: true, message: '请输入节点标题', trigger: 'blur' },
-    { max: 128, message: '标题最多 128 个字符', trigger: 'blur' },
-  ],
-}
-
 const sceneFormRules: FormRules = {
-  location_text: [{ max: 256, message: '地点最多 256 个字符', trigger: 'blur' }],
+  location_text: [{ max: 256, message: t('outline.location') + ' ≤ 256', trigger: 'blur' }],
 }
 
-/** 展示节点类型文案 */
-function nodeTypeLabel(nodeTypeCode: string): string {
-  return nodeTypeOptions.find((option) => option.value === nodeTypeCode)?.label ?? nodeTypeCode
-}
-
-/** 展示节点状态文案 */
-function nodeStatusLabel(statusCode: string): string {
-  return nodeStatusOptions.find((option) => option.value === statusCode)?.label ?? statusCode
-}
-
-/** 展示节奏文案 */
-function paceLabel(paceCode: string): string {
-  return paceOptions.find((option) => option.value === paceCode)?.label ?? paceCode
+/** 角色 ULID 列表转姓名列表 */
+function characterNames(characterUlidList: string[]): string {
+  if (!characterUlidList || characterUlidList.length === 0) return '—'
+  return characterUlidList
+    .map((characterUlid) => characterList.value.find((item) => item.character_ulid === characterUlid)?.character_name ?? characterUlid)
+    .join('、')
 }
 
 /** 当前选中的节点 */
 const selectedNode = computed(() => findNode(outlineTree.value, selectedNodeUlid.value))
 
-/** 递归查找节点 */
 function findNode(nodes: NWOutlineNodeVo[], outlineUlid: string): NWOutlineNodeVo | null {
   for (const node of nodes) {
     if (node.outline_ulid === outlineUlid) return node
@@ -200,7 +174,7 @@ async function submitNode(): Promise<void> {
     nodeDialogVisible.value = false
     selectedNodeUlid.value = saved.outline_ulid
     await loadTree()
-    ElMessage.success('大纲节点已保存')
+    ElMessage.success(t('outline.nodeSaved'))
   } catch {
     /* 错误提示由 http 层统一处理 */
   } finally {
@@ -212,7 +186,7 @@ async function submitNode(): Promise<void> {
 async function removeNode(node: NWOutlineNodeVo): Promise<void> {
   if (!projectUlid.value) return
   try {
-    await ElMessageBox.confirm(`确定删除节点“${node.title_text}”吗？`, '删除确认', {
+    await ElMessageBox.confirm(t('outline.deleteNodeConfirm', { name: node.title_text }), t('common.confirm'), {
       type: 'warning',
     })
   } catch {
@@ -222,7 +196,7 @@ async function removeNode(node: NWOutlineNodeVo): Promise<void> {
     await deleteOutlineNode(projectUlid.value, node.outline_ulid)
     if (selectedNodeUlid.value === node.outline_ulid) selectedNodeUlid.value = ''
     await loadTree()
-    ElMessage.success('大纲节点已删除')
+    ElMessage.success(t('outline.nodeDeleted'))
   } catch {
     /* 错误提示由 http 层统一处理 */
   }
@@ -231,7 +205,7 @@ async function removeNode(node: NWOutlineNodeVo): Promise<void> {
 /** 打开场景新增/编辑弹窗 */
 function openSceneDialog(scene?: NWDetailedSceneVo): void {
   editingSceneUlid.value = scene?.scene_ulid ?? ''
-  sceneForm.character_text = (scene?.character_ulid_list ?? []).join('\n')
+  sceneForm.character_ulid_list = scene?.character_ulid_list ?? []
   sceneForm.location_text = scene?.location_text ?? ''
   sceneForm.conflict_text = scene?.conflict_text ?? ''
   sceneForm.pace_code = scene?.pace_code ?? ''
@@ -259,10 +233,7 @@ async function submitScene(): Promise<void> {
       scene_ulid: editingSceneUlid.value || undefined,
       project_ulid: projectUlid.value,
       outline_ulid: selectedNodeUlid.value,
-      character_ulid_list: sceneForm.character_text
-        .split(/[\n,，\s]+/)
-        .map((item) => item.trim())
-        .filter(Boolean),
+      character_ulid_list: sceneForm.character_ulid_list,
       location_text: sceneForm.location_text,
       conflict_text: sceneForm.conflict_text,
       pace_code: sceneForm.pace_code,
@@ -276,7 +247,7 @@ async function submitScene(): Promise<void> {
     })
     sceneDialogVisible.value = false
     await loadScenes()
-    ElMessage.success('场景卡片已保存')
+    ElMessage.success(t('outline.sceneSaved'))
   } catch {
     /* 错误提示由 http 层统一处理 */
   } finally {
@@ -288,14 +259,14 @@ async function submitScene(): Promise<void> {
 async function removeScene(scene: NWDetailedSceneVo): Promise<void> {
   if (!projectUlid.value) return
   try {
-    await ElMessageBox.confirm('确定删除该场景卡片吗？', '删除确认', { type: 'warning' })
+    await ElMessageBox.confirm(t('outline.deleteSceneConfirm'), t('common.confirm'), { type: 'warning' })
   } catch {
     return
   }
   try {
     await deleteDetailedScene(projectUlid.value, scene.scene_ulid)
     await loadScenes()
-    ElMessage.success('场景卡片已删除')
+    ElMessage.success(t('outline.sceneDeleted'))
   } catch {
     /* 错误提示由 http 层统一处理 */
   }
@@ -317,21 +288,36 @@ watch(selectedNodeUlid, () => {
 
 onMounted(() => {
   void loadTree()
+  if (projectUlid.value) {
+    void listCharacters({ project_ulid: projectUlid.value }).then((listData) => {
+      characterList.value = Array.isArray(listData) ? listData : []
+    }).catch(() => {
+      characterList.value = []
+    })
+  }
 })
 </script>
 
 <template>
-  <div class="outline-page">
+  <div class="nw-page outline-page">
     <ProjectPageHeader :project-ulid="projectUlid" />
+
+    <NWPageHeader
+       :title_text="t('outline.title')"
+       :subtitle_text="t('outline.subtitle')"
+      icon_code="tree"
+    >
+      <template #actions>
+        <NWButton type="primary" @click="openNodeDialog(undefined, '')">
+          <NWIcon icon_code="plus" :size_px="15" />
+          {{ t('outline.addRoot') }}
+        </NWButton>
+      </template>
+    </NWPageHeader>
 
     <div class="outline-page__body">
       <aside class="outline-page__side">
-        <NWCard title="创作大纲" :hoverable="false" :loading="treeLoading">
-          <div class="outline-tree-toolbar">
-            <NWButton type="primary" size="small" @click="openNodeDialog(undefined, '')">
-              + 新增根节点
-            </NWButton>
-          </div>
+        <NWCard :title="t('outline.structureTitle')" :hoverable="false" :loading="treeLoading">
           <el-tree
             v-if="outlineTree.length"
             :data="outlineTree"
@@ -345,8 +331,8 @@ onMounted(() => {
             <template #default="{ data }">
               <div class="outline-tree-node">
                 <span class="outline-tree-node__title">{{ data.title_text }}</span>
-                <span class="outline-tree-node__type">{{ nodeTypeLabel(data.node_type_code) }}</span>
-                <span class="outline-tree-node__status">{{ nodeStatusLabel(data.node_status_code) }}</span>
+                <span class="outline-tree-node__type">{{ nodeTypeLabel(data.node_type_code, t) }}</span>
+                <span class="outline-tree-node__status">{{ nodeStatusLabel(data.node_status_code, t) }}</span>
                 <span class="outline-tree-node__actions">
                   <NWButton size="small" @click.stop="openNodeDialog(data)">编辑</NWButton>
                   <NWButton size="small" @click.stop="openNodeDialog(undefined, data.outline_ulid)">
@@ -357,31 +343,36 @@ onMounted(() => {
               </div>
             </template>
           </el-tree>
-          <NWEmpty v-else description-text="暂无大纲节点，先新增一个根节点吧" />
+          <NWEmpty
+            v-else
+            compact_flag
+            icon_code="tree"
+             :title_text="t('outline.emptyNodeTitle')"
+             :description_text="t('outline.emptyNodeDesc')"
+          >
+            <template #actions>
+              <NWButton size="small" type="primary" @click="openNodeDialog(undefined, '')">{{ t('outline.addRoot') }}</NWButton>
+            </template>
+          </NWEmpty>
         </NWCard>
       </aside>
 
       <section class="outline-page__main">
-        <NWCard :title="selectedNode ? `${selectedNode.title_text} · 场景` : '详细场景'" :hoverable="false">
+        <NWCard :title="selectedNode ? `${selectedNode.title_text} · ${t('outline.sceneTitle')}` : t('outline.detailScene')" :hoverable="false">
           <div class="outline-scene-toolbar">
             <span v-if="selectedNode" class="outline-scene-toolbar__hint">
-              {{ nodeTypeLabel(selectedNode.node_type_code) }} · {{ selectedNode.summary_text || '暂无概要' }}
+              {{ nodeTypeLabel(selectedNode.node_type_code, t) }} · {{ selectedNode.summary_text || t('outline.noSummary') }}
             </span>
-            <NWButton
-              type="primary"
-              size="small"
-              :disabled="!selectedNode"
-              @click="openSceneDialog()"
-            >
-              + 新增场景
+            <NWButton v-if="selectedNode" type="primary" size="small" @click="openSceneDialog()">
+              + {{ t('outline.addScene') }}
             </NWButton>
           </div>
           <NWLoading v-if="sceneLoading" />
           <template v-else-if="sceneList.length">
             <div v-for="scene in sceneList" :key="scene.scene_ulid" class="outline-scene-card">
               <div class="outline-scene-card__head">
-                <strong>{{ scene.location_text || '未填写地点' }}</strong>
-                <span class="outline-scene-card__pace">节奏：{{ paceLabel(scene.pace_code) }}</span>
+                <strong>{{ scene.location_text || t('outline.noLocation') }}</strong>
+                <span class="outline-scene-card__pace">{{ t('outline.pace') }}：{{ scene.pace_code ? paceLabel(scene.pace_code, t) : '—' }}</span>
                 <span class="outline-scene-card__words">预计 {{ scene.estimated_words }} 字</span>
                 <span class="outline-scene-card__actions">
                   <NWButton size="small" @click="openSceneDialog(scene)">编辑</NWButton>
@@ -389,7 +380,7 @@ onMounted(() => {
                 </span>
               </div>
               <div class="outline-scene-card__grid">
-                <div><span class="outline-scene-card__label">出场角色</span>{{ scene.character_ulid_list.join('、') || '—' }}</div>
+                <div><span class="outline-scene-card__label">出场角色</span>{{ characterNames(scene.character_ulid_list) }}</div>
                 <div><span class="outline-scene-card__label">核心冲突</span>{{ scene.conflict_text || '—' }}</div>
                 <div><span class="outline-scene-card__label">入场状态</span>{{ scene.entry_state_text || '—' }}</div>
                 <div><span class="outline-scene-card__label">角色目标</span>{{ scene.goal_text || '—' }}</div>
@@ -399,88 +390,105 @@ onMounted(() => {
               </div>
             </div>
           </template>
-          <NWEmpty v-else :description-text="selectedNode ? '该节点还没有场景卡片' : '请先在左侧选择一个大纲节点'" />
+          <NWEmpty
+            v-else
+            compact_flag
+            icon_code="layers"
+            :title_text="selectedNode ? t('outline.noSceneTitle') : t('outline.noNodeTitle')"
+            :description_text="selectedNode ? t('outline.noSceneDesc') : t('outline.noNodeDesc')"
+          >
+            <template #actions>
+              <NWButton v-if="selectedNode" size="small" type="primary" @click="openSceneDialog()">{{ t('outline.addScene') }}</NWButton>
+            </template>
+          </NWEmpty>
         </NWCard>
       </section>
     </div>
 
     <el-dialog
       v-model="nodeDialogVisible"
-      :title="editingNodeUlid ? '编辑大纲节点' : '新增大纲节点'"
+      :title="editingNodeUlid ? t('outline.editNode') : t('outline.createNode')"
       width="520px"
     >
       <el-form ref="nodeFormRef" :model="nodeForm" :rules="nodeFormRules" label-position="top">
-        <el-form-item label="节点类型">
+        <el-form-item :label="t('outline.nodeType')">
           <el-select v-model="nodeForm.node_type_code">
-            <el-option v-for="option in nodeTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+            <el-option v-for="option in nodeTypeOptionList" :key="option.value" :label="t(option.label_key)" :value="option.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="标题" prop="title_text">
+        <el-form-item :label="t('outline.titleLabel')" prop="title_text">
           <el-input v-model="nodeForm.title_text" maxlength="128" show-word-limit />
         </el-form-item>
-        <el-form-item label="概要">
+        <el-form-item :label="t('outline.summaryLabel')">
           <el-input v-model="nodeForm.summary_text" type="textarea" :rows="3" maxlength="4096" />
         </el-form-item>
-        <el-form-item label="状态">
+        <el-form-item :label="t('outline.statusLabel')">
           <el-select v-model="nodeForm.node_status_code">
-            <el-option v-for="option in nodeStatusOptions" :key="option.value" :label="option.label" :value="option.value" />
+            <el-option v-for="option in nodeStatusOptionList" :key="option.value" :label="t(option.label_key)" :value="option.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="排序号">
+        <el-form-item :label="t('outline.sortOrder')">
           <el-input-number v-model="nodeForm.sort_order" :min="0" :max="9999" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <NWButton @click="nodeDialogVisible = false">取消</NWButton>
-        <NWButton type="primary" :loading="nodeSaving" @click="submitNode">保存</NWButton>
+        <NWButton @click="nodeDialogVisible = false">{{ t('common.cancel') }}</NWButton>
+        <NWButton type="primary" :loading="nodeSaving" @click="submitNode">{{ t('common.save') }}</NWButton>
       </template>
     </el-dialog>
 
     <el-dialog
       v-model="sceneDialogVisible"
-      :title="editingSceneUlid ? '编辑场景卡片' : '新增场景卡片'"
+      :title="editingSceneUlid ? t('outline.editScene') : t('outline.createScene')"
       width="640px"
     >
       <el-form ref="sceneFormRef" :model="sceneForm" :rules="sceneFormRules" label-position="top">
-        <el-form-item label="地点">
+        <el-form-item :label="t('outline.location')">
           <el-input v-model="sceneForm.location_text" maxlength="256" />
         </el-form-item>
-        <el-form-item label="出场角色 ULID（每行一个或逗号分隔）">
-          <el-input v-model="sceneForm.character_text" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="核心冲突">
-          <el-input v-model="sceneForm.conflict_text" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="节奏">
-          <el-select v-model="sceneForm.pace_code" clearable placeholder="请选择">
-            <el-option v-for="option in paceOptions" :key="option.value" :label="option.label" :value="option.value" />
+        <el-form-item :label="t('outline.characters')">
+          <el-select v-model="sceneForm.character_ulid_list" multiple filterable class="outline-form-control" :placeholder="t('outline.selectCharacters')">
+            <el-option
+              v-for="characterVo in characterList"
+              :key="characterVo.character_ulid"
+              :label="characterVo.character_name"
+              :value="characterVo.character_ulid"
+            />
           </el-select>
         </el-form-item>
-        <el-form-item label="预计字数">
+        <el-form-item :label="t('outline.conflict')">
+          <el-input v-model="sceneForm.conflict_text" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item :label="t('outline.pace')">
+          <el-select v-model="sceneForm.pace_code" clearable :placeholder="t('outline.selectPace')">
+            <el-option v-for="option in paceOptionList" :key="option.value" :label="t(option.label_key)" :value="option.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('outline.estimatedWords')">
           <el-input-number v-model="sceneForm.estimated_words" :min="0" :max="1000000" />
         </el-form-item>
-        <el-form-item label="入场状态">
+        <el-form-item :label="t('outline.entryState')">
           <el-input v-model="sceneForm.entry_state_text" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="角色目标">
+        <el-form-item :label="t('outline.goal')">
           <el-input v-model="sceneForm.goal_text" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="关键选择">
+        <el-form-item :label="t('outline.keyChoice')">
           <el-input v-model="sceneForm.key_choice_text" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="场景结果">
+        <el-form-item :label="t('outline.outcome')">
           <el-input v-model="sceneForm.outcome_text" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="出场状态">
+        <el-form-item :label="t('outline.exitState')">
           <el-input v-model="sceneForm.exit_state_text" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="排序号">
+        <el-form-item :label="t('outline.sortOrder')">
           <el-input-number v-model="sceneForm.sort_order" :min="0" :max="9999" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <NWButton @click="sceneDialogVisible = false">取消</NWButton>
-        <NWButton type="primary" :loading="sceneSaving" @click="submitScene">保存</NWButton>
+        <NWButton @click="sceneDialogVisible = false">{{ t('common.cancel') }}</NWButton>
+        <NWButton type="primary" :loading="sceneSaving" @click="submitScene">{{ t('common.save') }}</NWButton>
       </template>
     </el-dialog>
   </div>

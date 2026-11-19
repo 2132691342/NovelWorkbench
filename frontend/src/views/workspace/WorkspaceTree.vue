@@ -12,6 +12,8 @@ import { createVolume, deleteVolume, updateVolume } from '@/api/project'
 import type { NWChapterBriefVo, NWProjectTreeVo, NWVolumeVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import { exportProjectOutline } from './workspaceTreeExport'
 
 const props = defineProps<{
   treeData: NWProjectTreeVo | null
@@ -41,6 +43,10 @@ interface ChapterFormState {
 }
 
 const actionLoading = ref(false)
+/** 目录搜索关键词（书名/卷名/章名） */
+const searchKeyword = ref('')
+/** 卷折叠状态（按卷 ULID） */
+const collapsedVolumeMap = ref<Record<string, boolean>>({})
 const volumeDialogVisible = ref(false)
 const volumeEditingFlag = ref(false)
 const editingVolumeUlid = ref('')
@@ -65,6 +71,50 @@ const chapterRules = computed<FormRules>(() => ({
     { required: true, message: t('workspace.tree.ruleChapterNameRequired'), trigger: 'blur' },
   ],
 }))
+
+/** 关键词过滤后的目录（空关键词显示全部） */
+const filteredVolumeList = computed(() => {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  const volumeList = props.treeData?.volume_list ?? []
+  if (!keyword) {
+    return volumeList
+  }
+  return volumeList
+    .map((volumeNode) => ({
+      ...volumeNode,
+      chapter_list: volumeNode.chapter_list.filter((chapterItem) =>
+        chapterItem.chapter_name.toLowerCase().includes(keyword),
+      ),
+    }))
+    .filter(
+      (volumeNode) =>
+        volumeNode.volume_vo.volume_name.toLowerCase().includes(keyword) ||
+        volumeNode.chapter_list.length > 0,
+    )
+})
+
+/** 全部章节数 */
+const totalChapterCount = computed(() =>
+  (props.treeData?.volume_list ?? []).reduce(
+    (total, volumeNode) => total + volumeNode.chapter_list.length,
+    0,
+  ),
+)
+
+/** 卷是否折叠（搜索时强制展开） */
+function isVolumeCollapsed(volumeUlid: string): boolean {
+  if (searchKeyword.value.trim()) {
+    return false
+  }
+  return collapsedVolumeMap.value[volumeUlid] === true
+}
+
+function toggleVolume(volumeUlid: string): void {
+  collapsedVolumeMap.value = {
+    ...collapsedVolumeMap.value,
+    [volumeUlid]: !collapsedVolumeMap.value[volumeUlid],
+  }
+}
 
 /** 章状态转展示文案 */
 function chapterStatusText(status: string): string {
@@ -249,45 +299,20 @@ async function handleDeleteChapter(chapter: NWChapterBriefVo): Promise<void> {
   }
 }
 
-/** 导出项目目录为 XLSX 大纲（卷/章/排序/字数/状态；按需加载 XLSX 控制首屏体积） */
+/** 导出项目目录为 XLSX 大纲（卷/章/排序/字数/状态）。 */
 async function handleExportOutline(): Promise<void> {
-  const treeData = props.treeData
-  if (!treeData || treeData.volume_list.length === 0) {
-    ElMessage.warning(t('workspace.tree.exportEmpty'))
-    return
-  }
-  const rowList: Record<string, string | number>[] = []
-  for (const volumeNode of treeData.volume_list) {
-    if (volumeNode.chapter_list.length === 0) {
-      rowList.push({
-        [t('workspace.tree.exportVolume')]: volumeNode.volume_vo.volume_name,
-        [t('workspace.tree.exportChapter')]: '',
-        [t('workspace.tree.exportOrder')]: 0,
-        [t('workspace.tree.exportWords')]: 0,
-        [t('workspace.tree.exportStatus')]: '',
-      })
-      continue
-    }
-    for (const chapter of volumeNode.chapter_list) {
-      rowList.push({
-        [t('workspace.tree.exportVolume')]: volumeNode.volume_vo.volume_name,
-        [t('workspace.tree.exportChapter')]: chapter.chapter_name,
-        [t('workspace.tree.exportOrder')]: chapter.chapter_order,
-        [t('workspace.tree.exportWords')]: chapter.word_count,
-        [t('workspace.tree.exportStatus')]: chapterStatusText(chapter.chapter_status),
-      })
-    }
-  }
-  try {
-    const XLSX = await import('xlsx')
-    const worksheet = XLSX.utils.json_to_sheet(rowList)
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, t('workspace.tree.exportSheetName'))
-    XLSX.writeFile(workbook, `${treeData.project_vo.project_name}-${t('workspace.tree.exportFileName')}.xlsx`)
-    ElMessage.success(t('workspace.tree.exportSuccess'))
-  } catch {
-    ElMessage.error(t('workspace.tree.exportFailed'))
-  }
+  await exportProjectOutline(props.treeData, chapterStatusText, {
+    volume: t('workspace.tree.exportVolume'),
+    chapter: t('workspace.tree.exportChapter'),
+    order: t('workspace.tree.exportOrder'),
+    words: t('workspace.tree.exportWords'),
+    status: t('workspace.tree.exportStatus'),
+    sheetName: t('workspace.tree.exportSheetName'),
+    fileName: t('workspace.tree.exportFileName'),
+    success: t('workspace.tree.exportSuccess'),
+    failed: t('workspace.tree.exportFailed'),
+    empty: t('workspace.tree.exportEmpty'),
+  })
 }
 
 /** 章节下拉命令分发 */
@@ -309,64 +334,86 @@ function handleChapterCommand(
 
 <template>
   <div class="workspace-tree">
-    <div class="workspace-tree__toolbar">
-      <span class="workspace-tree__title">{{ t('workspace.tree.title') }}</span>
+    <div class="workspace-tree__head">
+      <div class="workspace-tree__title-row">
+        <span class="workspace-tree__title">{{ t('workspace.tree.title') }}</span>
+        <span class="workspace-tree__count">{{ totalChapterCount }} {{ t('layout.chaptersUnit') }}</span>
+      </div>
       <div class="workspace-tree__actions">
-        <NWButton size="small" @click="handleExportOutline">
-          {{ t('workspace.tree.exportOutline') }}
-        </NWButton>
+        <el-tooltip :content="t('workspace.tree.exportOutline')" placement="bottom">
+          <button type="button" class="workspace-tree__icon-btn" @click="handleExportOutline">
+            <NWIcon icon_code="fileText" :size_px="15" />
+          </button>
+        </el-tooltip>
         <NWButton size="small" type="primary" @click="openCreateVolume">
+          <NWIcon icon_code="plus" :size_px="13" />
           {{ t('workspace.tree.addVolume') }}
         </NWButton>
       </div>
     </div>
 
+    <div class="workspace-tree__search">
+      <el-input
+        v-model="searchKeyword"
+        size="small"
+        clearable
+        :placeholder="t('workspace.tree.searchPlaceholder')"
+      >
+        <template #prefix><NWIcon icon_code="search" :size_px="13" /></template>
+      </el-input>
+    </div>
+
     <NWEmpty
       v-if="!treeData || treeData.volume_list.length === 0"
+      compact_flag
+      icon_code="folderOpen"
+      :title_text="t('workspace.tree.emptyTitle')"
       :description_text="t('workspace.tree.empty')"
+    >
+      <template #actions>
+        <NWButton size="small" type="primary" @click="openCreateVolume">
+          {{ t('workspace.tree.addVolume') }}
+        </NWButton>
+      </template>
+    </NWEmpty>
+    <NWEmpty
+      v-else-if="filteredVolumeList.length === 0"
+      compact_flag
+      icon_code="search"
+      :title_text="t('workspace.tree.searchEmpty')"
     />
 
     <div v-else class="workspace-tree__scroll">
       <section
-        v-for="volumeNode in treeData.volume_list"
+        v-for="volumeNode in filteredVolumeList"
         :key="volumeNode.volume_vo.volume_ulid"
         class="tree-volume"
       >
-        <header class="tree-volume__header">
+        <header class="tree-volume__header" @click="toggleVolume(volumeNode.volume_vo.volume_ulid)">
+          <NWIcon
+            :icon_code="isVolumeCollapsed(volumeNode.volume_vo.volume_ulid) ? 'chevronRight' : 'chevronDown'"
+            :size_px="13"
+            class="tree-volume__chevron"
+          />
           <span class="tree-volume__name" :title="volumeNode.volume_vo.volume_name">
             {{ volumeNode.volume_vo.volume_name }}
           </span>
-          <span class="tree-volume__count">
-            {{ t('workspace.tree.chapterCount', { count: volumeNode.chapter_list.length }) }}
-          </span>
-          <el-dropdown
-            trigger="click"
-            @command="handleVolumeCommand($event, volumeNode.volume_vo)"
-          >
-            <NWButton type="text" class="tree-icon-button" :aria-label="t('common.action')">
-              <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                <circle cx="3" cy="8" r="1.5" />
-                <circle cx="8" cy="8" r="1.5" />
-                <circle cx="13" cy="8" r="1.5" />
-              </svg>
-            </NWButton>
+          <span class="tree-volume__count">{{ volumeNode.chapter_list.length }}</span>
+          <el-dropdown trigger="click" @command="handleVolumeCommand($event, volumeNode.volume_vo)">
+            <button type="button" class="tree-icon-button" :aria-label="t('common.action')" @click.stop>
+              <NWIcon icon_code="more" :size_px="15" />
+            </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="add-chapter">
-                  {{ t('workspace.tree.addChapter') }}
-                </el-dropdown-item>
-                <el-dropdown-item command="edit-volume">
-                  {{ t('workspace.tree.editVolume') }}
-                </el-dropdown-item>
-                <el-dropdown-item command="delete-volume">
-                  {{ t('common.delete') }}
-                </el-dropdown-item>
+                <el-dropdown-item command="add-chapter">{{ t('workspace.tree.addChapter') }}</el-dropdown-item>
+                <el-dropdown-item command="edit-volume">{{ t('workspace.tree.editVolume') }}</el-dropdown-item>
+                <el-dropdown-item command="delete-volume" divided>{{ t('common.delete') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
         </header>
 
-        <ul class="tree-volume__chapters">
+        <ul v-show="!isVolumeCollapsed(volumeNode.volume_vo.volume_ulid)" class="tree-volume__chapters">
           <li
             v-for="chapter in volumeNode.chapter_list"
             :key="chapter.chapter_ulid"
@@ -374,43 +421,20 @@ function handleChapterCommand(
             :class="{ 'tree-chapter--active': chapter.chapter_ulid === currentChapterUlid }"
             @click="emit('select-chapter', chapter.chapter_ulid)"
           >
-            <span class="tree-chapter__name" :title="chapter.chapter_name">
-              {{ chapter.chapter_name }}
-            </span>
+            <span class="tree-chapter__name" :title="chapter.chapter_name">{{ chapter.chapter_name }}</span>
             <span class="tree-chapter__meta">
               <span class="tree-chapter__words">{{ chapter.word_count }}</span>
-              <span
-                class="tree-chapter__status"
-                :class="`tree-chapter__status--${chapter.chapter_status}`"
-              >
+              <span class="tree-chapter__status" :class="`tree-chapter__status--${chapter.chapter_status}`">
                 {{ chapterStatusText(chapter.chapter_status) }}
               </span>
-              <el-dropdown
-                trigger="click"
-                @command="
-                  handleChapterCommand($event, chapter, volumeNode.volume_vo.volume_ulid)
-                "
-              >
-                <NWButton
-                  type="text"
-                  class="tree-icon-button"
-                  :aria-label="t('common.action')"
-                  @click.stop
-                >
-                  <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                    <circle cx="3" cy="8" r="1.5" />
-                    <circle cx="8" cy="8" r="1.5" />
-                    <circle cx="13" cy="8" r="1.5" />
-                  </svg>
-                </NWButton>
+              <el-dropdown trigger="click" @command="handleChapterCommand($event, chapter, volumeNode.volume_vo.volume_ulid)">
+                <button type="button" class="tree-icon-button" :aria-label="t('common.action')" @click.stop>
+                  <NWIcon icon_code="more" :size_px="14" />
+                </button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="rename-chapter">
-                      {{ t('workspace.tree.renameChapter') }}
-                    </el-dropdown-item>
-                    <el-dropdown-item command="delete-chapter">
-                      {{ t('common.delete') }}
-                    </el-dropdown-item>
+                    <el-dropdown-item command="rename-chapter">{{ t('workspace.tree.renameChapter') }}</el-dropdown-item>
+                    <el-dropdown-item command="delete-chapter" divided>{{ t('common.delete') }}</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -418,56 +442,50 @@ function handleChapterCommand(
           </li>
         </ul>
 
-        <NWEmpty
-          v-if="volumeNode.chapter_list.length === 0"
-          :description_text="t('workspace.tree.noChapter')"
-        />
+        <button
+          v-if="!isVolumeCollapsed(volumeNode.volume_vo.volume_ulid) && volumeNode.chapter_list.length === 0"
+          type="button"
+          class="tree-volume__empty-add"
+          @click="openCreateChapter(volumeNode.volume_vo.volume_ulid)"
+        >
+          <NWIcon icon_code="plus" :size_px="12" />
+          {{ t('workspace.tree.addChapter') }}
+        </button>
       </section>
     </div>
 
-    <!-- 卷新建 / 编辑弹窗 -->
     <el-dialog
       v-model="volumeDialogVisible"
       :title="volumeEditingFlag ? t('workspace.tree.editVolumeTitle') : t('workspace.tree.createVolumeTitle')"
       width="480px"
     >
-      <el-form ref="volumeFormRef" :model="volumeForm" :rules="volumeRules" label-width="88px">
+      <el-form ref="volumeFormRef" :model="volumeForm" :rules="volumeRules" label-position="top">
         <el-form-item :label="t('workspace.tree.volumeName')" prop="volume_name">
           <el-input v-model="volumeForm.volume_name" maxlength="128" />
         </el-form-item>
         <el-form-item :label="t('workspace.tree.volumeSummary')" prop="summary_text">
-          <el-input
-            v-model="volumeForm.summary_text"
-            type="textarea"
-            :rows="3"
-            maxlength="2048"
-          />
+          <el-input v-model="volumeForm.summary_text" type="textarea" :rows="3" maxlength="2048" />
         </el-form-item>
       </el-form>
       <template #footer>
         <NWButton @click="volumeDialogVisible = false">{{ t('common.cancel') }}</NWButton>
-        <NWButton type="primary" :loading="actionLoading" @click="handleVolumeSubmit">
-          {{ t('common.save') }}
-        </NWButton>
+        <NWButton type="primary" :loading="actionLoading" @click="handleVolumeSubmit">{{ t('common.save') }}</NWButton>
       </template>
     </el-dialog>
 
-    <!-- 章节新建 / 重命名弹窗 -->
     <el-dialog
       v-model="chapterDialogVisible"
       :title="chapterEditingFlag ? t('workspace.tree.renameChapterTitle') : t('workspace.tree.createChapterTitle')"
       width="480px"
     >
-      <el-form ref="chapterFormRef" :model="chapterForm" :rules="chapterRules" label-width="88px">
+      <el-form ref="chapterFormRef" :model="chapterForm" :rules="chapterRules" label-position="top">
         <el-form-item :label="t('workspace.tree.chapterName')" prop="chapter_name">
           <el-input v-model="chapterForm.chapter_name" maxlength="128" />
         </el-form-item>
       </el-form>
       <template #footer>
         <NWButton @click="chapterDialogVisible = false">{{ t('common.cancel') }}</NWButton>
-        <NWButton type="primary" :loading="actionLoading" @click="handleChapterSubmit">
-          {{ t('common.save') }}
-        </NWButton>
+        <NWButton type="primary" :loading="actionLoading" @click="handleChapterSubmit">{{ t('common.save') }}</NWButton>
       </template>
     </el-dialog>
   </div>

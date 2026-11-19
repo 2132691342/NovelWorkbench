@@ -14,6 +14,9 @@ import {
   type NWJobVo,
 } from '@/api/admin'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
+import NWPageHeader from '@/components/NWPageHeader.vue'
+import NWStatTile from '@/components/NWStatTile.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
@@ -187,24 +190,33 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="job-page">
-    <div class="job-page__stats">
-      <div v-for="statCard in statCardList" :key="statCard.stat_key" class="job-stat" :class="statCard.stat_class">
-        <span class="job-stat__label">{{ statCard.stat_label }}</span>
-        <strong class="job-stat__value">{{ statCard.stat_value }}</strong>
-      </div>
+  <div class="nw-page job-page">
+    <NWPageHeader
+      :title_text="t('admin.jobs.title')"
+      :subtitle_text="t('admin.jobs.pageSubtitle')"
+      icon_code="pulse"
+    >
+      <template #actions>
+        <NWButton :loading="listLoading" @click="handleRefresh">
+          <NWIcon icon_code="refresh" :size_px="15" />
+          {{ t('admin.jobs.refresh') }}
+        </NWButton>
+      </template>
+    </NWPageHeader>
+
+    <div class="nw-stat-grid">
+      <NWStatTile
+        v-for="statCard in statCardList"
+        :key="statCard.stat_key"
+        :label_text="statCard.stat_label"
+        :value_number="statCard.stat_value"
+        :hint_text="statCard.stat_key === 'failed' ? t('admin.jobs.failedHint') : ''"
+        :icon_code="statCard.stat_key === 'queued' ? 'clock' : statCard.stat_key === 'running' ? 'play' : statCard.stat_key === 'success' ? 'checkCircle' : 'alertCircle'"
+        :tone_code="statCard.stat_key === 'queued' ? 'info' : statCard.stat_key === 'running' ? 'warning' : statCard.stat_key === 'success' ? 'success' : 'danger'"
+      />
     </div>
 
     <NWCard :hoverable="false">
-      <template #header>
-        <div class="job-page__header">
-          <div>
-            <h3 class="nw-card__title">{{ t('admin.jobs.title') }}</h3>
-            <p class="job-page__subtitle">{{ t('admin.jobs.subtitle') }}</p>
-          </div>
-          <NWButton @click="handleRefresh">{{ t('admin.jobs.refresh') }}</NWButton>
-        </div>
-      </template>
 
       <div class="job-page__toolbar">
         <el-input
@@ -252,7 +264,7 @@ onMounted(() => {
           <el-table-column :label="t('admin.jobs.docName')" min-width="180">
             <template #default="{ row }">
               <div class="job-page__doc">
-                <span>{{ row.doc_name || '-' }}</span>
+                <strong>{{ row.doc_name || t('admin.jobs.docDeleted') }}</strong>
                 <span class="job-page__muted">{{ row.doc_ulid }}</span>
               </div>
             </template>
@@ -265,8 +277,13 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column prop="retry_count" :label="t('admin.jobs.retryCount')" width="100" />
-          <el-table-column :label="t('admin.jobs.errorMessage')" min-width="200" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.error_message || '-' }}</template>
+          <el-table-column :label="t('admin.jobs.errorMessage')" min-width="220">
+            <template #default="{ row }">
+              <el-tooltip v-if="row.error_message" :content="row.error_message" placement="top">
+                <span class="job-page__error-text">{{ row.error_message }}</span>
+              </el-tooltip>
+              <span v-else class="job-page__muted">-</span>
+            </template>
           </el-table-column>
           <el-table-column :label="t('common.action')" width="120" fixed="right">
             <template #default="{ row }">
@@ -398,5 +415,35 @@ onMounted(() => {
 .job-page__pagination {
   margin-top: 14px;
   justify-content: flex-end;
+}
+.job-page__doc {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.job-page__doc strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-main);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.job-page__muted {
+  color: var(--text-placeholder);
+  font-size: 10px;
+}
+
+.job-page__error-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--error-text);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 </style>

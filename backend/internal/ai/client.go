@@ -242,7 +242,7 @@ func (c *Client) Rerank(ctx context.Context, spec ProviderSpec, query string, ca
 	if parseErr != nil {
 		return original, "rerun fallback: " + parseErr.Error()
 	}
-	return ids, "reranked by chat model"
+	return ids, "已由对话模型重排"
 }
 
 // parseRerankIDs 从模型回复中严格解析 {"ids":[...]} 并校验 ID 属于候选集。

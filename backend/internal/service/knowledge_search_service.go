@@ -113,7 +113,7 @@ func (s *KnowledgeService) maybeRerank(ctx context.Context, query string, hits [
 	rerankCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	ids, note := s.aiClient.Rerank(rerankCtx, spec, query, candidates)
-	trace.Reranked = note == "reranked by chat model"
+	trace.Reranked = note == "已由对话模型重排"
 	trace.RerankNote = note
 	byID := make(map[string]domain.KnowledgeChunkVO, len(hits))
 	for _, hit := range hits {

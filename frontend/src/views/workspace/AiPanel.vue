@@ -1,6 +1,6 @@
 <!--
-  AI 面板：会话列表（新建/切换/删除）+ 消息流（流式/失败重试）+ 输入区接线。
-  发送走 SSE（composables/useSSE），done 后消息展示 AI 依据与插入到章节。
+  AI 面板：模型选择 + 会话切换 + 上下文开关 + 快捷指令 + 消息流 + 输入区。
+  默认把当前章节作为上下文发送，避免自由对话脱离正文。
 -->
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
@@ -14,13 +14,8 @@ import {
 } from '@/api/chat'
 import { getChatOptions, type NWModelCapabilityVo, type NWModelProviderVo } from '@/api/model'
 import { useSSE } from '@/composables/useSSE'
-import type {
-  NWChapterBriefVo,
-  NWChatSendReqVo,
-  NWChatSessionVo,
-} from '@/api/contracts'
-import NWButton from '@/components/NWButton.vue'
-import NWEmpty from '@/components/NWEmpty.vue'
+import type { NWChapterBriefVo, NWChatSendReqVo, NWChatSessionVo } from '@/api/contracts'
+import NWIcon from '@/components/NWIcon.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import ChatComposer from './ChatComposer.vue'
 import ChatMessage from './ChatMessage.vue'
@@ -29,6 +24,8 @@ import type { NWChatDisplayMessage, NWChatSendPayload } from './chatTypes'
 const props = defineProps<{
   projectUlid: string
   chapterList: NWChapterBriefVo[]
+  currentChapterUlid?: string
+  currentChapterName?: string
 }>()
 
 const emit = defineEmits<{
@@ -51,13 +48,45 @@ const sessionCreating = ref(false)
 const providerList = ref<NWModelProviderVo[]>([])
 const capabilityVo = ref<NWModelCapabilityVo | null>(null)
 const selectedProviderUlid = ref('')
+/** 是否自动附带当前章节 */
+const attachChapterFlag = ref(true)
 
 /** 可选对话供应商（仅启用的） */
 const chatProviderOptions = computed(() =>
   providerList.value.filter((providerItem) => providerItem.enabled_flag),
 )
 
-/** 组装 /chat/send 请求体 */
+/** 当前选中的会话 */
+const currentSessionVo = computed(
+  () => sessionList.value.find((sessionItem) => sessionItem.session_ulid === currentSessionUlid.value) ?? null,
+)
+
+/** 快捷指令 */
+const quickPromptList = computed(() => [
+  {
+    prompt_code: 'continue',
+    prompt_title: t('workspace.ai.quickContinueTitle'),
+    prompt_desc: t('workspace.ai.quickContinueDesc'),
+    prompt_text: t('workspace.ai.quickContinuePrompt'),
+    skill_code: 'continue',
+  },
+  {
+    prompt_code: 'consistency',
+    prompt_title: t('workspace.ai.quickCheckTitle'),
+    prompt_desc: t('workspace.ai.quickCheckDesc'),
+    prompt_text: t('workspace.ai.quickCheckPrompt'),
+    skill_code: '',
+  },
+  {
+    prompt_code: 'directions',
+    prompt_title: t('workspace.ai.quickBranchTitle'),
+    prompt_desc: t('workspace.ai.quickBranchDesc'),
+    prompt_text: t('workspace.ai.quickBranchPrompt'),
+    skill_code: '',
+  },
+])
+
+/** 组装 /chat/send 请求体（当前章节自动并入引用清单） */
 function buildStreamRequest(payload: NWChatSendPayload): NWChatSendReqVo {
   const request: NWChatSendReqVo = {
     session_ulid: currentSessionUlid.value || undefined,
@@ -68,11 +97,19 @@ function buildStreamRequest(payload: NWChatSendPayload): NWChatSendReqVo {
   if (payload.skill_code) {
     request.skill_code = payload.skill_code
   }
+  const refChapterUlidList = [...payload.ref_chapter_ulid_list]
+  if (
+    attachChapterFlag.value &&
+    props.currentChapterUlid &&
+    !refChapterUlidList.includes(props.currentChapterUlid)
+  ) {
+    refChapterUlidList.unshift(props.currentChapterUlid)
+  }
   if (payload.ref_doc_ulid_list.length > 0) {
     request.ref_doc_ulid_list = payload.ref_doc_ulid_list
   }
-  if (payload.ref_chapter_ulid_list.length > 0) {
-    request.ref_chapter_ulid_list = payload.ref_chapter_ulid_list
+  if (refChapterUlidList.length > 0) {
+    request.ref_chapter_ulid_list = refChapterUlidList
   }
   if (selectedProviderUlid.value) {
     request.provider_ulid = selectedProviderUlid.value
@@ -95,10 +132,7 @@ async function loadModelOptions(): Promise<void> {
   }
 }
 
-/**
- * 发起流式生成并把事件回写到助手消息：
- * chunk 增量追加；done 覆盖为完整回复并挂 RAG 依据；error 落错误气泡可重试。
- */
+/** 发起流式生成并把事件回写到助手消息 */
 async function runStream(
   request: NWChatSendReqVo,
   assistantMessage: NWChatDisplayMessage,
@@ -110,7 +144,6 @@ async function runStream(
   await startStream('/chat/send', request, {
     onEvent: (event) => {
       if (event.session_ulid && !currentSessionUlid.value) {
-        // 首次发送自动建会话：补上会话上下文并刷新会话列表
         currentSessionUlid.value = event.session_ulid
         void loadSessions()
       }
@@ -198,6 +231,10 @@ async function loadSessions(): Promise<void> {
     if (!currentSessionUlid.value && sessionList.value.length > 0) {
       await selectSession(sessionList.value[0].session_ulid)
     }
+    if (sessionList.value.length === 0) {
+      currentSessionUlid.value = ''
+      messageList.value = []
+    }
   } catch {
     sessionList.value = []
   }
@@ -214,6 +251,7 @@ async function handleCreateSession(): Promise<void> {
     sessionList.value.unshift(sessionVo)
     await selectSession(sessionVo.session_ulid)
     ElMessage.success(t('workspace.ai.sessionCreateSuccess'))
+    composerRef.value?.focus()
   } catch {
     // 失败提示由 http 层统一弹出
   } finally {
@@ -221,23 +259,24 @@ async function handleCreateSession(): Promise<void> {
   }
 }
 
-/** 删除会话（二次确认，级联删消息） */
-async function handleDeleteSession(sessionUlid: string): Promise<void> {
+/** 删除当前会话（二次确认，级联删消息） */
+async function handleDeleteSession(): Promise<void> {
+  if (!currentSessionUlid.value) {
+    return
+  }
   try {
     await ElMessageBox.confirm(
       t('workspace.ai.sessionDeleteConfirm'),
       t('workspace.ai.sessionDelete'),
-      { type: 'warning' },
+      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') },
     )
   } catch {
     return
   }
   try {
-    await deleteChatSession(sessionUlid)
-    if (currentSessionUlid.value === sessionUlid) {
-      currentSessionUlid.value = ''
-      messageList.value = []
-    }
+    await deleteChatSession(currentSessionUlid.value)
+    messageList.value = []
+    currentSessionUlid.value = ''
     await loadSessions()
     ElMessage.success(t('workspace.ai.sessionDeleteSuccess'))
   } catch {
@@ -280,6 +319,15 @@ async function selectSession(sessionUlid: string): Promise<void> {
 /** 外部预置技能与章节引用（AI 续写 / AI 润色入口） */
 function presetSkill(skillCode: string, refChapterUlidList: string[]): void {
   composerRef.value?.presetSkill(skillCode, refChapterUlidList)
+  composerRef.value?.focus()
+}
+
+/** 套用快捷指令：填技能并写入提示词 */
+function applyQuickPrompt(promptItem: { prompt_text: string; skill_code: string }): void {
+  if (promptItem.skill_code && props.currentChapterUlid) {
+    composerRef.value?.presetSkill(promptItem.skill_code, [props.currentChapterUlid])
+  }
+  composerRef.value?.setInputText(promptItem.prompt_text)
 }
 
 defineExpose({ presetSkill })
@@ -309,65 +357,106 @@ onMounted(() => {
 <template>
   <div class="ai-panel">
     <header class="ai-panel__header">
-      <span class="ai-panel__title">{{ t('workspace.ai.title') }}</span>
-      <el-select
-        v-if="chatProviderOptions.length > 0"
-        v-model="selectedProviderUlid"
-        size="small"
-        class="ai-panel__model-select"
-        :placeholder="t('workspace.ai.modelPlaceholder')"
-      >
-        <el-option
-          v-for="providerItem in chatProviderOptions"
-          :key="providerItem.provider_ulid"
-          :value="providerItem.provider_ulid"
-          :label="`${providerItem.provider_name} / ${providerItem.chat_model_name}`"
-        />
-      </el-select>
-      <NWButton size="small" type="primary" :loading="sessionCreating" @click="handleCreateSession">
-        {{ t('workspace.ai.sessionCreate') }}
-      </NWButton>
+      <div class="ai-panel__title-row">
+        <span class="ai-panel__title-icon"><NWIcon icon_code="sparkles" :size_px="15" /></span>
+        <span class="ai-panel__title">{{ t('workspace.ai.title') }}</span>
+        <span v-if="messageList.length > 0" class="ai-panel__count">
+          {{ t('workspace.ai.messageCount', { count: messageList.length }) }}
+        </span>
+      </div>
+      <div class="ai-panel__header-actions">
+        <el-select
+          v-model="currentSessionUlid"
+          class="ai-panel__session-select"
+          size="small"
+          :placeholder="t('workspace.ai.sessionPlaceholder')"
+          @change="selectSession"
+        >
+          <el-option
+            v-for="sessionItem in sessionList"
+            :key="sessionItem.session_ulid"
+            :value="sessionItem.session_ulid"
+            :label="sessionItem.session_name || sessionItem.session_ulid"
+          />
+        </el-select>
+        <el-tooltip :content="t('workspace.ai.sessionCreate')" placement="bottom">
+          <button type="button" class="ai-panel__icon-btn" @click="handleCreateSession">
+            <NWIcon icon_code="plus" :size_px="15" />
+          </button>
+        </el-tooltip>
+        <el-tooltip :content="t('workspace.ai.sessionDelete')" placement="bottom">
+          <button
+            type="button"
+            class="ai-panel__icon-btn is-danger"
+            :disabled="!currentSessionVo"
+            @click="handleDeleteSession"
+          >
+            <NWIcon icon_code="trash" :size_px="14" />
+          </button>
+        </el-tooltip>
+      </div>
     </header>
 
-
-    <!-- 会话列表 -->
-    <div class="ai-panel__sessions">
-      <div v-if="sessionList.length === 0" class="ai-panel__sessions-empty">
-        {{ t('workspace.ai.sessionEmpty') }}
-      </div>
-      <div
-        v-for="sessionItem in sessionList"
-        :key="sessionItem.session_ulid"
-        class="session-item"
-        :class="{ 'is-active': sessionItem.session_ulid === currentSessionUlid }"
-        @click="selectSession(sessionItem.session_ulid)"
-      >
-        <span class="session-item__name" :title="sessionItem.session_name">
-          {{ sessionItem.session_name || sessionItem.session_ulid }}
-        </span>
-        <span class="session-item__count">
-          {{ t('workspace.ai.messageCount', { count: sessionItem.message_count }) }}
-        </span>
-        <NWButton
-          type="text"
+    <div class="ai-panel__controls">
+      <div class="ai-panel__control-row">
+        <span class="ai-panel__control-label">{{ t('workspace.ai.modelLabel') }}</span>
+        <el-select
+          v-if="chatProviderOptions.length > 0"
+          v-model="selectedProviderUlid"
           size="small"
-          class="session-item__delete"
-          :aria-label="t('workspace.ai.sessionDelete')"
-          @click.stop="handleDeleteSession(sessionItem.session_ulid)"
+          class="ai-panel__model-select"
+          :placeholder="t('workspace.ai.modelPlaceholder')"
         >
-          x
-        </NWButton>
+          <el-option
+            v-for="providerItem in chatProviderOptions"
+            :key="providerItem.provider_ulid"
+            :value="providerItem.provider_ulid"
+            :label="`${providerItem.provider_name} / ${providerItem.chat_model_name}`"
+          />
+        </el-select>
+        <span v-else class="ai-panel__model-empty">{{ t('workspace.ai.modelUnavailable') }}</span>
+      </div>
+
+      <div class="ai-panel__control-row">
+        <span class="ai-panel__control-label">{{ t('workspace.ai.contextLabel') }}</span>
+        <button
+          type="button"
+          class="ai-panel__context-chip"
+          :class="{ 'is-active': attachChapterFlag }"
+          :disabled="!currentChapterUlid"
+          @click="attachChapterFlag = !attachChapterFlag"
+        >
+          <span class="ai-panel__context-dot" />
+          {{ currentChapterName || t('workspace.ai.noChapter') }}
+        </button>
+        <span class="ai-panel__context-hint">{{ attachChapterFlag ? t('workspace.ai.contextOn') : t('workspace.ai.contextOff') }}</span>
       </div>
     </div>
 
-    <!-- 消息流 -->
     <div ref="messagesHost" class="ai-panel__messages">
       <NWLoading v-if="historyLoading" />
       <template v-else>
-        <NWEmpty
-          v-if="messageList.length === 0"
-          :description_text="t('workspace.ai.historyEmpty')"
-        />
+        <div v-if="messageList.length === 0" class="ai-panel__welcome">
+          <div class="ai-panel__welcome-head">
+            <span class="ai-panel__welcome-icon"><NWIcon icon_code="wand" :size_px="22" /></span>
+            <div>
+              <h3 class="ai-panel__welcome-title">{{ t('workspace.ai.emptyTitle') }}</h3>
+              <p class="ai-panel__welcome-desc">{{ t('workspace.ai.emptyDesc') }}</p>
+            </div>
+          </div>
+          <div class="ai-panel__quick-grid">
+            <button
+              v-for="promptItem in quickPromptList"
+              :key="promptItem.prompt_code"
+              type="button"
+              class="ai-panel__quick-card"
+              @click="applyQuickPrompt(promptItem)"
+            >
+              <strong>{{ promptItem.prompt_title }}</strong>
+              <small>{{ promptItem.prompt_desc }}</small>
+            </button>
+          </div>
+        </div>
         <ChatMessage
           v-for="(messageItem, messageIndex) in messageList"
           :key="messageIndex"
@@ -388,5 +477,5 @@ onMounted(() => {
     />
   </div>
 </template>
-<style scoped src="./AiPanel.css"></style>
 
+<style scoped src="./AiPanel.css"></style>

@@ -4,8 +4,10 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { ElMessage, type FormInstance } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import NWButton from '@/components/NWButton.vue'
 import { saveFact, saveHook, saveSummary } from '@/api/continuity'
+import type { NWChapterBriefVo } from '@/api/contracts'
 import type {
   NWFactStatusCode,
   NWHookStatusCode,
@@ -16,8 +18,11 @@ import type {
   NWChapterSummaryVo,
 } from '@/api/continuity'
 
+const { t } = useI18n()
+
 const props = defineProps<{
   projectUlid: string
+  chapterList: NWChapterBriefVo[]
   factStatusText: Record<NWFactStatusCode, string>
   hookStatusText: Record<NWHookStatusCode, string>
   summaryStatusText: Record<NWSummaryStatusCode, string>
@@ -147,7 +152,7 @@ async function submitFact(): Promise<void> {
       source_quote_text: factForm.source_quote_text,
       note_text: factForm.note_text,
     })
-    ElMessage.success(editingFactUlid.value ? '时间事实已更新' : '时间事实已创建')
+    ElMessage.success(t('continuity.saveSuccess'))
     factDialogVisible.value = false
     emit('factSaved')
   } catch {
@@ -175,7 +180,7 @@ async function submitHook(): Promise<void> {
       importance_code: hookForm.importance_code,
       note_text: hookForm.note_text,
     })
-    ElMessage.success(editingHookUlid.value ? '伏笔钩子已更新' : '伏笔钩子已创建')
+    ElMessage.success(t('continuity.saveSuccess'))
     hookDialogVisible.value = false
     emit('hookSaved')
   } catch {
@@ -200,7 +205,7 @@ async function submitSummary(): Promise<void> {
       source_hash_text: summaryForm.source_hash_text.trim(),
       summary_status_code: summaryForm.summary_status_code,
     })
-    ElMessage.success(editingSummaryUlid.value ? '章节摘要已更新' : '章节摘要已保存')
+    ElMessage.success(t('continuity.saveSuccess'))
     summaryDialogVisible.value = false
     emit('summarySaved')
   } catch {
@@ -215,100 +220,112 @@ defineExpose({ openFact, openHook, openSummary })
 
 <template>
   <!-- 时间事实表单 -->
-  <el-dialog v-model="factDialogVisible" :title="editingFactUlid ? '编辑时间事实' : '新建时间事实'" width="560px">
+  <el-dialog v-model="factDialogVisible" :title="editingFactUlid ? t('continuity.factEditTitle') : t('continuity.factCreateTitle')" width="560px">
     <el-form ref="factFormRef" :model="factForm" label-width="100px">
-      <el-form-item label="主体" prop="subject_text" required>
+      <el-form-item :label="t('continuity.subject')" prop="subject_text" required>
         <el-input v-model="factForm.subject_text" maxlength="128" />
       </el-form-item>
-      <el-form-item label="谓词" prop="predicate_code" required>
+      <el-form-item :label="t('continuity.predicate')" prop="predicate_code" required>
         <el-input v-model="factForm.predicate_code" maxlength="64" />
       </el-form-item>
-      <el-form-item label="客体">
+      <el-form-item :label="t('continuity.object')">
         <el-input v-model="factForm.object_text" maxlength="256" />
       </el-form-item>
-      <el-form-item label="状态">
+      <el-form-item :label="t('continuity.colStatus')">
         <el-select v-model="factForm.fact_status_code" class="continuity-form-control">
           <el-option v-for="(text, code) in props.factStatusText" :key="code" :label="text" :value="code" />
         </el-select>
       </el-form-item>
-      <el-form-item label="起始章节">
-        <el-input v-model="factForm.valid_from_chapter_ulid" placeholder="生效起始章节 ULID" />
+      <el-form-item :label="t('continuity.validFrom')">
+        <el-select v-model="factForm.valid_from_chapter_ulid" class="continuity-form-control" clearable :placeholder="t('continuity.unlimited')">
+          <el-option v-for="chapterItem in props.chapterList" :key="chapterItem.chapter_ulid" :label="chapterItem.chapter_name" :value="chapterItem.chapter_ulid" />
+        </el-select>
       </el-form-item>
-      <el-form-item label="截止章节">
-        <el-input v-model="factForm.valid_until_chapter_ulid" placeholder="生效截止章节 ULID" />
+      <el-form-item :label="t('continuity.validUntil')">
+        <el-select v-model="factForm.valid_until_chapter_ulid" class="continuity-form-control" clearable :placeholder="t('continuity.unlimited')">
+          <el-option v-for="chapterItem in props.chapterList" :key="chapterItem.chapter_ulid" :label="chapterItem.chapter_name" :value="chapterItem.chapter_ulid" />
+        </el-select>
       </el-form-item>
-      <el-form-item label="来源章节" prop="source_chapter_ulid" required>
-        <el-input v-model="factForm.source_chapter_ulid" placeholder="证据来源章节 ULID" />
+      <el-form-item :label="t('continuity.sourceChapter')" prop="source_chapter_ulid" required>
+        <el-select v-model="factForm.source_chapter_ulid" class="continuity-form-control" filterable :placeholder="t('continuity.selectSourceChapter')">
+          <el-option v-for="chapterItem in props.chapterList" :key="chapterItem.chapter_ulid" :label="chapterItem.chapter_name" :value="chapterItem.chapter_ulid" />
+        </el-select>
       </el-form-item>
-      <el-form-item label="原文证据">
+      <el-form-item :label="t('continuity.quote')">
         <el-input v-model="factForm.source_quote_text" type="textarea" :rows="3" maxlength="8000" />
       </el-form-item>
-      <el-form-item label="备注">
+      <el-form-item :label="t('continuity.remark')">
         <el-input v-model="factForm.note_text" type="textarea" :rows="2" maxlength="4000" />
       </el-form-item>
     </el-form>
     <template #footer>
-      <NWButton @click="factDialogVisible = false">取消</NWButton>
-      <NWButton type="primary" :loading="factSaving" @click="submitFact">保存</NWButton>
+      <NWButton @click="factDialogVisible = false">{{ t('common.cancel') }}</NWButton>
+      <NWButton type="primary" :loading="factSaving" @click="submitFact">{{ t('common.save') }}</NWButton>
     </template>
   </el-dialog>
 
   <!-- 伏笔钩子表单 -->
-  <el-dialog v-model="hookDialogVisible" :title="editingHookUlid ? '编辑伏笔钩子' : '新建伏笔钩子'" width="560px">
+  <el-dialog v-model="hookDialogVisible" :title="editingHookUlid ? t('continuity.hookEditTitle') : t('continuity.hookCreateTitle')" width="560px">
     <el-form ref="hookFormRef" :model="hookForm" label-width="100px">
-      <el-form-item label="伏笔描述" prop="description_text" required>
+      <el-form-item :label="t('continuity.hookDesc')" prop="description_text" required>
         <el-input v-model="hookForm.description_text" type="textarea" :rows="3" maxlength="4000" />
       </el-form-item>
-      <el-form-item label="状态">
+      <el-form-item :label="t('continuity.colStatus')">
         <el-select v-model="hookForm.hook_status_code" class="continuity-form-control">
           <el-option v-for="(text, code) in props.hookStatusText" :key="code" :label="text" :value="code" />
         </el-select>
       </el-form-item>
-      <el-form-item label="重要程度">
+      <el-form-item :label="t('continuity.importance')">
         <el-select v-model="hookForm.importance_code" class="continuity-form-control">
           <el-option v-for="(text, code) in props.importanceText" :key="code" :label="text" :value="code" />
         </el-select>
       </el-form-item>
-      <el-form-item label="埋设章节">
-        <el-input v-model="hookForm.setup_chapter_ulid" placeholder="埋设章节 ULID" />
+      <el-form-item :label="t('continuity.setupChapter')">
+        <el-select v-model="hookForm.setup_chapter_ulid" class="continuity-form-control" clearable filterable :placeholder="t('continuity.selectSetupChapter')">
+          <el-option v-for="chapterItem in props.chapterList" :key="chapterItem.chapter_ulid" :label="chapterItem.chapter_name" :value="chapterItem.chapter_ulid" />
+        </el-select>
       </el-form-item>
-      <el-form-item label="回收章节">
-        <el-input v-model="hookForm.payoff_chapter_ulid" placeholder="回收章节 ULID" />
+      <el-form-item :label="t('continuity.payoffChapter')">
+        <el-select v-model="hookForm.payoff_chapter_ulid" class="continuity-form-control" clearable filterable :placeholder="t('continuity.selectPayoffChapter')">
+          <el-option v-for="chapterItem in props.chapterList" :key="chapterItem.chapter_ulid" :label="chapterItem.chapter_name" :value="chapterItem.chapter_ulid" />
+        </el-select>
       </el-form-item>
-      <el-form-item label="预期回收">
+      <el-form-item :label="t('continuity.expectedPayoff')">
         <el-input v-model="hookForm.expected_payoff_text" type="textarea" :rows="3" maxlength="4000" />
       </el-form-item>
-      <el-form-item label="备注">
+      <el-form-item :label="t('continuity.remark')">
         <el-input v-model="hookForm.note_text" type="textarea" :rows="2" maxlength="4000" />
       </el-form-item>
     </el-form>
     <template #footer>
-      <NWButton @click="hookDialogVisible = false">取消</NWButton>
-      <NWButton type="primary" :loading="hookSaving" @click="submitHook">保存</NWButton>
+      <NWButton @click="hookDialogVisible = false">{{ t('common.cancel') }}</NWButton>
+      <NWButton type="primary" :loading="hookSaving" @click="submitHook">{{ t('common.save') }}</NWButton>
     </template>
   </el-dialog>
 
   <!-- 章节摘要表单 -->
-  <el-dialog v-model="summaryDialogVisible" :title="editingSummaryUlid ? '编辑章节摘要' : '新建章节摘要'" width="560px">
+  <el-dialog v-model="summaryDialogVisible" :title="editingSummaryUlid ? t('continuity.summaryEditTitle') : t('continuity.summaryCreateTitle')" width="560px">
     <el-form ref="summaryFormRef" :model="summaryForm" label-width="100px">
-      <el-form-item label="章节 ULID" prop="chapter_ulid" required>
-        <el-input v-model="summaryForm.chapter_ulid" placeholder="所属章节 ULID" />
+      <el-form-item :label="t('continuity.summaryChapter')" prop="chapter_ulid" required>
+        <el-select v-model="summaryForm.chapter_ulid" class="continuity-form-control" filterable :placeholder="t('continuity.selectChapter')">
+          <el-option v-for="chapterItem in props.chapterList" :key="chapterItem.chapter_ulid" :label="chapterItem.chapter_name" :value="chapterItem.chapter_ulid" />
+        </el-select>
       </el-form-item>
-      <el-form-item label="摘要内容" prop="summary_text" required>
+      <el-form-item :label="t('continuity.summaryContent')" prop="summary_text" required>
         <el-input v-model="summaryForm.summary_text" type="textarea" :rows="8" maxlength="20000" />
       </el-form-item>
-      <el-form-item label="正文指纹">
+      <el-form-item :label="t('continuity.sourceHash')">
         <el-input v-model="summaryForm.source_hash_text" maxlength="128" />
       </el-form-item>
-      <el-form-item label="状态">
+      <el-form-item :label="t('continuity.colStatus')">
         <el-select v-model="summaryForm.summary_status_code" class="continuity-form-control">
           <el-option v-for="(text, code) in props.summaryStatusText" :key="code" :label="text" :value="code" />
         </el-select>
       </el-form-item>
     </el-form>
     <template #footer>
-      <NWButton @click="summaryDialogVisible = false">取消</NWButton>
-      <NWButton type="primary" :loading="summarySaving" @click="submitSummary">保存</NWButton>
+      <NWButton @click="summaryDialogVisible = false">{{ t('common.cancel') }}</NWButton>
+      <NWButton type="primary" :loading="summarySaving" @click="submitSummary">{{ t('common.save') }}</NWButton>
     </template>
   </el-dialog>
 </template>

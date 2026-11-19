@@ -7,6 +7,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getSystemStatus, type NWSystemStatusVo } from '@/api/model'
 import NWButton from '@/components/NWButton.vue'
+import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 
@@ -62,7 +63,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="status-page">
+  <div class="nw-page status-page">
     <header class="status-page__header">
       <div>
         <h2 class="status-page__title">{{ t('status.title') }}</h2>

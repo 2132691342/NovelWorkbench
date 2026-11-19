@@ -13,8 +13,16 @@ import (
 
 // settingDefaultList 启动播种的默认配置（键白名单与其默认值、说明的唯一来源）。
 var settingDefaultList = []domain.AppSettingDO{
-	{SettingKey: "chat_history_count", SettingValue: "5", SettingDesc: "AI 对话历史注入条数"},
-	{SettingKey: "rag_top_k", SettingValue: "6", SettingDesc: "知识库检索默认召回条数"},
+	{SettingKey: "chat_history_count", SettingValue: "5", SettingDesc: "AI 对话历史注入条数（0-50）"},
+	{SettingKey: "rag_top_k", SettingValue: "6", SettingDesc: "知识库检索默认召回条数（1-20）"},
+	{SettingKey: "daily_word_goal", SettingValue: "2000", SettingDesc: "每日写作目标字数（100-100000）"},
+}
+
+// settingRangeMap 配置值合法区间（最小、最大）。
+var settingRangeMap = map[string][2]int{
+	"chat_history_count": {0, 50},
+	"rag_top_k":          {1, 20},
+	"daily_word_goal":    {100, 100000},
 }
 
 // SettingService 应用配置业务：默认值播种、查询与更新（值须为正整数）。
@@ -35,6 +43,11 @@ func (s *SettingService) SeedDefaults(ctx context.Context) error {
 			return err
 		}
 		if existing != nil {
+			if existing.SettingDesc != item.SettingDesc {
+				if err := s.settingRepo.UpdateDescription(ctx, item.SettingKey, item.SettingDesc); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		do := &domain.AppSettingDO{
@@ -73,8 +86,12 @@ func (s *SettingService) Update(ctx context.Context, req *domain.SettingUpdateRE
 		return domain.SettingVO{}, pkg.NewBizError(domain.RespCodeInvalidParam, "不支持的配置键")
 	}
 	value, err := strconv.Atoi(req.SettingValue)
-	if err != nil || value <= 0 {
-		return domain.SettingVO{}, pkg.NewBizError(domain.RespCodeInvalidParam, "配置值须为正整数")
+	if err != nil {
+		return domain.SettingVO{}, pkg.NewBizError(domain.RespCodeInvalidParam, "配置值须为整数")
+	}
+	valueRange, ok := settingRangeMap[req.SettingKey]
+	if !ok || value < valueRange[0] || value > valueRange[1] {
+		return domain.SettingVO{}, pkg.NewBizError(domain.RespCodeInvalidParam, "配置值超出允许范围")
 	}
 	existing, err := s.settingRepo.GetByKey(ctx, req.SettingKey)
 	if err != nil {
