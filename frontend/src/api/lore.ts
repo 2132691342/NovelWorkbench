@@ -11,6 +11,7 @@ export interface NWLoreVo {
   lore_name: string
   lore_type_code: string
   content_text: string
+  content_mode_code: string
   sort_order: number
   updated_at_ms: number
 }
@@ -22,6 +23,7 @@ export interface NWLoreSaveReqVo {
   lore_name: string
   lore_type_code?: string
   content_text?: string
+  content_mode_code?: string
   sort_order?: number
 }
 

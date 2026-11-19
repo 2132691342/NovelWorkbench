@@ -236,6 +236,7 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] hex |
 `ai.BuiltinSkills()`（`internal/ai/skills.go`）返回 `[]ai.BuiltinSkill`，播种时由
 `service.SkillService.SeedDefaults` 落库为 `scope_code='global'`：
 
+- `internal/ai/skills_craft.go`：进阶方法论类（长篇架构 / 章末钩子 / 对白打磨 / 节奏体检 / 世界观规则卡 / 主线守门 6 个）。
 | skill_code | 名称 | category_code | 用途 | 使用占位符 | sort_order |
 | --- | --- | --- | --- | --- | --- |
 | `continue` | 续写 | `write` | 依据当前章节与上下文续写下一段正文 | `{{user_input}}`、`{{chapter_content}}`、`{{context}}` | 10 |
@@ -247,6 +248,12 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] hex |
 | `review` | 审稿 | `revise` | 审阅章节：指出逻辑、节奏、一致性问题 | `{{user_input}}`、`{{chapter_content}}`、`{{context}}` | 70 |
 | `name` | 取名 | `setting` | 为角色、地名、功法等生成候选名字 | `{{user_input}}`、`{{context}}` | 80 |
 | `setting` | 设定问答 | `setting` | 基于世界观设定与知识库回答设定问题 | `{{user_input}}`、`{{context}}` | 90 |
+| `architect` | 长篇架构 | `outline` | 六层搭建（卖点 / 世界观 / 主线 / 人物 / 分卷 / 章纲）并指出结构风险 | `{{context}}`、`{{user_input}}` | 170 |
+| `hook` | 章末钩子 | `outline` | 按钩子十型判定章末类型，三项打分并给替换收尾句 | `{{chapter_content}}`、`{{user_input}}` | 180 |
+| `dialogue` | 对白打磨 | `revise` | 逐段判信息增量 / 声口区分 / 潜台词 / 权力关系，标出可删对白 | `{{chapter_content}}`、`{{user_input}}` | 190 |
+| `pacing` | 节奏体检 | `review` | 标注推进 / 铺垫 / 爆发 / 喘息，定位塌陷与爽点间隔 | `{{chapter_content}}`、`{{user_input}}` | 200 |
+| `worldrule` | 世界观规则卡 | `setting` | 把设定改写成「规则 / 边界 / 代价 / 叙事用途」四栏卡，缺项标待补 | `{{context}}`、`{{user_input}}` | 210 |
+| `mainline` | 主线守门 | `review` | 判定本章推进 / 原地踏步 / 跑题，引原文为证并给处理建议 | `{{chapter_content}}`、`{{user_input}}` | 220 |
 
 ### 5.3 解析与覆盖优先级
 

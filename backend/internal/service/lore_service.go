@@ -27,13 +27,18 @@ func (s *LoreService) Save(ctx context.Context, userULID string, req *domain.Lor
 		return domain.LoreVO{}, err
 	}
 	if req.LoreULID == "" {
+		contentModeCode := req.ContentModeCode
+		if contentModeCode == "" {
+			contentModeCode = domain.LoreContentModeRich
+		}
 		do := &domain.LoreDO{
-			LoreULID:     pkg.NewULID(domain.IDPrefixLore),
-			ProjectULID:  req.ProjectULID,
-			LoreName:     req.LoreName,
-			LoreTypeCode: req.LoreTypeCode,
-			ContentText:  req.ContentText,
-			SortOrder:    req.SortOrder,
+			LoreULID:        pkg.NewULID(domain.IDPrefixLore),
+			ProjectULID:     req.ProjectULID,
+			LoreName:        req.LoreName,
+			LoreTypeCode:    req.LoreTypeCode,
+			ContentText:     req.ContentText,
+			ContentModeCode: contentModeCode,
+			SortOrder:       req.SortOrder,
 		}
 		if err := s.loreRepo.Create(ctx, do); err != nil {
 			return domain.LoreVO{}, err
@@ -55,6 +60,9 @@ func (s *LoreService) Save(ctx context.Context, userULID string, req *domain.Lor
 		"lore_type_code": req.LoreTypeCode,
 		"content_text":   req.ContentText,
 		"sort_order":     req.SortOrder,
+	}
+	if req.ContentModeCode != "" {
+		fields["content_mode_code"] = req.ContentModeCode
 	}
 	if err := s.loreRepo.Update(ctx, req.LoreULID, fields); err != nil {
 		return domain.LoreVO{}, err
@@ -104,8 +112,9 @@ func toLoreVO(do *domain.LoreDO) domain.LoreVO {
 		ProjectULID:  do.ProjectULID,
 		LoreName:     do.LoreName,
 		LoreTypeCode: do.LoreTypeCode,
-		ContentText:  do.ContentText,
-		SortOrder:    do.SortOrder,
+		ContentText:     do.ContentText,
+		ContentModeCode: do.ContentModeCode,
+		SortOrder:       do.SortOrder,
 		UpdatedAtMs:  do.UpdatedAt.UnixMilli(),
 	}
 }

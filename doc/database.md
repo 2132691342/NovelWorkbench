@@ -309,6 +309,7 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`ULIDNamingStrategy.ColumnName`
 | `lore_name` | `varchar(128)` | |
 | `lore_type_code` | `varchar(16)` | 索引 |
 | `content_text` | `text` | |
+| `content_mode_code` | `varchar(16)` | 缺省 `rich`；`rich`=富文本 HTML，`markdown`=Markdown 原文 |
 | `sort_order` | `bigint` | |
 
 索引：`idx_lore_settings_project_ul_id`、`idx_lore_settings_lore_type_code`。

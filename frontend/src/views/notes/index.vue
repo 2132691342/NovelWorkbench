@@ -23,6 +23,7 @@ import NWLoading from '@/components/NWLoading.vue'
 import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
 import NoteEditor from './NoteEditor.vue'
 import MarkdownNoteEditor from './MarkdownNoteEditor.vue'
+import { convertNoteContent, type NWNoteContentMode } from './noteContent'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -132,12 +133,15 @@ async function saveNote(): Promise<void> {
       lore_name: noteName.value || t('notes.defaultName'),
       lore_type_code: NW_LORE_TYPE_NOTE,
       content_text: contentHtml.value,
+      content_mode_code: editorMode.value,
       sort_order: note.sort_order,
     })
     currentNote.value = savedVo
     const listItem = noteList.value.find((item) => item.lore_ulid === savedVo.lore_ulid)
     if (listItem) {
       listItem.lore_name = savedVo.lore_name
+      listItem.content_text = savedVo.content_text
+      listItem.content_mode_code = savedVo.content_mode_code
       listItem.updated_at_ms = savedVo.updated_at_ms
     }
     dirtyFlag = false
@@ -173,6 +177,7 @@ async function selectNote(noteVo: NWLoreVo): Promise<void> {
   await flushSave()
   currentNote.value = noteVo
   noteName.value = noteVo.lore_name
+  editorMode.value = noteVo.content_mode_code === 'markdown' ? 'markdown' : 'rich'
   applyNoteContent(noteVo.content_text)
   saveStatus.value = 'saved'
 }
@@ -233,6 +238,20 @@ function handleContentChange(): void {
   if (suppressChangeFlag) {
     return
   }
+  scheduleSave()
+}
+
+/**
+ * 切换编辑器模式：把当前正文转换成目标格式，避免 HTML 标签出现在 Markdown 里（反之亦然）。
+ * 转换后立即落盘，保证下次打开笔记仍是同一格式。
+ */
+function handleModeChange(targetMode: string | number | boolean | undefined): void {
+  const nextMode: NWNoteContentMode = targetMode === 'markdown' ? 'markdown' : 'rich'
+  if (nextMode === editorMode.value) {
+    return
+  }
+  editorMode.value = nextMode
+  applyNoteContent(convertNoteContent(contentHtml.value, nextMode))
   scheduleSave()
 }
 
@@ -323,7 +342,12 @@ onMounted(() => {
               :placeholder="t('notes.namePlaceholder')"
               @input="handleNameInput"
             />
-            <el-radio-group v-model="editorMode" size="small" class="notes-page__editor-mode">
+            <el-radio-group
+              :model-value="editorMode"
+              size="small"
+              class="notes-page__editor-mode"
+              @change="handleModeChange"
+            >
               <el-radio-button value="rich">{{ t('markdownNote.modeRich') }}</el-radio-button>
               <el-radio-button value="markdown">{{ t('markdownNote.modeMarkdown') }}</el-radio-button>
             </el-radio-group>

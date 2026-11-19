@@ -3,6 +3,8 @@ node_modules/
 dist/
 out/
 frontend/dist.tar.gz
+dist.tar.gz
+.tmp/
 
 # 环境与密钥（禁止提交任何真实凭据）
 .env

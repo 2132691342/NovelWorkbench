@@ -524,10 +524,13 @@
 
 - `frontend/src/views/notes/index.vue`：笔记列表来自 `listLoreNotes`（`api/lore.ts`，
   固定 `lore_type_code='note'`）；正文编辑用 WangEditor（`rich`）或 MavonEditor（`markdown`）两种模式。
+- `frontend/src/views/notes/noteContent.ts`：两种模式的正文格式互转（`rich`↔`markdown`）。
+  切换模式时把当前正文转换成目标格式再落盘，避免 HTML 标签漏进 Markdown 编辑器、或 Markdown 原文被当 HTML 渲染。
 - `frontend/src/views/notes/index.vue` 的 `scheduleSave` / `saveNote` / `flushSave`：
   标题与正文走 2 秒防抖自动保存，调用 `POST /lore/save`（带 `lore_ulid` 为更新）；
   切换笔记前先 `flushSave` 落盘。
-- `service/lore_service.go` 的 `Save`：笔记与设定共用同一条存储链路，`lore_type_code='note'`。
+- `service/lore_service.go` 的 `Save`：笔记与设定共用同一条存储链路，`lore_type_code='note'`；
+  `content_mode_code` 随笔记持久化，决定下次打开用哪种编辑器。
 - `service/chat_context.go` 的 `formatLoreBlock`：注入 AI 上下文时跳过 `note` 类型条目。
 
 **验收点**
@@ -535,6 +538,8 @@
 - 笔记内容改动后自动保存，界面显示「保存中 / 已保存 / 未保存 / 失败可重试」状态。
 - 切换笔记时未落盘内容先保存，不丢内容。
 - 笔记不出现在 AI 对话的设定注入块中（私人笔记不进入提示词）。
+- 切换编辑器模式后正文已完成格式转换：Markdown 编辑器里不出现 HTML 标签，
+  富文本编辑器里 Markdown 已被渲染；重新打开该笔记仍停在上次选择的模式。
 
 ---
 

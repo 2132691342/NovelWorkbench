@@ -225,6 +225,10 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 创作笔记复用 `/lore/*`，`lore_type_code` 取 `note`。类型枚举：
 `world` / `rule` / `item` / `place` / `event` / `note`。
 
+`content_mode_code` 标记正文格式（`rich` 富文本 HTML / `markdown` 原文，缺省 `rich`）：
+新建时省略按 `rich` 落库，更新时省略表示保持原值。笔记页切换编辑器模式会把正文
+转换成目标格式并一并保存，因此重新打开笔记时使用的编辑器与上次一致。
+
 ### 6.6 知识库
 
 | 方法 | 路径 | 权限 | 请求 | 响应 | Handler |

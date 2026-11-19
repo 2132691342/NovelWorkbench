@@ -10,7 +10,7 @@
 | 层 | 测什么 | 刻意不测什么 |
 | --- | --- | --- |
 | Go 单元测试（`go test -short`） | 请求生命周期、上下文装配、检索融合、切片算法、索引表迁移、密钥封存、用量聚合等跨步骤链路 | CRUD 字段透传、JSON 序列化回显、常量表查表、仓储 SQL 细节 |
-| 前端单元测试（`npm run test`） | SSE 事件解析这类纯函数链路 | 组件渲染、样式存在性、路由跳转 |
+| 前端单元测试（`npm run test`） | SSE 事件解析、笔记双模式正文转换这类纯函数链路 | 组件渲染、样式存在性、路由跳转 |
 | 类型检查与构建（`npm run build` = `vue-tsc && vite build`） | TypeScript 类型正确性与生产构建通过 | —— |
 | 集成环境验证 | 需要中间件与模型服务的完整业务链路 | 逐个 UI 控件的机械点击 |
 
@@ -80,11 +80,12 @@ npm run test
 
 CI 的 frontend job 执行同一命令，随后再执行 `npm run build`（含 `vue-tsc` 类型检查）。
 
-### 3.2 当前用例清单（共 1 条）
+### 3.2 当前用例清单（共 2 个文件 / 5 条用例）
 
 | 测试文件 | 用例 | 覆盖链路 | 断言要点 |
 | --- | --- | --- | --- |
 | `frontend/src/composables/useSSE.test.ts` | `parseSseBuffer 事件解析链路`（`describe('parseSseBuffer 事件解析链路')` 下的单个 `it`） | SSE 事件解析链路：跨 chunk 断行 → 多事件粘包 → CRLF 兼容 → 非法 JSON 跳过 → 心跳注释忽略 → 尾部半行留存 | 第一段解析出 1 个完整事件并把截断半行留在 `restText`；第二段补全半行后解析出 2 个事件且 `restText` 为空；非法 JSON 行被跳过且不影响后续事件；非 `data:` 前缀行（心跳注释）不产生事件；末尾半行必须完整留存供下一段拼接 |
+| `frontend/src/views/notes/noteContent.test.ts` | `convertNoteContent 笔记正文格式转换`（4 条 `it`） | 创作笔记双模式正文转换：HTML→Markdown、Markdown→HTML、同格式原样返回、空正文 | 富文本转 Markdown 后不残留 HTML 标签且 `<p><br></p>` 清成空串；Markdown 转富文本产出 `<h2>` 等标签；已是目标格式时原样返回；空/空白正文在两种格式下都是空串 |
 
 前端组件渲染与样式存在性一类断言不保留；类型正确性与生产产物由 `npm run build` 保证，
 CI 与镜像构建均执行它。
