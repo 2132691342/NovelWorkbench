@@ -44,6 +44,8 @@ jobs:
           cache: npm
       - name: Install
         run: npm ci
+      - name: Test（纯逻辑单元测试）
+        run: npm run test
       - name: Type Check & Build
         run: npm run build
 

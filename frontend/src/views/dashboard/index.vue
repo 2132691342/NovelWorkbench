@@ -1,4 +1,6 @@
 <script setup lang="ts">
+
+// 仪表盘页：字数与项目统计卡、趋势图与项目管理。
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'

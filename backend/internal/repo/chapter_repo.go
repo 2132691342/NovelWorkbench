@@ -1,3 +1,5 @@
+// 本文件实现章节与章节快照的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // ChapterRepo 章节与章节快照持久化仓储。
 type ChapterRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewChapterRepo 构造章节仓储。

@@ -1,3 +1,5 @@
+// 应用状态：界面语言与侧栏折叠状态，均持久化到 localStorage。
+
 import { defineStore } from 'pinia'
 import { applyLocale } from '@/i18n'
 import {

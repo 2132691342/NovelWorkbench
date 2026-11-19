@@ -1,3 +1,5 @@
+// 本文件实现请求 ID、日志、panic 恢复、方法白名单与鉴权中间件。
+
 package pkg
 
 import (

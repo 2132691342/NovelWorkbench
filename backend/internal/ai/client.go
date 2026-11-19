@@ -56,10 +56,10 @@ type providerModels struct {
 
 // Client 模型网关：按供应商规格构造/复用 eino 对话组件，并统一上报用量。
 type Client struct {
-	mu     sync.RWMutex
-	cache  map[string]*providerModels
-	usage  UsageRecorder
-	logger func(format string, args ...any)
+	mu     sync.RWMutex                     // 模型实例互斥锁
+	cache  map[string]*providerModels       // 供应商模型实例缓存
+	usage  UsageRecorder                    // 用量上报器
+	logger func(format string, args ...any) // 日志输出函数
 }
 
 // NewClient 构造模型网关客户端（模型实例按供应商规格惰性构造并缓存）。

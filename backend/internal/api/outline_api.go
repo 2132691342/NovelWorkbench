@@ -1,3 +1,5 @@
+// 本文件实现创作规划模块的 HTTP 处理器：大纲节点树与场景卡维护。
+
 package api
 
 import (

@@ -1,3 +1,5 @@
+// 本文件实现角色与用户角色关联的持久化仓储。
+
 package repo
 
 import (
@@ -12,7 +14,7 @@ import (
 
 // RoleRepo 角色与用户-角色关联持久化仓储。
 type RoleRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewRoleRepo 构造角色仓储。

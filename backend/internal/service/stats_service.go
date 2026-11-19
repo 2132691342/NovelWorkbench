@@ -1,3 +1,5 @@
+// 本文件实现数据总览业务：项目统计、字数汇总与趋势组装。
+
 package service
 
 import (
@@ -13,8 +15,8 @@ const trendDayCount = 30
 
 // StatsService 数据总览业务：项目/字数/AI 字数汇总与近 30 天趋势。
 type StatsService struct {
-	statsRepo   *repo.StatsRepo
-	projectRepo *repo.ProjectRepo
+	statsRepo   *repo.StatsRepo   // 统计仓储
+	projectRepo *repo.ProjectRepo // 项目仓储（归属校验）
 }
 
 // NewStatsService 构造数据总览服务。

@@ -1,3 +1,5 @@
+// 本文件实现角色卡与角色关系边的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // CharacterRepo 角色卡与角色关系边持久化仓储。
 type CharacterRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewCharacterRepo 构造角色仓储。

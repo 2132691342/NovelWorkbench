@@ -2,8 +2,9 @@ package pkg
 
 import "testing"
 
-// TestSealSecretRoundTrip 覆盖密钥封存链路：同材料可解、错材料与坏密文必须失败。
-func TestSealSecretRoundTrip(t *testing.T) {
+// TestSecretSealOpenChain 覆盖供应商密钥封存链路：同材料可解、换材料/坏密文/空材料必须失败、nonce 随机。
+// 密钥材料变更即历史密文全部不可解，因此这几条失败路径必须一起守住。
+func TestSecretSealOpenChain(t *testing.T) {
 	sealed, err := SealSecret("sk-test-1234567890", "jwt-secret-material")
 	if err != nil {
 		t.Fatalf("SealSecret error = %v", err)
@@ -27,19 +28,12 @@ func TestSealSecretRoundTrip(t *testing.T) {
 	if _, err := SealSecret("x", ""); err == nil {
 		t.Fatal("空材料必须失败")
 	}
-}
 
-// TestSealSecretRandomized 同一明文两次封存结果必须不同（随机 nonce）。
-func TestSealSecretRandomized(t *testing.T) {
-	first, err := SealSecret("same-plain", "material")
+	second, err := SealSecret("sk-test-1234567890", "jwt-secret-material")
 	if err != nil {
 		t.Fatalf("SealSecret error = %v", err)
 	}
-	second, err := SealSecret("same-plain", "material")
-	if err != nil {
-		t.Fatalf("SealSecret error = %v", err)
-	}
-	if first == second {
+	if second == sealed {
 		t.Fatal("两次封存结果必须不同（nonce 随机）")
 	}
 }

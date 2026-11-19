@@ -1,3 +1,5 @@
+// 本文件实现统一响应包络的输出与业务码到 HTTP 状态的映射。
+
 package pkg
 
 import (

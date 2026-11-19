@@ -1,3 +1,5 @@
+// 本文件实现供应商密钥的 AES-256-GCM 封存与解封。
+
 package pkg
 
 import (

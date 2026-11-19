@@ -1,3 +1,5 @@
+// Axios 客户端：统一注入 Bearer Token、解包响应包络、归一错误并弹出提示。
+
 import axios, { AxiosError, type AxiosRequestConfig, type AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
 import i18n from '@/i18n'

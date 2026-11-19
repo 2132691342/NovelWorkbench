@@ -1,3 +1,5 @@
+// 本文件实现角色模块的 HTTP 处理器：角色卡 CRUD、关系图谱与关系边维护。
+
 package api
 
 import (

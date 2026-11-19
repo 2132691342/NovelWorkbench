@@ -1,3 +1,5 @@
+// 本文件实现模型供应商业务：启动播种、CRUD、默认切换、密钥解密与连通性测试。
+
 package service
 
 import (
@@ -25,10 +27,10 @@ type ProviderSeed struct {
 
 // ModelProviderService 模型供应商业务：CRUD、默认切换、连通性测试与调用规格解析。
 type ModelProviderService struct {
-	providerRepo *repo.ModelProviderRepo
-	gateway      *ai.Client
-	secretKey    string        // 密钥封存材料（取 JWT 密钥派生）
-	timeout      time.Duration // 默认调用超时
+	providerRepo *repo.ModelProviderRepo // 供应商仓储
+	gateway      *ai.Client              // 模型网关（流式调用与用量上报）
+	secretKey    string                  // 密钥封存材料（取 JWT 密钥派生）
+	timeout      time.Duration           // 默认调用超时
 }
 
 // NewModelProviderService 构造模型供应商服务。

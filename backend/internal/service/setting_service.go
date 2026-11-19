@@ -1,3 +1,5 @@
+// 本文件实现应用配置业务：默认配置播种、白名单查询与更新。
+
 package service
 
 import (
@@ -17,7 +19,7 @@ var settingDefaultList = []domain.AppSettingDO{
 
 // SettingService 应用配置业务：默认值播种、查询与更新（值须为正整数）。
 type SettingService struct {
-	settingRepo *repo.SettingRepo
+	settingRepo *repo.SettingRepo // 应用配置仓储
 }
 
 // NewSettingService 构造应用配置服务。

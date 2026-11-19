@@ -1,3 +1,5 @@
+// 本文件实现模型用量业务：内存缓冲累加、定期落库与区间聚合查询。
+
 package service
 
 import (
@@ -16,8 +18,8 @@ const usageFlushInterval = 5 * time.Second
 
 // ModelUsageService 模型用量业务：内存缓冲累加 → 定期落库 → 区间聚合查询。
 type ModelUsageService struct {
-	usageRepo *repo.ModelUsageRepo
-	mu        sync.Mutex
+	usageRepo *repo.ModelUsageRepo                // 用量仓储
+	mu        sync.Mutex                          // 缓冲互斥锁
 	pending   map[string]*domain.ModelUsageStatDO // 维度键 → 待落库累加器
 }
 

@@ -1,3 +1,5 @@
+// 本文件实现 PostgreSQL 连接构造与 GORM 命名策略归一。
+
 package infra
 
 import (

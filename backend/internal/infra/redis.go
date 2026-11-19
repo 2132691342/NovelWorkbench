@@ -1,3 +1,5 @@
+// 本文件实现 Redis 连接构造与探活。
+
 package infra
 
 import (

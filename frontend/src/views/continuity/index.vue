@@ -1,4 +1,6 @@
 <!-- 连续性看板：时间事实复核、伏笔钩子跟踪、章节摘要管理三个页签。 -->
+// 连续性看板页：三个页签分别展示时序事实、伏笔钩子与章节摘要。
+
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'

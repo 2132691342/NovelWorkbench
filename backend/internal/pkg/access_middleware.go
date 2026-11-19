@@ -1,3 +1,5 @@
+// 本文件实现权限校验与审计落库两个 HTTP 中间件。
+
 package pkg
 
 import (

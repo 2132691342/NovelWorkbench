@@ -1,3 +1,5 @@
+// 本文件实现章节业务：章节 CRUD、快照留档/回滚与字数账目维护。
+
 package service
 
 import (
@@ -13,10 +15,10 @@ import (
 
 // ChapterService 章节业务：章节 CRUD、快照留档/回滚与字数账目维护。
 type ChapterService struct {
-	chapterRepo *repo.ChapterRepo
-	volumeRepo  *repo.VolumeRepo
-	projectRepo *repo.ProjectRepo
-	db          *gorm.DB
+	chapterRepo *repo.ChapterRepo // 章节仓储
+	volumeRepo  *repo.VolumeRepo  // 卷仓储
+	projectRepo *repo.ProjectRepo // 项目仓储（归属校验）
+	db          *gorm.DB          // 事务入口
 }
 
 // NewChapterService 构造章节服务。

@@ -1,3 +1,5 @@
+// 本文件实现模型用量模块的 HTTP 处理器：用量总览、趋势与分布。
+
 package api
 
 import (

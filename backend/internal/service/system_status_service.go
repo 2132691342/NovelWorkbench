@@ -1,3 +1,5 @@
+// 本文件实现系统运行状态业务：并行探测各依赖并给出 AI 能力结论。
+
 package service
 
 import (
@@ -25,9 +27,9 @@ type SystemProbeDeps struct {
 
 // SystemStatusService 系统运行状态业务：并行探测外部依赖并汇总 AI 对话能力。
 type SystemStatusService struct {
-	deps        SystemProbeDeps
-	providerSvc *ModelProviderService
-	startedAt   time.Time
+	deps        SystemProbeDeps       // 依赖探针集合
+	providerSvc *ModelProviderService // 供应商服务（模型选择）
+	startedAt   time.Time             // 进程启动时刻
 }
 
 // NewSystemStatusService 构造运行状态服务。

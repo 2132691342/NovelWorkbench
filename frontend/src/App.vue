@@ -1,4 +1,6 @@
 <script setup lang="ts">
+
+// 应用根组件：装配 Element Plus 国际化与主题，负责全局过渡与布局渲染。
 import { computed } from 'vue'
 import type { Language } from 'element-plus/es/locale'
 import zhCnLocale from 'element-plus/es/locale/lang/zh-cn'

@@ -1,3 +1,5 @@
+// 中文文案（工作台）：写作台、创作规划、连续性与设定相关文案。
+
 export default {
   workspace: {
     backToDashboard: '返回仪表盘',

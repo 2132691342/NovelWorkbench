@@ -1,3 +1,5 @@
+// 本文件实现数据总览的统计查询。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // StatsRepo 数据总览统计查询仓储（word_count_stats 联 projects 做归属过滤）。
 type StatsRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewStatsRepo 构造统计仓储。

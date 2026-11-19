@@ -1,3 +1,5 @@
+// 本文件实现异步任务留痕的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // JobRepo 异步任务留痕仓储（RabbitMQ 消费的落库凭据）。
 type JobRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewJobRepo 构造任务仓储。

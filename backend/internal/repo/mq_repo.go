@@ -1,3 +1,5 @@
+// 本文件实现 RabbitMQ 索引任务的投递与消费。
+
 package repo
 
 import (
@@ -12,8 +14,8 @@ import (
 
 // MQRepo RabbitMQ 消息仓储（知识库索引任务投递与消费）。
 type MQRepo struct {
-	conn  *amqp091.Connection
-	queue string
+	conn  *amqp091.Connection // AMQP 连接
+	queue string              // 队列名
 }
 
 // NewMQRepo 构造消息仓储。

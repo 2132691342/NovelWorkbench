@@ -1,3 +1,5 @@
+// 路由表与守卫：定义页面路由与登录鉴权守卫。
+
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { readToken } from '@/utils/storage'
 

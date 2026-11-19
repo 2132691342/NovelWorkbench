@@ -1,3 +1,5 @@
+// 本文件实现用户管理业务：列表、创建、更新、删除、重置密码与管理员引导。
+
 package service
 
 import (
@@ -12,8 +14,8 @@ import (
 
 // UserAdminService 用户管理业务：列表、创建、更新、删除、重置密码、角色挂载、启动期管理员引导。
 type UserAdminService struct {
-	userRepo *repo.UserRepo
-	roleRepo *repo.RoleRepo
+	userRepo *repo.UserRepo // 用户仓储
+	roleRepo *repo.RoleRepo // 角色仓储
 }
 
 // NewUserAdminService 构造用户管理服务。

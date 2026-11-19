@@ -1,4 +1,6 @@
 <!-- 连续性看板三个编辑弹窗：时间事实、伏笔钩子、章节摘要。 -->
+// 连续性看板对话框：时间事实、伏笔钩子与章节摘要的新建/编辑表单。
+
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { ElMessage, type FormInstance } from 'element-plus'

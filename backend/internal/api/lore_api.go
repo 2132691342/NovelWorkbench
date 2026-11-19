@@ -1,3 +1,5 @@
+// 本文件实现世界观设定模块的 HTTP 处理器：设定条目 CRUD 与列表查询。
+
 package api
 
 import (

@@ -1,3 +1,5 @@
+// 本文件实现斜杠命令业务：内置技能播种、命令 CRUD 与正文解析。
+
 package service
 
 import (
@@ -12,7 +14,7 @@ import (
 
 // SlashService 斜杠命令业务：内置技能播种、命令 CRUD 与正文解析。
 type SlashService struct {
-	slashRepo *repo.SlashRepo
+	slashRepo *repo.SlashRepo // 斜杠命令仓储
 }
 
 // NewSlashService 构造斜杠命令服务。

@@ -1,3 +1,5 @@
+// 本文件实现角色业务：角色卡 CRUD、关系图谱与关系边维护。
+
 package service
 
 import (
@@ -12,9 +14,9 @@ import (
 
 // CharacterService 角色业务：角色卡 CRUD、关系图谱与关系边维护。
 type CharacterService struct {
-	characterRepo *repo.CharacterRepo
-	projectRepo   *repo.ProjectRepo
-	db            *gorm.DB
+	characterRepo *repo.CharacterRepo // 角色仓储
+	projectRepo   *repo.ProjectRepo   // 项目仓储（归属校验）
+	db            *gorm.DB            // 事务入口
 }
 
 // NewCharacterService 构造角色服务。

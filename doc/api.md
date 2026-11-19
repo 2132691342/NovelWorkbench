@@ -1,12 +1,15 @@
 # API 契约
 
+本文描述 NovelWorkbench 当前对外暴露的接口。路径以 `backend/internal/api/router.go`
+的注册为准，请求与响应结构以 `backend/internal/domain` 为准。
+
 ## 1. 通用约定
 
 | 项 | 约定 |
 | --- | --- |
 | 基础路径 | `/api/v1` |
 | 方法 | 仅 `GET` / `POST`；`OPTIONS` 仅用于 CORS 预检 |
-| 编码 | `application/json; charset=utf-8` |
+| 编码 | `application/json; charset=utf-8`（上传为 `multipart/form-data`） |
 | 鉴权 | `Authorization: Bearer <access_token>` |
 | 链路 ID | 请求头 `X-Request-ID`，响应包络 `trace_id` |
 | 业务码 | 字符串：`SUCCESS` 或 `ERR_*` |
@@ -36,25 +39,41 @@
 }
 ```
 
-业务码到 HTTP 状态映射集中在 `pkg.HTTPStatusForCode`：参数错误 400、未登录 401、无权限 403、不存在 404、冲突 409、AI 供应商异常 502、基础设施异常 503、内部错误 500。
+业务码到 HTTP 状态的映射集中在 `pkg.HTTPStatusForCode`：
+
+| 业务码 | HTTP 状态 |
+| --- | --- |
+| `SUCCESS` | 200 |
+| `ERR_INVALID_PARAM` | 400 |
+| `ERR_UNAUTHORIZED` | 401 |
+| `ERR_FORBIDDEN` | 403 |
+| `ERR_NOT_FOUND` | 404 |
+| `ERR_CONFLICT` | 409 |
+| `ERR_BIZ_FAILED` | 400 |
+| `ERR_AI_PROVIDER` | 502 |
+| `ERR_STORAGE` | 503 |
+| `ERR_INTERNAL` | 500 |
 
 ## 2. 健康检查
 
 | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- |
-| GET | `/health` | 否 | 存活探针，返回 `status=up` |
-| GET | `/ready` | 否 | 就绪探针，Ping PostgreSQL，失败返回 `ERR_STORAGE` |
+| GET | `/health` | 否 | 存活探针，返回 `{"status":"up"}` |
+| GET | `/ready` | 否 | 就绪探针，Ping 关键依赖，失败返回 `ERR_STORAGE` |
 
 ## 3. 认证
 
 | 方法 | 路径 | 请求 | 响应 data |
 | --- | --- | --- | --- |
-| POST | `/api/v1/auth/register` | `UserRegisterREQ` | `UserVO` |
-| POST | `/api/v1/auth/login` | `UserLoginREQ` | `UserLoginDTO` |
-| GET | `/api/v1/auth/profile` | 无 | `UserVO` |
-| POST | `/api/v1/auth/logout` | 无 | `null` |
+| POST | `/auth/register` | `UserRegisterREQ` | `UserVO` |
+| POST | `/auth/login` | `UserLoginREQ` | `UserLoginDTO` |
+| GET | `/auth/profile` | 无 | `UserVO` |
+| POST | `/auth/logout` | 无 | `null` |
 
-`UserLoginDTO` 含 `access_token`、`expires_in_sec`、`user_vo`。用户 `role_codes` 由用户角色关联查出，前端据此显示管理入口。
+`/auth/register` 与 `/auth/login` 由鉴权中间件的免鉴权白名单放行。
+
+`UserLoginDTO` 含 `access_token`、`expires_in_sec`、`user_vo`。`UserVO.role_codes`
+由用户角色关联查出，前端据此显示管理入口。
 
 ## 4. 项目与目录
 
@@ -70,7 +89,8 @@
 | POST | `/volume/update` | `VolumeUpdateREQ` | `VolumeVO` |
 | POST | `/volume/delete` | `VolumeDeleteREQ` | `null` |
 
-`ProjectTreeVO` 返回卷节点与每卷下的章节摘要，工作台左侧目录树直接消费。删除卷时由 service 控制章节删除范围，避免跨项目误删。
+`ProjectTreeVO` 含 `project_vo` 与 `volume_list`（卷节点内嵌章节摘要），
+写作工作台左侧目录树直接消费。删除项目时由 service 编排级联删除，不波及其他项目。
 
 ## 5. 章节与快照
 
@@ -84,23 +104,26 @@
 | POST | `/chapter/snapshot/create` | `ChapterSnapshotCreateREQ` | `ChapterSnapshotVO` |
 | POST | `/chapter/snapshot/restore` | `ChapterSnapshotRestoreREQ` | `ChapterDetailVO` |
 
-章节更新是正文整体覆盖；字数在服务端计算，客户端不可伪造。快照用于 AI 写入前留档与人工回滚。
+章节更新是正文整体覆盖：正文与梗概为指针字段，缺省表示不改，空串表示清空。
+字数在服务端计算，客户端不可伪造。快照用于 AI 写入前留档与人工回滚，
+回滚前自动为当前正文再留一份快照。
 
 ## 6. 角色、设定与笔记
 
 | 方法 | 路径 | 请求 | 响应 data |
 | --- | --- | --- | --- |
-| POST | `/character/save` | `CharacterSaveREQ` | `CharacterVO` |
+| POST | `/character/save` | `CharacterREQ` | `CharacterVO` |
 | POST | `/character/delete` | `CharacterDeleteREQ` | `null` |
 | POST | `/character/list` | `CharacterListREQ` | `[]CharacterVO` |
 | GET | `/character/graph` | `project_ulid` | `CharacterGraphVO` |
-| POST | `/character/relation/save` | `CharacterRelationSaveREQ` | `CharacterRelationVO` |
+| POST | `/character/relation/save` | `CharacterRelationREQ` | `CharacterEdgeVO` |
 | POST | `/character/relation/delete` | `CharacterRelationDeleteREQ` | `null` |
-| POST | `/lore/save` | `LoreSaveREQ` | `LoreVO` |
+| POST | `/lore/save` | `LoreREQ` | `LoreVO` |
 | POST | `/lore/delete` | `LoreDeleteREQ` | `null` |
 | POST | `/lore/list` | `LoreListREQ` | `[]LoreVO` |
 
-笔记为前端本地富文本编辑 + 后端按项目持久化；私人笔记不注入 AI 上下文。
+创作笔记复用 `/lore/*` 接口，`lore_type_code` 固定为 `note`；
+`note` 类型不注入 AI 上下文，也不参与知识库检索。
 
 ## 7. AI 对话
 
@@ -116,81 +139,91 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `project_ulid` | string | 所属项目 |
-| `session_ulid` | string | 会话 ULID |
-| `content_text` | string | 用户输入 |
-| `chapter_ulid` | string | 当前章节，可空 |
+| `project_ulid` | string | 所属项目（必填） |
+| `session_ulid` | string | 会话 ULID，空则自动创建 |
+| `content_text` | string | 用户输入正文（必填） |
 | `skill_code` | string | 技能编码，可空；正文以 `/xxx` 开头也可命中 |
-| `ref_doc_ulid_list` | []string | 显式引用的知识库文档 |
-| `ref_chapter_ulid_list` | []string | 显式引用的章节 |
-| `history_count` | int | 注入历史条数，默认 5 |
-| `provider_ulid` | string | 指定供应商，空为默认 |
-| `retrieve_flag` | bool | 是否执行知识库检索 |
+| `ref_doc_ulid_list` | []string | @引用的知识库文档 |
+| `ref_chapter_ulid_list` | []string | @引用的章节，首项视为当前章 |
+| `ref_message_ulid_list` | []string | 显式引用的历史消息，不受条数限制 |
+| `history_count` | int | 注入历史条数，0 用应用配置 |
+| `provider_ulid` | string | 指定供应商，空用默认供应商 |
 
-SSE 事件：
+SSE 事件（`ChatStreamEventDTO`）：
 
-| event | data | 说明 |
-| --- | --- | --- |
-| `chunk` | `ChatStreamEventDTO` | 增量文本，`seq` 单调递增 |
-| `done` | `ChatStreamEventDTO` | 完整回复、消息 ULID、召回依据 |
-| `error` | `ChatStreamEventDTO` | 错误码与说明 |
+| `event_type` | 说明 |
+| --- | --- |
+| `chunk` | 增量文本，`seq` 单调递增 |
+| `done` | 完整回复、助手消息 ULID、召回依据 `reference_list` |
+| `error` | 错误信息 `error_message` |
 
-客户端断开会取消上游模型调用；流结束后补记真实用量。
+客户端断开会取消上游模型调用；生成失败不落库助手消息，只保留用户消息作为对话痕迹。
 
 ## 8. 知识库
 
 | 方法 | 路径 | 请求 | 响应 data |
 | --- | --- | --- | --- |
-| POST | `/knowledge/upload` | multipart：`project_ulid`、`file` | `KnowledgeDocumentVO` |
+| POST | `/knowledge/upload` | multipart：`project_ulid`、`doc_name`、`file` | `KnowledgeDocumentVO` |
 | POST | `/knowledge/list` | `KnowledgeListREQ` | `PageDTO<KnowledgeDocumentVO>` |
 | POST | `/knowledge/delete` | `KnowledgeDeleteREQ` | `null` |
-| POST | `/knowledge/search` | `KnowledgeSearchREQ` | `KnowledgeSearchVO` |
+| POST | `/knowledge/search` | `KnowledgeSearchREQ` | `KnowledgeSearchDTO` |
 | POST | `/knowledge/reindex` | `KnowledgeReindexREQ` | `null` |
-| GET | `/knowledge/chunk/list` | `doc_ulid` | `[]KnowledgeChunkVO` |
-| GET | `/knowledge/content` | `doc_ulid` | 文档下载/预览内容 |
+| GET | `/knowledge/chunk/list` | `doc_ulid` | `PageDTO<KnowledgeChunkVO>` |
+| GET | `/knowledge/content` | `doc_ulid` | 文档原文（前端预览） |
 
-`KnowledgeSearchREQ` 使用 `query_text`、`project_ulid`、可选 `doc_ulid_list`、`top_k`、`rerank_flag`。检索模式仅有关键词与混合词法通道；不存在向量模式。响应带 `trace` 字段，说明查询词、候选数、选中 ID 与来源通道。
+`KnowledgeSearchREQ` 字段：`project_ulid`（必填）、`keyword_text`（检索文本）、
+`search_mode`（`keyword`/`hybrid`，默认 hybrid，未知值按 keyword 处理）、
+`top_k_count`（1–20，默认 6）、`doc_ulid_list`（限定文档范围，空为全部）。
+不存在向量模式。
 
-索引状态：`pending`、`indexing`、`indexed`、`failed`。前端每 3 秒轮询列表，直到状态稳定。
+`KnowledgeSearchDTO` 含 `result_list` 与 `trace`。`trace` 说明查询词、Manticore 表达式、
+候选数、是否重排、重排说明、最终入选切片 ULID 与主检索通道。
 
-## 8.1 创作规划与连续性
+索引状态：`pending`、`indexing`、`indexed`、`failed`。
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| POST | `/outline/node/save` | 创建/更新大纲节点 |
-| POST | `/outline/node/delete` | 删除无子节点的节点 |
-| POST | `/outline/list` | 按项目查询大纲树 |
-| POST | `/outline/scene/save` | 创建/更新场景卡 |
-| POST | `/outline/scene/delete` | 删除场景卡 |
-| POST | `/outline/scene/list` | 按项目或节点查询场景卡 |
-| POST | `/continuity/fact/save` | 登记候选事实 |
-| POST | `/continuity/fact/review` | 审核事实（确认/取代/失效） |
-| POST | `/continuity/fact/list` | 按项目查询事实 |
-| POST | `/continuity/hook/save` | 创建/更新伏笔 |
-| POST | `/continuity/hook/list` | 按项目查询伏笔 |
-| POST | `/continuity/summary/save` | 保存章节摘要 |
-| POST | `/continuity/summary/list` | 按项目查询章节摘要 |
+## 9. 创作规划与连续性
 
-所有接口都要求 `project_ulid`，service 层做项目归属校验；详细字段以 `domain/outline.go` 与 `domain/continuity.go` 为准。
+| 方法 | 路径 | 请求 | 说明 |
+| --- | --- | --- | --- |
+| POST | `/outline/node/save` | `OutlineNodeREQ` | 创建/更新大纲节点 |
+| POST | `/outline/node/delete` | `OutlineNodeDeleteREQ` | 删除无子节点的节点 |
+| POST | `/outline/list` | `OutlineTreeREQ` | 按项目查询大纲树 |
+| POST | `/outline/scene/save` | `DetailedSceneREQ` | 创建/更新场景卡 |
+| POST | `/outline/scene/delete` | `DetailedSceneDeleteREQ` | 删除场景卡 |
+| POST | `/outline/scene/list` | `DetailedSceneListREQ` | 按项目或节点查询场景卡 |
+| POST | `/continuity/fact/save` | `TemporalFactSaveREQ` | 登记/更新候选事实 |
+| POST | `/continuity/fact/review` | `TemporalFactReviewREQ` | 审核事实（确认/取代/过期） |
+| POST | `/continuity/fact/list` | `TemporalFactListREQ` | 按项目查询事实 |
+| POST | `/continuity/hook/save` | `ForeshadowHookSaveREQ` | 创建/更新伏笔 |
+| POST | `/continuity/hook/list` | `ForeshadowHookListREQ` | 按项目查询伏笔 |
+| POST | `/continuity/summary/save` | `ChapterSummarySaveREQ` | 保存章节摘要 |
+| POST | `/continuity/summary/list` | `ChapterSummaryListREQ` | 按项目查询章节摘要 |
 
-## 9. 模型与技能
+所有接口都要求 `project_ulid`，service 层做项目归属校验。
+字段细节以 `domain/outline.go` 与 `domain/continuity.go` 为准。
+
+## 10. 模型与技能
 
 | 方法 | 路径 | 请求 | 响应 data |
 | --- | --- | --- | --- |
-| GET | `/model/capability` | 无 | `ModelCapabilityVO`（chat_ready） |
-| GET | `/model/chat_options` | 无 | `[]ModelChatOptionVO` |
+| GET | `/model/capability` | 无 | `ModelCapabilityVO` |
+| GET | `/model/chat_options` | 无 | `{capability_vo, provider_list}` |
 | POST | `/model/provider/list` | 无 | `[]ModelProviderVO` |
-| POST | `/model/provider/save` | `ModelProviderSaveREQ` | `ModelProviderVO` |
+| POST | `/model/provider/save` | `ModelProviderREQ` | `ModelProviderVO` |
 | POST | `/model/provider/delete` | `ModelProviderDeleteREQ` | `null` |
-| POST | `/model/provider/test` | `ModelProviderTestREQ` | `ModelProviderProbeVO` |
+| POST | `/model/provider/test` | `ModelProviderTestREQ` | `ModelProviderTestDTO` |
 | GET | `/slash/list` | `enabled_only` | `[]SlashCommandVO` |
 | POST | `/slash/save` | `SlashCommandREQ` | `SlashCommandVO` |
 | POST | `/slash/delete` | `SlashDeleteREQ` | `null` |
 | POST | `/slash/parse` | `SlashParseREQ` | `SlashParseDTO` |
 
-供应商协议仅 `openai` / `anthropic`。密钥保存时用 AES-256-GCM 加密，列表只返回掩码；测试接口只返回对话通道结论，不暴露密钥。
+供应商协议仅 `openai` / `anthropic`。密钥保存时用 AES-256-GCM 加密，
+列表只返回掩码 `api_key_masked`；`api_key_text` 留空表示保持原值。
 
-## 10. 系统管理与运维
+`/model/capability` 与 `/model/chat_options` 对所有登录用户开放，
+供 AI 面板展示可用供应商；供应商写操作收口到 `system:model:manage` 权限。
+
+## 11. 系统管理与运维
 
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
@@ -209,10 +242,15 @@ SSE 事件：
 | POST | `/setting/update` | 登录用户 | 更新白名单配置 |
 | GET | `/stats/overview` | 登录用户 | 字数与项目统计 |
 
-## 11. 前端消费规则
+运行时配置白名单：`chat_history_count`（AI 对话历史注入条数）、
+`rag_top_k`（RAG 检索默认召回条数）。值必须为正整数，非白名单键直接拒绝。
+
+## 12. 前端消费规则
 
 - Axios 响应拦截器统一解包 `data`；`resp_code !== SUCCESS` 时 reject `resp_message`。
-- `ERR_UNAUTHORIZED` 清除本地 token 并跳转登录页。
+- `ERR_UNAUTHORIZED` 清除本地 token 与用户信息并跳转登录页。
+- 同一错误只提示一次（`NWApiError.notified_flag` 标记）。
 - 表单提交期间按钮进入 LOADING 态，避免重复提交。
 - 所有写操作在成功或失败后给出可见反馈；错误页提供重试入口。
-- SSE 使用独立组合式函数管理 `EventSource`/fetch 流、取消与重连状态。
+- SSE 使用独立组合式函数（fetch + ReadableStream）管理流、取消与解析，
+  不走普通响应拦截。

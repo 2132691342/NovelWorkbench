@@ -1,3 +1,5 @@
+// Package main 装配并启动 NovelWorkbench HTTP 服务：加载配置、连接基础设施、构建仓储与服务、注册路由、监听端口并优雅关闭。
+
 package main
 
 import (

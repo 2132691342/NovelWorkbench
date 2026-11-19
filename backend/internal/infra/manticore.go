@@ -1,3 +1,5 @@
+// 本文件实现 Manticore 全文检索的 HTTP SQL 客户端（连接构造与语句执行）。
+
 package infra
 
 import (

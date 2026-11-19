@@ -1,3 +1,5 @@
+// 本文件实现 AI 对话模块的 HTTP 处理器：SSE 流式发送、会话管理与历史查询。
+
 package api
 
 import (
@@ -101,8 +103,8 @@ func (a *ChatAPI) SessionDelete(c *gin.Context) {
 
 // sseChatWriter 将流式事件写为 text/event-stream：事件行 `data: {json}`，心跳为 `: ping` 注释行。
 type sseChatWriter struct {
-	ctx     *gin.Context
-	started bool // SSE 响应头是否已提交（提交后失败只能随流下发）
+	ctx     *gin.Context // Gin 上下文
+	started bool         // SSE 响应头是否已提交（提交后失败只能随流下发）
 }
 
 // Event 输出一条流式事件并刷新缓冲。

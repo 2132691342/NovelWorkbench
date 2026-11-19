@@ -1,3 +1,5 @@
+// 本文件实现认证业务：注册、登录、当前用户与登出吊销。
+
 package service
 
 import (
@@ -13,10 +15,10 @@ import (
 
 // AuthService 认证业务：注册、登录、用户信息、登出吊销。
 type AuthService struct {
-	userRepo   *repo.UserRepo
-	roleRepo   *repo.RoleRepo
-	signer     *pkg.JWTSigner
-	tokenStore pkg.TokenStore
+	userRepo   *repo.UserRepo // 用户仓储
+	roleRepo   *repo.RoleRepo // 角色仓储
+	signer     *pkg.JWTSigner // 令牌签发器
+	tokenStore pkg.TokenStore // 令牌吊销存储
 }
 
 // NewAuthService 构造认证服务。

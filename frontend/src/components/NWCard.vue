@@ -1,4 +1,6 @@
 <script setup lang="ts">
+
+// 通用卡片组件：提供统一的容器边框、圆角、阴影与标题插槽。
 import NWLoading from '@/components/NWLoading.vue'
 
 withDefaults(

@@ -1,10 +1,11 @@
+// 本文件实现 AI 对话业务：会话管理、上下文装配、流式生成与消息落库。
+
 package service
 
 import (
 	"context"
 	"errors"
 	"io"
-
 	"strconv"
 	"strings"
 	"time"
@@ -35,10 +36,10 @@ type ChatStreamWriter interface {
 
 // chatEventWriter 流式事件封装：seq 从 1 单调递增，统一封装事件体。
 type chatEventWriter struct {
-	writer      ChatStreamWriter
-	sessionULID string
-	messageULID string
-	seq         int64
+	writer      ChatStreamWriter // SSE 输出实现
+	sessionULID string           // 会话 ULID
+	messageULID string           // 助手消息 ULID
+	seq         int64            // 事件序号（单调递增）
 }
 
 // emit 输出一条流式事件（reference_list 缺省为空数组）。
@@ -66,18 +67,18 @@ type ChatConfig struct {
 
 // ChatService AI 对话业务：会话管理、上下文装配、流式生成与消息落库。
 type ChatService struct {
-	chatRepo         *repo.ChatRepo
-	projectRepo      *repo.ProjectRepo
-	chapterRepo      *repo.ChapterRepo
-	characterRepo    *repo.CharacterRepo
-	knowledgeRepo    *repo.KnowledgeRepo
-	settingRepo      *repo.SettingRepo
-	slashService     *SlashService
-	knowledgeService *KnowledgeService
-	providerSvc      *ModelProviderService
-	aiClient         *ai.Client
-	db               *gorm.DB
-	config           ChatConfig
+	chatRepo         *repo.ChatRepo        // 会话与消息仓储
+	projectRepo      *repo.ProjectRepo     // 项目仓储（归属校验）
+	chapterRepo      *repo.ChapterRepo     // 章节仓储
+	characterRepo    *repo.CharacterRepo   // 角色仓储
+	knowledgeRepo    *repo.KnowledgeRepo   // 知识库仓储
+	settingRepo      *repo.SettingRepo     // 应用配置仓储
+	slashService     *SlashService         // 斜杠命令服务（技能解析）
+	knowledgeService *KnowledgeService     // 知识库服务（RAG 召回）
+	providerSvc      *ModelProviderService // 供应商服务（模型选择）
+	aiClient         *ai.Client            // 模型网关（流式调用与用量上报）
+	db               *gorm.DB              // 事务入口
+	config           ChatConfig            // 对话链路参数
 }
 
 // NewChatService 构造对话服务。

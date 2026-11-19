@@ -1,3 +1,5 @@
+// 认证状态：访问令牌与当前用户信息，持久化并提供登录/注册/登出动作。
+
 import { defineStore } from 'pinia'
 import { get, post } from '@/api/http'
 import type { NWLoginResultVo, NWUserVo } from '@/api/contracts'

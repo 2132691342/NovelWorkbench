@@ -1,3 +1,5 @@
+// 本文件实现卷的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // VolumeRepo 卷持久化仓储。
 type VolumeRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewVolumeRepo 构造卷仓储。

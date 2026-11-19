@@ -1,3 +1,5 @@
+// 本文件提供全局结构化日志器（启动期注入，未注入时静默）。
+
 package pkg
 
 import "go.uber.org/zap"

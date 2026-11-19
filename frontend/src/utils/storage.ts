@@ -1,3 +1,5 @@
+// 本地存储封装：访问令牌、用户信息、语言与项目选中态的读写。
+
 import type { NWUserVo } from '@/api/contracts'
 
 // 本地存储键名（token、用户信息、界面偏好）

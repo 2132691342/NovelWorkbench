@@ -1,3 +1,5 @@
+// 本文件实现创作规划业务：大纲节点树与场景卡管理（含成环检测）。
+
 package service
 
 import (
@@ -11,8 +13,8 @@ import (
 
 // OutlineService 创作规划业务：大纲节点树与详细场景卡片管理。
 type OutlineService struct {
-	outlineRepo *repo.OutlineRepo
-	projectRepo *repo.ProjectRepo
+	outlineRepo *repo.OutlineRepo // 大纲与场景仓储
+	projectRepo *repo.ProjectRepo // 项目仓储（归属校验）
 }
 
 // NewOutlineService 构造创作规划服务。

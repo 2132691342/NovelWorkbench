@@ -1,3 +1,5 @@
+// 本文件实现卷业务：卷的创建、更新与删除（含级联删章与字数回补）。
+
 package service
 
 import (
@@ -12,10 +14,10 @@ import (
 
 // VolumeService 卷业务：卷的增删改（归属校验经所属项目）。
 type VolumeService struct {
-	volumeRepo  *repo.VolumeRepo
-	chapterRepo *repo.ChapterRepo
-	projectRepo *repo.ProjectRepo
-	db          *gorm.DB
+	volumeRepo  *repo.VolumeRepo  // 卷仓储
+	chapterRepo *repo.ChapterRepo // 章节仓储
+	projectRepo *repo.ProjectRepo // 项目仓储（归属校验）
+	db          *gorm.DB          // 事务入口
 }
 
 // NewVolumeService 构造卷服务。

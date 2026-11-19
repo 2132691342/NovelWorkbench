@@ -1,3 +1,5 @@
+// 本文件实现知识库文档与切片的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // KnowledgeRepo 知识库文档与切片持久化仓储（全文索引写入 Manticore）。
 type KnowledgeRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewKnowledgeRepo 构造知识库仓储。

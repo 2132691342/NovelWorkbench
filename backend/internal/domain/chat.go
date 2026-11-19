@@ -1,3 +1,5 @@
+// 本文件定义 AI 会话、聊天消息与 SSE 流式事件的持久化对象、请求与视图对象。
+
 package domain
 
 // ChatSessionDO AI 会话持久化对象。

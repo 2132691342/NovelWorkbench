@@ -1,3 +1,5 @@
+// 本文件定义模型调用的用量上报契约：调用记录结构与上报接口。
+
 package ai
 
 import "context"

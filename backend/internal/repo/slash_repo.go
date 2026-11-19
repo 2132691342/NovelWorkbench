@@ -1,3 +1,5 @@
+// 本文件实现斜杠命令（技能资产）的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // SlashRepo 斜杠命令（技能资产）持久化仓储。
 type SlashRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewSlashRepo 构造斜杠命令仓储。

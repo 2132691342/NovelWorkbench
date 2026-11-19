@@ -1,3 +1,5 @@
+// 本文件实现用户账号的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // UserRepo 用户账号持久化仓储（唯一允许出现 gorm 类型的层）。
 type UserRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewUserRepo 构造用户仓储。

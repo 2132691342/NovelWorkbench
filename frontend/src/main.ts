@@ -1,3 +1,5 @@
+// 应用入口：挂载 Vue 实例、注册 Pinia、路由、Element Plus 与 UnoCSS。
+
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'

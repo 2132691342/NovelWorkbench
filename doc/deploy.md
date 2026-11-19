@@ -63,10 +63,10 @@
 | `NW_POSTGRES_PASSWORD` | 是 | 数据库口令 | `replace-with-db-password` |
 | `NW_POSTGRES_DBNAME` | 否 | 数据库名 | `postgres` |
 | `NW_REDIS_ADDR` | 是 | Redis 地址 `host:port` | `redis:6379` |
-| `NW_REDIS_PASSWORD` | 是 | Redis 口令 | `replace-with-redis-password` |
+| `NW_REDIS_PASSWORD` | 否 | Redis 口令 | `replace-with-redis-password` |
 | `NW_RABBITMQ_URL` | 是 | AMQP 连接串 | `amqp://user:pass@rabbitmq:5672/` |
 | `NW_RABBITMQ_USER` | 本地 profile | RabbitMQ 账号（供中间件容器初始化） | `replace-with-rabbitmq-user` |
-| `NW_RABBITMQ_PASSWORD` | 本地 profile | RabbitMQ 口令 | `replace-with-rabbitmq-password` |
+| `NW_RABBITMQ_PASSWORD` | 本地 profile | RabbitMQ 口令（供中间件容器初始化） | `replace-with-rabbitmq-password` |
 | `NW_MINIO_ENDPOINT` | 是 | 对象存储地址 `host:port` | `minio:9000` |
 | `NW_MINIO_ACCESS_KEY` | 是 | MinIO AccessKey | `replace-with-minio-access-key` |
 | `NW_MINIO_SECRET_KEY` | 是 | MinIO SecretKey | `replace-with-minio-secret-key` |
@@ -75,6 +75,14 @@
 | `NW_AI_BASE_URL` | 是 | 模型网关地址（OpenAI 兼容需含 `/v1`，Anthropic 填根地址） | `https://model-gateway.example.com/v1` |
 | `NW_AI_API_KEY` | 是 | 模型网关密钥 | `replace-with-model-api-key` |
 | `NW_AI_CHAT_MODEL` | 是 | 对话模型名 | `replace-with-chat-model` |
+| `NW_AI_TEMPERATURE` | 否 | 采样温度 | `0.7` |
+| `NW_AI_MAX_TOKENS` | 否 | 单次输出上限 | `2048` |
+| `NW_AI_TIMEOUT_SEC` | 否 | 单次模型调用超时（秒） | `120` |
+| `NW_AI_HISTORY_COUNT` | 否 | 历史注入默认条数 | `5` |
+| `NW_APP_UPLOAD_MAX_MB` | 否 | 上传大小上限（MB） | `20` |
+| `NW_APP_CHUNK_SIZE` | 否 | 知识库切片字符数 | `800` |
+| `NW_APP_CHUNK_OVERLAP` | 否 | 切片重叠字符数 | `120` |
+| `NW_APP_RAG_TOP_K` | 否 | RAG 默认召回条数 | `6` |
 | `NW_APP_ADMIN_PASSWORD` | 是 | 引导管理员初始密码（仅用户表为空时生效，登录后改密） | `replace-with-a-strong-admin-password` |
 | `NW_APP_BUILD_VERSION` | 否 | 运行状态页展示版本 | `dev` |
 | `NW_INFRA_NETWORK` | Podman | 既有中间件栈网络名 | `novelworkbench_default` |
@@ -89,12 +97,20 @@ AI 相关变量仅用于**首次播种默认供应商**：`model_providers` 表�
 
 ### 2.3 启动时的初始化行为
 
-后端启动顺序：加载配置 → 连接 PostgreSQL（失败即退出）→ 自动迁移建表 →
-播种内置斜杠技能、默认设置、内置角色（admin/user）→ 表为空时播种默认模型供应商
-与引导管理员（`admin` + `NW_APP_ADMIN_PASSWORD`）→ 确保 MinIO 桶存在、
-Manticore 切片表存在。Redis、RabbitMQ、MinIO、Manticore 不可达时降级为告警日志，
-相关功能（上传/检索）返回 `ERR_STORAGE`，主链路继续运行；未配置模型供应商时
-AI 生成返回 `ERR_AI_PROVIDER` 并在页面提示。
+后端启动顺序（`backend/cmd/server/main.go`）：
+
+1. 加载配置并做启动期校验：JWT 密钥、数据库地址与库名、模型网关地址与对话模型
+   为空即退出（fail fast）；协议默认 `openai`，构建版本默认 `dev`，
+   历史条数默认 5，RAG 条数默认 6。
+2. 连接 PostgreSQL，失败即退出；随后 `AutoMigrate` 建表（28 张表）。
+3. 连接 Redis / RabbitMQ / MinIO / Manticore。**这四者的失败只降级告警，不阻断启动**：
+   Redis 不可用则令牌吊销降级，RabbitMQ 不可用则异步索引任务降级，
+   MinIO 桶不存在则对象存储降级，Manticore 不可用则全文检索降级。
+4. 播种默认模型供应商（`model_providers` 表为空时，用 `NW_AI_*` 配置写入一条）。
+5. 播种内置斜杠技能、默认应用配置、内置角色（admin/user）。这三项失败视为
+   数据库异常，直接退出。
+6. 用户表为空时引导创建管理员 `admin`（口令取 `NW_APP_ADMIN_PASSWORD`）。
+7. 启动知识库索引 worker，消费 RabbitMQ 完成文档索引；随 ctx 取消优雅退出。
 
 ## 3. 本地 Docker Compose 部署
 
@@ -188,7 +204,7 @@ Docker 内嵌 DNS 应答裸服务名，根目录 Compose 使用 `http://backend:
 
 | 工作流 | 触发 | 内容 |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | push / PR 到 `main` | 后端：`GOTOOLCHAIN=local` + `CGO_ENABLED=0` 下 `go vet`、`go build`、`go test -short`；前端：Node 22 `npm ci` + `npm run build`；随后验证两个 Docker 镜像可构建 |
+| `.github/workflows/ci.yml` | push / PR 到 `main` | 后端：`GOTOOLCHAIN=local` + `CGO_ENABLED=0` 下 `go vet`、`go build`、`go test -short -shuffle=on`；前端：Node 22 `npm ci` + `npm run test` + `npm run build`；随后验证两个 Docker 镜像可构建 |
 | `.github/workflows/release.yml` | 推送 `v*` tag | 构建后端/前端镜像并推送到 GHCR：`ghcr.io/<repo>/backend:<tag>`、`ghcr.io/<repo>/frontend:<tag>`（同时更新 `latest`） |
 
 CI 不注入任何真实凭据：单元测试不依赖外部服务，镜像构建不使用运行期环境变量。

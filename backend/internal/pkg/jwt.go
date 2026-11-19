@@ -1,3 +1,5 @@
+// 本文件实现 JWT 令牌的签发与校验。
+
 package pkg
 
 import (

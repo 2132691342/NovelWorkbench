@@ -1,3 +1,5 @@
+// 本文件实现审计日志业务：变更记录落库与分页查询。
+
 package service
 
 import (
@@ -10,8 +12,8 @@ import (
 
 // AuditService 审计日志业务：变更记录落库与分页查询。
 type AuditService struct {
-	auditRepo *repo.AuditRepo
-	userRepo  *repo.UserRepo
+	auditRepo *repo.AuditRepo // 审计仓储
+	userRepo  *repo.UserRepo  // 用户仓储
 }
 
 // NewAuditService 构造审计日志服务。

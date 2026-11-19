@@ -1,3 +1,5 @@
+// 本文件实现模型供应商的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // ModelProviderRepo 模型供应商持久化仓储。
 type ModelProviderRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewModelProviderRepo 构造模型供应商仓储。

@@ -1,3 +1,5 @@
+// 本文件实现应用配置（key-value）的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // SettingRepo 应用配置（key-value）持久化仓储。
 type SettingRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewSettingRepo 构造应用配置仓储。

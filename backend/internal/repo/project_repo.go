@@ -1,3 +1,5 @@
+// 本文件实现小说项目的持久化仓储。
+
 package repo
 
 import (
@@ -12,7 +14,7 @@ import (
 
 // ProjectRepo 小说项目持久化仓储。
 type ProjectRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewProjectRepo 构造项目仓储。

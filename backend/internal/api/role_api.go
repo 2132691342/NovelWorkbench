@@ -1,3 +1,5 @@
+// 本文件实现角色管理模块的 HTTP 处理器：角色列表、保存与删除。
+
 package api
 
 import (

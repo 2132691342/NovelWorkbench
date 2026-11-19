@@ -1,3 +1,5 @@
+// 本文件实现 MinIO 对象存储的连接构造与桶初始化。
+
 package infra
 
 import (

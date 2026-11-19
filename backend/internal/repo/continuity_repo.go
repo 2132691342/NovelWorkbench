@@ -1,3 +1,5 @@
+// 本文件实现连续性看板（时间事实、伏笔钩子、章节摘要）的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // ContinuityRepo 连续性看板持久化仓储：时间事实、伏笔钩子、章节摘要。
 type ContinuityRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewContinuityRepo 构造连续性看板仓储。

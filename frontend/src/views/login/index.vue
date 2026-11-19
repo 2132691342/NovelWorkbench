@@ -1,4 +1,6 @@
 <script setup lang="ts">
+
+// 登录注册页：登录与注册双表单，含字段校验与提交加载态。
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'

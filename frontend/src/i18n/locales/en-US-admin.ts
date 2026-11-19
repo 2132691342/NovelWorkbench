@@ -1,3 +1,5 @@
+// English locale (admin): user, role, audit, usage and system status copy.
+
 export default {
   models: {
     title: 'Model providers',

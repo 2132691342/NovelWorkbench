@@ -1,3 +1,5 @@
+// English locale (workspace): writing desk, planning, continuity and lore copy.
+
 export default {
   workspace: {
     backToDashboard: 'Back to dashboard',

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+
+// 通用空态组件：列表无数据时的占位展示，含图标与说明文案。
 import { useI18n } from 'vue-i18n'
 
 withDefaults(

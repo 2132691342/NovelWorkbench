@@ -1,3 +1,5 @@
+// 本文件实现模型用量日聚合的持久化仓储。
+
 package repo
 
 import (
@@ -12,7 +14,7 @@ import (
 
 // ModelUsageRepo 模型用量统计持久化仓储（按日 × 供应商 × 模型 × 调用类型聚合）。
 type ModelUsageRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewModelUsageRepo 构造用量统计仓储。

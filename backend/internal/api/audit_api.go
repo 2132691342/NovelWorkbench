@@ -1,3 +1,5 @@
+// 本文件实现审计日志模块的 HTTP 处理器：分页查询写操作审计记录。
+
 package api
 
 import (

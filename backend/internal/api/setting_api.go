@@ -1,3 +1,5 @@
+// 本文件实现应用配置模块的 HTTP 处理器：白名单配置的查询与更新。
+
 package api
 
 import (

@@ -1,3 +1,5 @@
+// 本文件实现认证模块的 HTTP 处理器：注册、登录、当前用户与登出。
+
 package api
 
 import (

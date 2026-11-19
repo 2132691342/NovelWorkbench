@@ -1,3 +1,5 @@
+// 本文件实现小说项目业务：项目 CRUD、列表、目录树与级联删除。
+
 package service
 
 import (
@@ -24,11 +26,11 @@ type ProjectCascadeDeps struct {
 
 // ProjectService 小说项目业务：项目 CRUD、列表、目录树与级联删除。
 type ProjectService struct {
-	projectRepo *repo.ProjectRepo
-	volumeRepo  *repo.VolumeRepo
-	chapterRepo *repo.ChapterRepo
-	cascade     ProjectCascadeDeps
-	db          *gorm.DB
+	projectRepo *repo.ProjectRepo  // 项目仓储（归属校验）
+	volumeRepo  *repo.VolumeRepo   // 卷仓储
+	chapterRepo *repo.ChapterRepo  // 章节仓储
+	cascade     ProjectCascadeDeps // 级联删除依赖
+	db          *gorm.DB           // 事务入口
 }
 
 // NewProjectService 构造项目服务。

@@ -1,3 +1,5 @@
+// 本文件实现登出令牌黑名单的 Redis 存取。
+
 package repo
 
 import (
@@ -17,7 +19,7 @@ const tokenBlacklistPrefix = "nw:token:blacklist:"
 
 // TokenRepo 令牌吊销黑名单（Redis 实现 pkg.TokenStore）。
 type TokenRepo struct {
-	rdb *redis.Client
+	rdb *redis.Client // Redis 客户端
 }
 
 // NewTokenRepo 构造令牌吊销仓储。

@@ -1,3 +1,5 @@
+// 本文件实现项目模块的 HTTP 处理器：项目 CRUD、列表、详情与目录树。
+
 package api
 
 import (

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+
+// 系统设置页：展示并修改白名单内的运行时配置。
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'

@@ -1,3 +1,5 @@
+// 本文件实现世界观设定业务：设定条目 CRUD 与列表查询。
+
 package service
 
 import (
@@ -10,8 +12,8 @@ import (
 
 // LoreService 世界观设定业务：设定条目 CRUD 与检索。
 type LoreService struct {
-	loreRepo    *repo.LoreRepo
-	projectRepo *repo.ProjectRepo
+	loreRepo    *repo.LoreRepo    // 设定仓储
+	projectRepo *repo.ProjectRepo // 项目仓储（归属校验）
 }
 
 // NewLoreService 构造设定服务。

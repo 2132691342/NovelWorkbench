@@ -1,3 +1,5 @@
+// 本文件实现知识库业务：文档上传/列表/删除/重投、检索与切片查询。
+
 package service
 
 import (
@@ -32,16 +34,16 @@ type KnowledgeIndexConfig struct {
 
 // KnowledgeService 知识库业务：文档上传/列表/删除/重投、检索与切片查看。
 type KnowledgeService struct {
-	knowledgeRepo *repo.KnowledgeRepo
-	objectRepo    *repo.ObjectRepo
-	mqRepo        *repo.MQRepo
-	jobRepo       *repo.JobRepo
-	projectRepo   *repo.ProjectRepo
-	aiClient      *ai.Client
-	providerSvc   *ModelProviderService
-	manticore     *infra.ManticoreClient
-	db            *gorm.DB
-	config        KnowledgeIndexConfig
+	knowledgeRepo *repo.KnowledgeRepo    // 知识库仓储
+	objectRepo    *repo.ObjectRepo       // 对象存储仓储
+	mqRepo        *repo.MQRepo           // 队列仓储
+	jobRepo       *repo.JobRepo          // 任务仓储
+	projectRepo   *repo.ProjectRepo      // 项目仓储（归属校验）
+	aiClient      *ai.Client             // 模型网关（流式调用与用量上报）
+	providerSvc   *ModelProviderService  // 供应商服务（模型选择）
+	manticore     *infra.ManticoreClient // 全文检索客户端
+	db            *gorm.DB               // 事务入口
+	config        KnowledgeIndexConfig   // 索引链路参数
 }
 
 // NewKnowledgeService 构造知识库服务。

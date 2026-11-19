@@ -1,4 +1,6 @@
 <script setup lang="ts">
+
+// 用户表单对话框：创建/编辑用户与重置密码的弹窗表单。
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { useI18n } from 'vue-i18n'

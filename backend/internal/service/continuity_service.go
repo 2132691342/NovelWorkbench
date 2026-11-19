@@ -1,3 +1,5 @@
+// 本文件实现连续性看板业务：时间事实复核、伏笔钩子跟踪与章节摘要管理。
+
 package service
 
 import (
@@ -10,8 +12,8 @@ import (
 
 // ContinuityService 连续性看板业务：时间事实复核、伏笔钩子跟踪、章节摘要管理。
 type ContinuityService struct {
-	continuityRepo *repo.ContinuityRepo
-	projectRepo    *repo.ProjectRepo
+	continuityRepo *repo.ContinuityRepo // 连续性账本仓储
+	projectRepo    *repo.ProjectRepo    // 项目仓储（归属校验）
 }
 
 // NewContinuityService 构造连续性看板服务。

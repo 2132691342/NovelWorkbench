@@ -1,3 +1,5 @@
+// 本文件实现数据总览模块的 HTTP 处理器：项目数、字数统计与趋势。
+
 package api
 
 import (

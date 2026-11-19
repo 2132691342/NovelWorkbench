@@ -1,3 +1,5 @@
+// 国际化实例：装配 zh-CN / en-US 语言包与本地化切换逻辑。
+
 import { createI18n } from 'vue-i18n'
 import zhCN from './locales/zh-CN'
 import enUS from './locales/en-US'

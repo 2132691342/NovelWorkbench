@@ -1,3 +1,5 @@
+// 本文件实现 AI 会话与聊天消息的持久化仓储（含 AI 字数统计与上下文装配查询）。
+
 package repo
 
 import (
@@ -12,7 +14,7 @@ import (
 
 // ChatRepo AI 会话与聊天消息持久化仓储（含 AI 字数统计与上下文装配专用查询）。
 type ChatRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewChatRepo 构造对话仓储。

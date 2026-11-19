@@ -1,3 +1,5 @@
+// 本文件实现 MinIO 对象存储的原文存取。
+
 package repo
 
 import (
@@ -10,8 +12,8 @@ import (
 
 // ObjectRepo MinIO 对象存储仓储（知识库文档原文存取）。
 type ObjectRepo struct {
-	client *minio.Client
-	bucket string
+	client *minio.Client // MinIO 客户端
+	bucket string        // 桶名
 }
 
 // NewObjectRepo 构造对象存储仓储。

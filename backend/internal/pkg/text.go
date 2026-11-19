@@ -1,3 +1,5 @@
+// 本文件实现正文字数统计（汉字逐字，其余按空白分词）。
+
 package pkg
 
 import "unicode"

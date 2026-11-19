@@ -1,3 +1,5 @@
+// 本文件定义模型用量日聚合的持久化对象与用量总览视图对象。
+
 package domain
 
 // ModelCallTypeChat 对话生成调用类型（用量统计维度）。

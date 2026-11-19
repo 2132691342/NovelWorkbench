@@ -1,3 +1,5 @@
+// 本文件实现章节模块的 HTTP 处理器：章节 CRUD、详情与快照留档/回滚。
+
 package api
 
 import (

@@ -6,8 +6,11 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 )
 
-// TestResolveUsageRange 覆盖区间解析：缺省近 14 天、非法日期回退、起止倒置自动纠正。
-func TestResolveUsageRange(t *testing.T) {
+// TestUsageAggregationChain 覆盖用量分析链路：查询区间解析（缺省近 14 天 / 非法回退 / 起止倒置纠正）→
+// 缺日补零保证图表连续 → 按调用数加权的平均延迟。
+// 用量页面的数字全部来自这三个环节，任一环节算错都会直接误导用户，因此合并为一条用例。
+func TestUsageAggregationChain(t *testing.T) {
+	// ---- 环节一：区间解析 ----
 	toDate, fromDate := resolveUsageRange("", "")
 	if !isDateText(toDate) || !isDateText(fromDate) {
 		t.Fatalf("默认区间应为合法日期: %s ~ %s", fromDate, toDate)
@@ -26,10 +29,8 @@ func TestResolveUsageRange(t *testing.T) {
 	if fromDate > toDate {
 		t.Fatalf("回退后仍须保证起点不大于终点: %s ~ %s", fromDate, toDate)
 	}
-}
 
-// TestFillUsageDaily 覆盖补零：缺失日期补空记录，已有数据保持原值。
-func TestFillUsageDaily(t *testing.T) {
+	// ---- 环节二：缺日补零，已有数据不改写 ----
 	rows := []domain.ModelUsageDailyVO{
 		{StatDate: "2026-03-02", CallCount: 3, TotalTokens: 120},
 	}
@@ -38,12 +39,24 @@ func TestFillUsageDaily(t *testing.T) {
 		t.Fatalf("len(filled) = %d, want 3", len(filled))
 	}
 	if filled[0].StatDate != "2026-03-01" || filled[0].CallCount != 0 {
-		t.Fatalf("缺失日应为零值: %+v", filled[0])
+		t.Fatalf("缺失日应补零值: %+v", filled[0])
 	}
 	if filled[1].CallCount != 3 || filled[1].TotalTokens != 120 {
 		t.Fatalf("已有数据不应被改写: %+v", filled[1])
 	}
 	if filled[2].StatDate != "2026-03-03" {
-		t.Fatalf("尾部日期缺失: %+v", filled[2])
+		t.Fatalf("尾部日期应补齐: %+v", filled[2])
+	}
+
+	// ---- 环节三：按调用数加权的平均延迟 ----
+	daily := []domain.ModelUsageDailyVO{
+		{StatDate: "2026-03-01", CallCount: 1, AvgLatencyMs: 100},
+		{StatDate: "2026-03-02", CallCount: 3, AvgLatencyMs: 200},
+	}
+	if got := weightedAvgLatency(daily); got != 175 {
+		t.Fatalf("加权平均延迟 = %d, want 175", got)
+	}
+	if got := weightedAvgLatency(nil); got != 0 {
+		t.Fatalf("无调用时平均延迟 = %d, want 0", got)
 	}
 }

@@ -1,3 +1,5 @@
+// 本文件实现世界观设定与创作笔记的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // LoreRepo 世界观设定持久化仓储。
 type LoreRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewLoreRepo 构造设定仓储。

@@ -1,3 +1,5 @@
+// 本文件实现审计日志的持久化仓储。
+
 package repo
 
 import (
@@ -11,7 +13,7 @@ import (
 
 // AuditRepo 审计日志持久化仓储。
 type AuditRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewAuditRepo 构造审计日志仓储。

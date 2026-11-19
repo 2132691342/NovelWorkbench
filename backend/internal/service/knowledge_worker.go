@@ -1,3 +1,5 @@
+// 本文件实现知识库索引 worker：消费队列任务、提取文本、切片、建索引与表结构迁移。
+
 package service
 
 import (
@@ -31,13 +33,13 @@ const consumeReconnectInterval = 5 * time.Second
 
 // KnowledgeWorker 知识库索引 worker：消费队列完成提取/切片/内容哈希/Manticore 同步。
 type KnowledgeWorker struct {
-	knowledgeRepo *repo.KnowledgeRepo
-	objectRepo    *repo.ObjectRepo
-	mqRepo        *repo.MQRepo
-	jobRepo       *repo.JobRepo
-	manticore     *infra.ManticoreClient
-	db            *gorm.DB
-	config        KnowledgeIndexConfig
+	knowledgeRepo *repo.KnowledgeRepo    // 知识库仓储
+	objectRepo    *repo.ObjectRepo       // 对象存储仓储
+	mqRepo        *repo.MQRepo           // 队列仓储
+	jobRepo       *repo.JobRepo          // 任务仓储
+	manticore     *infra.ManticoreClient // 全文检索客户端
+	db            *gorm.DB               // 事务入口
+	config        KnowledgeIndexConfig   // 索引链路参数
 }
 
 // NewKnowledgeWorker 构造知识库索引 worker。

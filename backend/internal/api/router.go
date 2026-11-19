@@ -1,3 +1,5 @@
+// 本文件负责 HTTP 路由装配：中间件链、路由分组注册与健康探针。
+
 package api
 
 import (

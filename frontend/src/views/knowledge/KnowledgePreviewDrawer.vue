@@ -2,6 +2,8 @@
   文档预览抽屉：txt/md 纯文本 <pre>（切片文本），docx 走 docx-preview，pdf 走 vue-pdf-embed。
   原文经 GET /knowledge/content 获取；取不到原文时按合同仅展示失败提示，不提供假下载按钮。
 --->
+// 文档预览抽屉：按文件类型渲染原文（txt/md 直接展示，docx/pdf 用组件）。
+
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

@@ -1,3 +1,5 @@
+// 本文件提供 GORM 事务执行封装。
+
 package repo
 
 import "gorm.io/gorm"

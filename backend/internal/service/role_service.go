@@ -1,3 +1,5 @@
+// 本文件实现角色业务：内置角色播种、分页查询、保存与删除。
+
 package service
 
 import (
@@ -17,8 +19,8 @@ var roleDefaultList = []domain.RoleDO{
 
 // RoleService 角色与权限业务：内置角色播种、角色 CRUD、用户授权、权限判定。
 type RoleService struct {
-	roleRepo *repo.RoleRepo
-	userRepo *repo.UserRepo
+	roleRepo *repo.RoleRepo // 角色仓储
+	userRepo *repo.UserRepo // 用户仓储
 }
 
 // NewRoleService 构造角色服务。

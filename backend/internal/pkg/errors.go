@@ -1,3 +1,5 @@
+// 本文件定义业务错误类型与构造、转换函数。
+
 package pkg
 
 import "fmt"

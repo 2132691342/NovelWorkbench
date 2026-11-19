@@ -1,3 +1,5 @@
+// 本文件定义内置斜杠技能资产（提示词模板），启动时播种进 slash_commands 表。
+
 package ai
 
 import (

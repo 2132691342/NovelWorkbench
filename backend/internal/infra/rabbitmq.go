@@ -1,3 +1,5 @@
+// 本文件实现 RabbitMQ 连接构造。
+
 package infra
 
 import (

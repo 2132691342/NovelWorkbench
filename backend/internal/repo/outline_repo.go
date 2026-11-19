@@ -1,3 +1,5 @@
+// 本文件实现大纲节点与场景卡的持久化仓储。
+
 package repo
 
 import (
@@ -12,7 +14,7 @@ import (
 // OutlineRepo 创作规划仓储：大纲节点树与详细场景卡片持久化。
 // 所有查询均以 project_ulid 限定，避免越项目访问。
 type OutlineRepo struct {
-	db *gorm.DB
+	db *gorm.DB // 事务入口
 }
 
 // NewOutlineRepo 构造创作规划仓储。

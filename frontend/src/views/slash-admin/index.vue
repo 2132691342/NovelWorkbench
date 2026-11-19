@@ -1,4 +1,6 @@
 <script setup lang="ts">
+
+// 斜杠技能页：内置与自定义技能列表及提示词模板编辑。
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { useI18n } from 'vue-i18n'

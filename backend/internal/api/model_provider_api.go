@@ -1,3 +1,5 @@
+// 本文件实现模型供应商模块的 HTTP 处理器：供应商 CRUD、连通性测试与默认切换。
+
 package api
 
 import (
