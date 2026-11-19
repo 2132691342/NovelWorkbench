@@ -26,13 +26,13 @@ export async function deleteChapter(chapterUlid: string): Promise<void> {
 
 /** 章节详情（含正文） */
 export function getChapterDetail(chapterUlid: string): Promise<NWChapterDetailVo> {
-  return get<NWChapterDetailVo>(`/chapter/detail?chapter_ulid=${encodeURIComponent(chapterUlid)}`)
+  return get<NWChapterDetailVo>(`/chapter/detail/${encodeURIComponent(chapterUlid)}`)
 }
 
 /** 章节快照列表 */
 export function listChapterSnapshots(chapterUlid: string): Promise<NWChapterSnapshotVo[]> {
   return get<NWChapterSnapshotVo[]>(
-    `/chapter/snapshot/list?chapter_ulid=${encodeURIComponent(chapterUlid)}`,
+    `/chapter/snapshot/list/${encodeURIComponent(chapterUlid)}`,
   )
 }
 

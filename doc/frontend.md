@@ -28,19 +28,19 @@ frontend/
     │   ├── lore.ts         世界观设定 / 创作笔记
     │   ├── model.ts        模型供应商 / 用量 / 系统状态
     │   ├── outline.ts      大纲节点 / 详细场景
-    │   ├── project.ts      项目 / 卷
-    │   └── slash.ts        斜杠命令列表
-    ├── components/     NWButton / NWCard / NWEmpty / NWLoading / ProjectPageHeader
+    │   ├── menu.ts         导航树 / 菜单 CRUD / 权限目录
+    │   ├── skill.ts        技能 / 变量解析 / 参考资料
+    │   └── project.ts      项目 / 卷
+    ├── components/     NWButton / NWCard / NWEmpty / NWLoading / NWIcon / ProjectPageHeader
     ├── composables/    useSSE.ts（+ useSSE.test.ts）
     ├── i18n/           index.ts + locales/{zh-CN,en-US}{,-common,-workspace,-admin,-extensions}.ts
     ├── layout/         AdminLayout.vue + AdminLayout.css
     ├── router/         index.ts（路由表 + 唯一守卫）
-    ├── stores/         app.ts / auth.ts / project.ts
+    ├── stores/         app.ts / auth.ts / menu.ts / project.ts
     ├── styles/         variables.css / global.css / button-states.css
     ├── utils/          storage.ts（localStorage 封装）
-    └── views/          login / dashboard / settings / slash-admin / workflow /
-                        micro-app / models / workspace / knowledge / character /
-                        lore / notes / outline / continuity / admin
+    └── views/          login / dashboard / settings / skills / models / workspace /
+                        knowledge / character / lore / notes / outline / continuity / admin
 ```
 
 ### 1.1 页面样式约定
@@ -53,9 +53,12 @@ frontend/
   `ChatComposer.vue` / `ChatMessage.vue` / `SnapshotDialog.vue`；
   `views/knowledge/` 下 `KnowledgeUploadPanel.vue` / `KnowledgeSearchPanel.vue` /
   `ChunkListDialog.vue` / `KnowledgePreviewDrawer.vue`）。
-- 全部前端源文件 ≤500 行，当前最大为 `views/outline/index.vue`（487 行），其次
-  `views/workspace/WorkspaceTree.vue`（476）、`views/character/CharacterGraphTab.vue`（473）、
-  `views/dashboard/index.vue`（469）、`layout/AdminLayout.vue`（441）。
+- 全部前端源文件 ≤500 行，当前最大为 `views/admin/menus.vue`（约 495 行），其次
+  `views/outline/index.vue`（487）、`views/workspace/WorkspaceTree.vue`（476）、
+  `views/character/CharacterGraphTab.vue`（473）、`views/dashboard/index.vue`（469）。
+- 技能页拆为 `views/skills/index.vue`（表格 + 抽屉 + 变量）与
+  `views/skills/SkillReferencePanel.vue`（参考资料子面板），样式分别在 `skills.css`、
+  `skill-reference-panel.css`。
 
 ### 1.2 构建与测试配置
 
@@ -165,13 +168,17 @@ frontend/
 
 ## 5. 状态与数据流
 
-### 5.1 三个 Store
+### 5.1 四个 Store
 
 | Store | State | Getters | Actions | 持久化键 |
 | --- | --- | --- | --- | --- |
-| `stores/app.ts`（`useAppStore`） | `locale_code`、`sidebar_collapsed` | — | `toggleSidebar()`、`setLocale(localeCode)`（同步 vue-i18n 并持久化） | 语言：`nw_locale`；侧栏折叠：`nw_sidebar_collapsed`（`utils/storage.ts:NW_LOCALE_KEY` / `NW_SIDEBAR_COLLAPSED_KEY`） |
-| `stores/auth.ts`（`useAuthStore`） | `access_token`、`user_vo` | `is_logged_in` | `login()`、`register()`、`fetchProfile()`、`logout()`、`resetSession()` | token：`nw_access_token`；用户信息：`nw_user_vo`（JSON，读取时做结构校验，非法回 `null`） |
-| `stores/project.ts`（`useProjectStore`） | `project_list`、`current_project_ulid`、`list_loading` | `current_project_vo`、`hasProject(projectUlid)` | `loadProjectList()`（`POST /project/list`，page 1/size 100；当前项不在列表时自动收敛到第一项）、`setCurrentProject(projectUlid)` | `nw_current_project_ulid`（模块内常量 `NW_CURRENT_PROJECT_KEY`） |
+| `stores/app.ts`（`useAppStore`） | `locale_code`、`sidebar_collapsed` | — | `toggleSidebar()`、`setSidebarCollapsed(flag)`、`setLocale(localeCode)`（同步 vue-i18n 并持久化） | 语言：`nw_locale`；侧栏折叠：`nw_sidebar_collapsed` |
+| `stores/auth.ts`（`useAuthStore`） | `access_token`、`user_vo`、`perm_code_list` | `is_logged_in`、`hasPerm(permCode)`（含 `*` 通配）、`is_admin_user` | `login()`、`fetchProfile()`、`setPermCodes(list)`、`logout()`、`resetSession()` | token：`nw_access_token`；用户信息：`nw_user_vo`（JSON，读取时结构校验） |
+| `stores/menu.ts`（`useMenuStore`） | `menu_tree_list`、`perm_code_list`、`nav_loading`、`nav_loaded` | `hasPerm(permCode)` | `loadNav()`（`GET /menu/nav`，并发只发一次）、`resetNav()` | 不持久化：每次会话由后端下发 |
+| `stores/project.ts`（`useProjectStore`） | `project_list`、`current_project_ulid`、`list_loading` | `current_project_vo`、`hasProject(projectUlid)` | `loadProjectList()`（`POST /project/list`，page 1/size 100）、`setCurrentProject(projectUlid)` | `nw_current_project_ulid` |
+
+`menu.perm_code_list` 会同步写入 `auth.perm_code_list`，两处 getter 结果一致；
+权限判定的唯一数据来源是后端 `GET /menu/nav`，前端不再从 `role_codes` 推断权限。
 
 ### 5.2 Axios 层规则（`src/api/http.ts`）
 
@@ -201,42 +208,43 @@ frontend/
 
 ### 6.1 路由表（`src/router/index.ts`）
 
-| path | name | component | `meta.menu_key` | 项目内 |
-| --- | --- | --- | --- | --- |
-| `/login` | `LoginView` | `views/login/index.vue` | —（无 meta） | 否 |
-| `/`（子路由 `''`） | `DashboardView` | `views/dashboard/index.vue` | `dashboard` | 否 |
-| `/settings` | `SettingsView` | `views/settings/index.vue` | `settings` | 否 |
-| `/slash-admin` | `SlashAdminView` | `views/slash-admin/index.vue` | `slashAdmin` | 否 |
-| `/workflow` | `WorkflowView` | `views/workflow/index.vue` | `workflow` | 否 |
-| `/micro-app` | `MicroAppView` | `views/micro-app/index.vue` | `microApp` | 否 |
-| `/admin/users` | `AdminUsersView` | `views/admin/users.vue` | `adminUsers` | 否 |
-| `/admin/roles` | `AdminRolesView` | `views/admin/roles.vue` | `adminRoles` | 否 |
-| `/admin/usage` | `AdminUsageView` | `views/admin/usage.vue` | `adminUsage` | 否 |
-| `/admin/status` | `AdminStatusView` | `views/admin/status.vue` | `adminStatus` | 否 |
-| `/admin/audit` | `AdminAuditView` | `views/admin/audit.vue` | `adminAudit` | 否 |
-| `/models` | `ModelProviderView` | `views/models/index.vue` | `models` | 否 |
-| `/lore/:project_ulid` | `LoreView` | `views/lore/index.vue` | `lore` | 是 |
-| `/workspace/:project_ulid` | `WorkspaceView` | `views/workspace/index.vue` | `workspace` | 是 |
-| `/knowledge/:project_ulid` | `KnowledgeView` | `views/knowledge/index.vue` | `knowledge` | 是 |
-| `/character/:project_ulid` | `CharacterView` | `views/character/index.vue` | `character` | 是 |
-| `/notes/:project_ulid` | `NotesView` | `views/notes/index.vue` | `notes` | 是 |
-| `/outline/:project_ulid` | `OutlineView` | `views/outline/index.vue` | `outline` | 是 |
-| `/continuity/:project_ulid` | `ContinuityView` | `views/continuity/index.vue` | `continuity` | 是 |
+| path | name | component | `meta.menu_code` | `meta.perm_code` | 项目内 |
+| --- | --- | --- | --- | --- | --- |
+| `/login` | `LoginView` | `views/login/index.vue` | — | — | 否 |
+| `/`（子路由 `''`） | `DashboardView` | `views/dashboard/index.vue` | `dashboard` | — | 否 |
+| `/settings` | `SettingsView` | `views/settings/index.vue` | `settings` | `system:setting:manage` | 否 |
+| `/skills` | `SkillAdminView` | `views/skills/index.vue` | `skills` | `skill:manage` | 否 |
+| `/models` | `ModelProviderView` | `views/models/index.vue` | `models` | — | 否 |
+| `/admin/users` | `AdminUsersView` | `views/admin/users.vue` | `admin_users` | `system:user:manage` | 否 |
+| `/admin/roles` | `AdminRolesView` | `views/admin/roles.vue` | `admin_roles` | `system:role:manage` | 否 |
+| `/admin/menus` | `AdminMenusView` | `views/admin/menus.vue` | `admin_menus` | `system:menu:manage` | 否 |
+| `/admin/permissions` | `AdminPermissionsView` | `views/admin/permissions.vue` | `admin_perms` | `system:perm:read` | 否 |
+| `/admin/audit` | `AdminAuditView` | `views/admin/audit.vue` | `admin_audit` | `system:audit:read` | 否 |
+| `/admin/usage` | `AdminUsageView` | `views/admin/usage.vue` | `admin_usage` | `system:usage:read` | 否 |
+| `/admin/status` | `AdminStatusView` | `views/admin/status.vue` | `admin_status` | `system:status:read` | 否 |
+| `/workspace/:project_ulid` | `WorkspaceView` | `views/workspace/index.vue` | `workspace` | — | 是 |
+| `/outline/:project_ulid` | `OutlineView` | `views/outline/index.vue` | `outline` | — | 是 |
+| `/continuity/:project_ulid` | `ContinuityView` | `views/continuity/index.vue` | `continuity` | — | 是 |
+| `/character/:project_ulid` | `CharacterView` | `views/character/index.vue` | `character` | — | 是 |
+| `/lore/:project_ulid` | `LoreView` | `views/lore/index.vue` | `lore` | — | 是 |
+| `/knowledge/:project_ulid` | `KnowledgeView` | `views/knowledge/index.vue` | `knowledge` | — | 是 |
+| `/notes/:project_ulid` | `NotesView` | `views/notes/index.vue` | `notes` | — | 是 |
 
-兜底路由 `/:pathMatch(.*)*` 重定向到 `/`。除 `/login` 外全部挂在 `AdminLayout.vue` 之下，组件均为懒加载
-`() => import(...)`。
+兜底路由 `/:pathMatch(.*)*` 重定向到 `/`。除 `/login` 外全部挂在 `AdminLayout.vue` 之下，
+组件均为懒加载 `() => import(...)`。
 
 ### 6.2 meta 与守卫的实际边界
 
-- `meta` 中**只有** `menu_key` 一个字段，没有 `title`，也没有 `permission`。页面标题文案统一由 i18n 的
-  `layout.menu.{menu_key}` 提供。
-- 全局**只有一个**路由守卫：`router.beforeEach`（`src/router/index.ts`），只做登录态判断。
-  - 目标在 `PUBLIC_PAGE_PATH_LIST = ['/login']` 且本地有 token → 重定向 `/`；
-  - 目标非公开页且无 token → 重定向 `/login`；
-  - 其余放行。
-- 没有基于角色的路由守卫、没有 `meta.permission` 校验。系统管理菜单在 `AdminLayout.vue` 中按
-  `isAdminUser`（`(authStore.user_vo?.role_codes ?? []).includes('admin')`）做**隐藏**处理，
-  这只是界面可见性控制；真正的权限判定在后端接口侧，前端路由不构成访问边界。
+- `meta` 字段：`menu_code`（与后端菜单编码对齐，仅便于排查，不参与渲染）、
+  `perm_code`（页面权限码，命中失败回仪表盘）、`project_scope_flag`（项目内页面标记）。
+- 全局只有**一个**路由守卫：`router.beforeEach`。
+  1. 目标在 `PUBLIC_PAGE_PATH_LIST = ['/login']` 且本地有 token → 重定向 `/`；
+  2. 目标非公开页且无 token → 重定向 `/login`；
+  3. 导航未加载时先 `await menuStore.loadNav()`；
+  4. `meta.perm_code` 非空且当前用户无该权限（含 `*`）→ 重定向 `/`。
+- 侧边栏不再按 `role_codes` 隐藏管理入口，而是完全渲染后端下发的菜单树：
+  无权节点后端根本不下发，前端无从显示。
+- 真正的权限判定仍在后端接口侧；前端守卫只避免用户进入必然 403 的页面。
 
 ### 6.3 项目上下文同步（位于 AdminLayout，不在路由守卫里）
 
@@ -250,21 +258,23 @@ frontend/
 
 ## 7. 项目上下文导航
 
-### 7.1 固定的 7 个项目内入口
+### 7.1 项目内入口由菜单表决定
 
-`AdminLayout.vue` 的 `NW_PROJECT_PAGE_LIST`：
+项目内菜单来自 `GET /menu/nav` 中 `scope_code='project'` 的页面节点（`menuSeedList` 内置 7 个）：
 
-| menu_key | 路径前缀 | 菜单文案 key |
+| menu_code | route_path | 菜单文案 |
 | --- | --- | --- |
-| `workspace` | `/workspace/` | `layout.menu.workspace` |
-| `outline` | `/outline/` | `layout.menu.outline` |
-| `continuity` | `/continuity/` | `layout.menu.continuity` |
-| `character` | `/character/` | `layout.menu.character` |
-| `lore` | `/lore/` | `layout.menu.lore` |
-| `knowledge` | `/knowledge/` | `layout.menu.knowledge` |
-| `notes` | `/notes/` | `layout.menu.notes` |
+| `workspace` | `/workspace/:project_ulid` | 「写作台」 |
+| `outline` | `/outline/:project_ulid` | 「创作规划」 |
+| `continuity` | `/continuity/:project_ulid` | 「连续性看板」 |
+| `character` | `/character/:project_ulid` | 「角色管理」 |
+| `lore` | `/lore/:project_ulid` | 「世界观设定」 |
+| `knowledge` | `/knowledge/:project_ulid` | 「知识库」 |
+| `notes` | `/notes/:project_ulid` | 「素材笔记」 |
 
-菜单项 index 为 `${path_prefix}${effectiveProjectUlid}`；无当前项目时菜单项禁用。
+渲染时 `resolveMenuPath` 把 `:project_ulid` 替换为 `effectiveProjectUlid`；未选项目时
+`isMenuDisabled` 返回真，菜单置灰不可点。菜单名称直接取后端下发的 `menu_name`，
+i18n 不再为菜单文案提供 `layout.menu.*` 键（新增语言只需翻译页面内文案）。
 
 ### 7.2 项目 ULID 优先级
 
@@ -285,25 +295,27 @@ frontend/
 
 - 回写：`AdminLayout.vue` 的 watch 在 URL 项目变化时调用 `projectStore.setCurrentProject(projectUlid)`，
   同步写入 `nw_current_project_ulid`。
-- 项目切换器（顶栏下拉）：`handleProjectCommand` 调用 `setCurrentProject` 后，
-  **停留在同类页面**（当前命中的项目内页面前缀），当前不在项目内页面时进 `/workspace/{ulid}`；
-  下拉里的 `dashboard` 命令直接跳 `/`。
-- 项目缺失：`/workspace`、`/knowledge` 等页面的项目 ULID 若在列表中不存在，`AdminLayout` 提示
-  `layout.projectMissing` 并 `router.replace('/')` 回到仪表盘。
+- 项目切换器（侧边栏项目下拉）：`handleProjectCommand` 调用 `setCurrentProject` 后，
+  **停留在同类页面**（当前命中的项目内菜单的 `route_path`），不在项目内页面时进
+  `/workspace/{ulid}`。
+- 项目缺失：项目 ULID 若在列表中不存在，`AdminLayout` 提示 `layout.projectMissing`
+  并 `router.replace('/')` 回到仪表盘。
+- 面包屑：`activeMenuItem` 先精确匹配 `route_path`，再取「以 `/` 结尾且为最长前缀」的菜单，
+  显示「分组名 / 页面名」。
 
 ## 8. 页面实现
 
 | 路由 | 页面 | 职责 | 关键集成 |
 | --- | --- | --- | --- |
-| `/login` | `views/login/index.vue` | 登录 / 注册双 Tab 表单 | `useAuthStore.login/register`；Element Plus `el-form` 校验（密码 ≥6 位、邮箱格式）；`NWButton` 提交态；成功后跳 `/` |
+| `/login` | `views/login/index.vue` | 左侧品牌叙事 + 右侧登录表单（无注册） | `useAuthStore.login` → `menuStore.loadNav()` → 跳 `/`；`el-form` 校验（账号必填、密码 ≥6 位）；`NWButton` 提交态；底部提示「账号由管理员分配」 |
 | `/` | `views/dashboard/index.vue` | 统计卡 + 30 天趋势图 + 项目分页管理（新建/编辑/删除） | ECharts 双系列（柱 word_delta + 折线 ai_word_delta），配色 `#6366f1`/`#818cf8`；`GET /stats/overview`；`listProjects/createProject/updateProject/deleteProject`；封面色按书名散列从 6 色调色板取色；删除走 `ElMessageBox.confirm` |
-| `/settings` | `views/settings/index.vue` | 运行时配置表展示与逐条保存 | `GET /setting/list` + `POST /setting/update`；每行独立保存按钮，保存中按 `setting_key` 置 loading |
-| `/slash-admin` | `views/slash-admin/index.vue` | 内置与自定义斜杠技能列表、提示词模板编辑 | `GET /slash/list`（`enabled_only`）、保存/删除走 `post`；接口未就绪时用 `isApiNotReadyError` 判定并展示降级提示 |
-| `/workflow` | `views/workflow/index.vue` | BPMN 创作流程设计器 | `bpmn-js/lib/Modeler`；草稿**只存浏览器**：`localStorage` 键 `nw_workflow_draft_list_v1`；支持新建/载入/保存/导入/导出 BPMN XML，不入库 |
-| `/micro-app` | `views/micro-app/index.vue` | 微前端入口登记与按需装载 | `qiankun` 的 `loadMicroApp`（`sandbox: true, singular: true`）；登记表**只存浏览器**：`localStorage` 键 `nw_micro_app_registry_v1`；入口必须为合法 URL；装载/卸载子应用不入库 |
+| `/settings` | `views/settings/index.vue` | 运行时配置表展示与逐条保存 | `GET /setting/list` + `POST /setting/update`（需 `system:setting:manage`）；每行独立保存按钮，保存中按 `setting_key` 置 loading |
+| `/skills` | `views/skills/index.vue` | 技能表格 + 编辑抽屉（模板/变量/参考资料） | `listSkills/saveSkill/deleteSkill`；作用域切换按当前项目拉取合并列表；`SkillReferencePanel` 管参考资料 |
+| `/admin/menus` | `views/admin/menus.vue` | 菜单树管理 + 编辑抽屉 | `listMenus/saveMenu/deleteMenu`；图标下拉与侧边栏 `NWIcon` 同一份编码 |
+| `/admin/permissions` | `views/admin/permissions.vue` | 权限目录分组浏览 | `fetchPermCatalog`；左侧分组、右侧表格 |
 | `/models` | `views/models/index.vue` | 模型供应商卡片列表、新建编辑抽屉、连通性测试 | `listModelProviders/saveModelProvider/deleteModelProvider/testModelProvider/getModelCapability`；协议仅 `openai`/`anthropic`；系统只用对话协议，不接向量模型 |
 | `/admin/users` | `views/admin/users.vue` | 用户分页表格、状态与角色标签、新建弹窗、编辑抽屉、重置密码、删除 | `api/admin.ts` 用户接口 + `listAdminRoles` 供角色多选；子组件 `UserFormDialogs.vue` |
-| `/admin/roles` | `views/admin/roles.vue` | 角色分页表格、权限多选保存、删除 | `listAdminRoles/saveAdminRole/deleteAdminRole`；内置角色（`builtin_flag`）删除按钮禁用并以 tooltip 说明；权限码可自定义输入，已知项含 `*`、`system:user:manage`、`system:role:manage`、`system:audit:read` |
+| `/admin/roles` | `views/admin/roles.vue` | 角色分页表格、权限单选或多选保存、删除 | `listAdminRoles/saveAdminRole/deleteAdminRole` + `fetchPermCatalog`（权限选项唯一来源）；内置角色（`builtin_flag`）删除按钮禁用并以 tooltip 说明；表格内权限标签展示权限名称而非原始码 |
 | `/admin/audit` | `views/admin/audit.vue` | 审计日志筛选与只读分页表 | `listAdminAudits`，按 `action_code` / `user_ulid` 过滤 |
 | `/admin/usage` | `views/admin/usage.vue` | 区间选择 + 4 项指标 + 按日趋势 + 按供应商/按模型分布 | `GET /model/usage/overview`；ECharts 双轴（调用量柱状 + token 折线）；区间预设 7/14/30 天 |
 | `/admin/status` | `views/admin/status.vue` | 进程信息、依赖健康、AI 能力就绪结论 | `GET /system/status`；依赖项含 PostgreSQL / Redis / RabbitMQ / MinIO / Manticore / 模型；手动刷新，不自动轮询 |
@@ -322,8 +334,6 @@ frontend/
 | `element-plus` | 2.9.0 | 全局 UI 组件库（表格、表单、弹窗、菜单、下拉、分页、消息）；主题样式在 `main.ts` 引入 `element-plus/dist/index.css`，并由 `styles/button-states.css` 覆写按钮五态 |
 | `echarts` | 5.5.0 | 仪表盘 30 天字数趋势（柱+折线）、用量分析按日双轴图 |
 | `@antv/x6` | 2.18.1 | 角色关系图（节点 + 边），`await import('@antv/x6')` 懒加载 |
-| `bpmn-js` | 16.4.0 | 创作流程设计器（BPMN 建模），引入 `diagram-js.css` 与 `bpmn-font/css/bpmn.css` |
-| `qiankun` | 2.10.16 | 微前端宿主装载（`loadMicroApp`） |
 | `@codemirror/state` / `view` / `commands` / `language` / `lang-markdown` | 6.7.6 / 6.43.15 / 6.11.1 / 6.13.1 / 6.5.2 | 章节正文编辑器（markdown 语法高亮、历史、缩进） |
 | `@wangeditor/editor` + `@wangeditor/editor-for-vue` | 5.1.23 / 5.1.12 | 创作笔记富文本模式 |
 | `mavon-editor` | 3.0.2 | 创作笔记 Markdown 模式 |
@@ -331,7 +341,7 @@ frontend/
 | `vue-pdf-embed` | 2.1.7 | 知识库 pdf 原文预览 |
 | `xlsx` | 0.18.5 | 写作台目录树导出 Excel（`await import('xlsx')` 懒加载） |
 | `axios` | 1.6.8 | HTTP 客户端（`src/api/http.ts`） |
-| `pinia` | 2.1.7 | 状态管理（app / auth / project 三个 store） |
+| `pinia` | 2.1.7 | 状态管理（app / auth / menu / project 四个 store） |
 | `vue` / `vue-router` / `vue-i18n` | 3.4.34 / 4.3.2 / 9.10.2 | 框架、路由、国际化 |
 | `unocss` + `@unocss/preset-uno` + `@unocss/transformer-directives` | 0.58.6 | 原子化工具类与 `@apply`/`@variants` 指令支持（`uno.config.ts`） |
 
@@ -347,26 +357,26 @@ frontend/
 | `locales/{lang}-common.ts` | 通用命名空间 |
 | `locales/{lang}-workspace.ts` | 写作台与项目内页面 |
 | `locales/{lang}-admin.ts` | 模型、用量、状态、系统管理 |
-| `locales/{lang}-extensions.ts` | 工作流、Markdown 笔记、微前端 |
+| `locales/{lang}-extensions.ts` | Markdown 笔记编辑器双模式文案 |
 
 支持语言：`zh-CN`（简体中文）、`en-US`（English），见 `src/i18n/index.ts:NW_LOCALE_OPTIONS`；
 `fallbackLocale` 为 `zh-CN`，`legacy: false`。
 
-### 10.2 20 个命名空间
+### 10.2 命名空间
 
 | 分片 | 命名空间 |
 | --- | --- |
-| common | `common`、`http`、`login`、`layout`、`dashboard`、`settings`、`slashAdmin`（7） |
+| common | `common`、`http`、`login`、`layout`、`dashboard`、`settings`、`skills`（7） |
 | workspace | `workspace`、`projectPage`、`character`、`knowledge`、`notes`、`lore`（6） |
-| admin | `models`、`usage`、`status`、`admin`（4） |
-| extensions | `workflow`、`markdownNote`、`microApp`（3） |
+| admin | `models`、`usage`、`status`、`admin`（4，`admin` 内含 `users`/`roles`/`menus`/`perms`/`audit`） |
+| extensions | `markdownNote`（1） |
 
-合计 20 个。
+合计 18 个。菜单名称、权限名称、技能名称都来自后端数据，不进语言包。
 
 ### 10.3 键名与同步
 
-- 键名一律 camelCase，例：`layout.menu.dashboard`、`projectPage.backToWorkspace`、
-  `knowledge.search.modeKeyword`、`notes.saveStatus.saveFailed`、`markdownNote.modeRich`。
+- 键名一律 camelCase，例：`layout.quickJump`、`skills.promptTemplate`、
+  `admin.menus.routePathHint`、`projectPage.backToWorkspace`、`markdownNote.modeRich`。
 - 语言切换：`useAppStore.setLocale` → `i18n/index.ts:applyLocale`，同时写 `nw_locale`。
 - Element Plus 语言同步：`src/App.vue` 用 `el-config-provider` 包裹根节点，
   `:locale` 由 `appStore.locale_code` 计算——`en-US` 用 `element-plus/es/locale/lang/en`，

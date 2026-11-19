@@ -1,4 +1,4 @@
-// 本文件定义用户账号的持久化对象、注册登录请求与用户视图对象。
+// 本文件定义用户账号的持久化对象、登录请求与用户视图对象。
 
 package domain
 
@@ -22,13 +22,6 @@ type UserDO struct {
 
 // TableName 指定表名。
 func (UserDO) TableName() string { return "users" }
-
-// UserRegisterREQ 注册请求。
-type UserRegisterREQ struct {
-	UserName     string `json:"user_name" form:"user_name" binding:"required,min=3,max=64"`         // 登录名
-	UserEmail    string `json:"user_email" form:"user_email" binding:"required,email,max=128"`      // 邮箱
-	PasswordText string `json:"password_text" form:"password_text" binding:"required,min=6,max=64"` // 明文密码，仅入参
-}
 
 // UserLoginREQ 登录请求。
 type UserLoginREQ struct {

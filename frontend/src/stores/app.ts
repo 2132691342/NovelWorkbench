@@ -25,5 +25,10 @@ export const useAppStore = defineStore('app', {
       this.locale_code = localeCode
       applyLocale(localeCode)
     },
+    /** 设置侧边栏折叠状态（拖拽/快捷键入口复用） */
+    setSidebarCollapsed(collapsedFlag: boolean): void {
+      this.sidebar_collapsed = collapsedFlag
+      writeSidebarCollapsed(collapsedFlag)
+    },
   },
 })

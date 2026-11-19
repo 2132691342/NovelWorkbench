@@ -24,9 +24,10 @@ services:
       NW_MINIO_SECRET_KEY: ${NW_MINIO_SECRET_KEY:?未设置对象存储口令}
       NW_MANTICORE_BASE_URL: http://manticore:9308
       NW_AI_PROTOCOL_CODE: ${NW_AI_PROTOCOL_CODE:-openai}
-      NW_AI_BASE_URL: ${NW_AI_BASE_URL:?未设置模型网关地址}
-      NW_AI_API_KEY: ${NW_AI_API_KEY:?未设置模型网关密钥}
-      NW_AI_CHAT_MODEL: ${NW_AI_CHAT_MODEL:?未设置对话模型}
+      # 模型网关非启动必需：留空则不播种出厂供应商，登录后在「模型供应商」页维护
+      NW_AI_BASE_URL: ${NW_AI_BASE_URL:-}
+      NW_AI_API_KEY: ${NW_AI_API_KEY:-}
+      NW_AI_CHAT_MODEL: ${NW_AI_CHAT_MODEL:-}
       NW_AI_TEMPERATURE: ${NW_AI_TEMPERATURE:-0.7}
       NW_AI_MAX_TOKENS: ${NW_AI_MAX_TOKENS:-2048}
       NW_AI_TIMEOUT_SEC: ${NW_AI_TIMEOUT_SEC:-120}
@@ -37,8 +38,8 @@ services:
       NW_APP_RAG_TOP_K: ${NW_APP_RAG_TOP_K:-6}
       NW_APP_ADMIN_PASSWORD: ${NW_APP_ADMIN_PASSWORD:?未设置引导管理员密码}
       NW_APP_BUILD_VERSION: ${NW_APP_BUILD_VERSION:-dev}
-    ports:
-      - "127.0.0.1:8080:8080"
+    expose:
+      - "8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 30s
@@ -58,8 +59,9 @@ services:
       # nginx resolver 不做后缀补全，故上游必须写完整域名
       NGINX_RESOLVER: ${NW_NGINX_RESOLVER:-10.89.0.1}
       API_UPSTREAM: ${NW_API_UPSTREAM:-http://backend.dns.podman:8080}
+      NW_LISTEN_PORT: "80"
     ports:
-      - "80:80"
+      - "${NW_PUBLIC_PORT:-14399}:80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/healthz"]
       interval: 30s

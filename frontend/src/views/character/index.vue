@@ -197,7 +197,7 @@ onMounted(() => {
               </p>
               <div class="character-card__actions">
                 <NWButton size="small" @click="handleEdit(characterVo)">{{ t('common.edit') }}</NWButton>
-                <NWButton size="small" type="danger" @click="handleDelete(characterVo)">
+                <NWButton size="small" type="danger-text" @click="handleDelete(characterVo)">
                   {{ t('common.delete') }}
                 </NWButton>
               </div>

@@ -120,9 +120,9 @@ func (a *KnowledgeAPI) Reindex(c *gin.Context) {
 	pkg.Ok(c, nil)
 }
 
-// ChunkList 文档切片分页（GET /knowledge/chunk/list）。
+// ChunkList 文档切片分页（GET /knowledge/chunk/list/{DocULID}）。
 func (a *KnowledgeAPI) ChunkList(c *gin.Context) {
-	var req domain.KnowledgeChunkListREQ
+	req := domain.KnowledgeChunkListREQ{DocULID: c.Param("DocULID")}
 	if err := c.ShouldBindQuery(&req); err != nil {
 		respondErr(c, "knowledge.chunk.list", bindErr(err))
 		return
@@ -135,9 +135,9 @@ func (a *KnowledgeAPI) ChunkList(c *gin.Context) {
 	pkg.Ok(c, page)
 }
 
-// Content 输出文档原文（GET /knowledge/content，供前端预览 docx/pdf/txt/md）。
+// Content 输出文档原文（GET /knowledge/content/{DocULID}，供前端预览 docx/pdf/txt/md）。
 func (a *KnowledgeAPI) Content(c *gin.Context) {
-	var req domain.KnowledgeContentREQ
+	req := domain.KnowledgeContentREQ{DocULID: c.Param("DocULID")}
 	if err := c.ShouldBindQuery(&req); err != nil {
 		respondErr(c, "knowledge.content", bindErr(err))
 		return

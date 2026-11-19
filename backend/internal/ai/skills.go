@@ -1,13 +1,19 @@
-// 本文件定义内置斜杠技能资产（提示词模板），启动时播种进 slash_commands 表。
+// 本文件定义内置技能资产（提示词模板），启动时播种进 skills 表（全局作用域，BuiltinFlag=true）。
 
 package ai
 
-import (
-	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
-)
+// BuiltinSkill 内置技能资产定义（与持久化结构解耦，播种时由 service 落库）。
+type BuiltinSkill struct {
+	CommandCode     string // 技能编码（对话中以 /code 触发）
+	CommandName     string // 技能名称
+	CategoryCode    string // 分类：write/revise/outline/setting/review/other
+	DescriptionText string // 一句话说明
+	PromptTemplate  string // 提示词模板（{{占位符}}）
+	SortOrder       int    // 排序号
+}
 
-// builtinSkillList 内置斜杠命令资产（启动时播种进 slash_commands 表，BuiltinFlag=true 不可删）。
-var builtinSkillList = []domain.SlashCommandDO{
+// builtinSkillList 内置技能资产（启动时播种进 skills 表，BuiltinFlag=true 不可删）。
+var builtinSkillList = []BuiltinSkill{
 	{
 		CommandCode:     "continue",
 		CommandName:     "续写",
@@ -146,9 +152,9 @@ var builtinSkillList = []domain.SlashCommandDO{
 	},
 }
 
-// BuiltinSkills 返回内置斜杠命令定义（只读副本）。
-func BuiltinSkills() []domain.SlashCommandDO {
-	skills := make([]domain.SlashCommandDO, len(builtinSkillList))
+// BuiltinSkills 返回内置技能定义（只读副本）。
+func BuiltinSkills() []BuiltinSkill {
+	skills := make([]BuiltinSkill, len(builtinSkillList))
 	copy(skills, builtinSkillList)
 	return skills
 }

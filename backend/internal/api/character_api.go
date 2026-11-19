@@ -64,9 +64,9 @@ func (a *CharacterAPI) List(c *gin.Context) {
 	pkg.Ok(c, vos)
 }
 
-// Graph 查询角色关系图（GET /character/graph）。
+// Graph 查询角色关系图（GET /character/graph/{ProjectULID}）。
 func (a *CharacterAPI) Graph(c *gin.Context) {
-	var req domain.ProjectDetailREQ
+	req := domain.ProjectDetailREQ{ProjectULID: c.Param("ProjectULID")}
 	if err := c.ShouldBindQuery(&req); err != nil {
 		respondErr(c, "character.graph", bindErr(err))
 		return

@@ -64,9 +64,9 @@ func (a *ChapterAPI) Delete(c *gin.Context) {
 	pkg.Ok(c, nil)
 }
 
-// Detail 查询章节详情含正文（GET /chapter/detail）。
+// Detail 查询章节详情含正文（GET /chapter/detail/{ChapterULID}）。
 func (a *ChapterAPI) Detail(c *gin.Context) {
-	var req domain.ChapterContentREQ
+	req := domain.ChapterContentREQ{ChapterULID: c.Param("ChapterULID")}
 	if err := c.ShouldBindQuery(&req); err != nil {
 		respondErr(c, "chapter.detail", bindErr(err))
 		return
@@ -79,9 +79,9 @@ func (a *ChapterAPI) Detail(c *gin.Context) {
 	pkg.Ok(c, vo)
 }
 
-// SnapshotList 查询章节快照列表（GET /chapter/snapshot/list）。
+// SnapshotList 查询章节快照列表（GET /chapter/snapshot/list/{ChapterULID}）。
 func (a *ChapterAPI) SnapshotList(c *gin.Context) {
-	var req domain.ChapterSnapshotListREQ
+	req := domain.ChapterSnapshotListREQ{ChapterULID: c.Param("ChapterULID")}
 	if err := c.ShouldBindQuery(&req); err != nil {
 		respondErr(c, "chapter.snapshot.list", bindErr(err))
 		return

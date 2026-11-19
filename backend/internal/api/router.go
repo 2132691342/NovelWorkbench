@@ -28,7 +28,8 @@ type RouterDeps struct {
 	KnowledgeAPI  *KnowledgeAPI     // 知识库模块处理器
 	OutlineAPI    *OutlineAPI       // 创作规划模块处理器
 	ContinuityAPI *ContinuityAPI    // 连续性看板模块处理器
-	SlashAPI      *SlashAPI         // 斜杠命令模块处理器
+	SkillAPI      *SkillAPI         // 技能模块处理器
+	MenuAPI       *MenuAPI          // 菜单与权限目录模块处理器
 	SettingAPI    *SettingAPI       // 应用配置模块处理器
 	StatsAPI      *StatsAPI         // 数据总览模块处理器
 	ChatAPI       *ChatAPI          // AI 对话模块处理器
@@ -70,11 +71,12 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	registerKnowledgeRoutes(v1, deps.KnowledgeAPI)
 	registerOutlineRoutes(v1, deps.OutlineAPI)
 	registerContinuityRoutes(v1, deps.ContinuityAPI)
-	registerSlashRoutes(v1, deps.SlashAPI)
-	registerSettingRoutes(v1, deps.SettingAPI)
+	registerSkillRoutes(v1, deps)
+	registerSettingRoutes(v1, deps)
 	registerStatsRoutes(v1, deps.StatsAPI)
 	registerChatRoutes(v1, deps.ChatAPI)
 	registerModelRoutes(v1, deps)
+	registerMenuRoutes(v1, deps)
 	registerAdminRoutes(v1, deps)
 	return router
 }
@@ -147,9 +149,8 @@ func registerAdminRoutes(rg *gin.RouterGroup, deps RouterDeps) {
 	}
 }
 
-// registerAuthRoutes 注册认证路由（register/login 免鉴权，由中间件白名单放行）。
+// registerAuthRoutes 注册认证路由（login 免鉴权，由中间件白名单放行；系统不开放注册）。
 func registerAuthRoutes(rg *gin.RouterGroup, handler *AuthAPI) {
-	rg.POST("/auth/register", handler.Register)
 	rg.POST("/auth/login", handler.Login)
 	rg.GET("/auth/profile", handler.Profile)
 	rg.POST("/auth/logout", handler.Logout)
@@ -161,8 +162,8 @@ func registerProjectRoutes(rg *gin.RouterGroup, handler *ProjectAPI) {
 	rg.POST("/project/update", handler.Update)
 	rg.POST("/project/delete", handler.Delete)
 	rg.POST("/project/list", handler.List)
-	rg.GET("/project/detail", handler.Detail)
-	rg.GET("/project/tree", handler.Tree)
+	rg.GET("/project/detail/:ProjectULID", handler.Detail)
+	rg.GET("/project/tree/:ProjectULID", handler.Tree)
 }
 
 // registerVolumeRoutes 注册卷路由。
@@ -177,8 +178,8 @@ func registerChapterRoutes(rg *gin.RouterGroup, handler *ChapterAPI) {
 	rg.POST("/chapter/create", handler.Create)
 	rg.POST("/chapter/update", handler.Update)
 	rg.POST("/chapter/delete", handler.Delete)
-	rg.GET("/chapter/detail", handler.Detail)
-	rg.GET("/chapter/snapshot/list", handler.SnapshotList)
+	rg.GET("/chapter/detail/:ChapterULID", handler.Detail)
+	rg.GET("/chapter/snapshot/list/:ChapterULID", handler.SnapshotList)
 	rg.POST("/chapter/snapshot/create", handler.SnapshotCreate)
 	rg.POST("/chapter/snapshot/restore", handler.SnapshotRestore)
 }
@@ -188,7 +189,7 @@ func registerCharacterRoutes(rg *gin.RouterGroup, handler *CharacterAPI) {
 	rg.POST("/character/save", handler.Save)
 	rg.POST("/character/delete", handler.Delete)
 	rg.POST("/character/list", handler.List)
-	rg.GET("/character/graph", handler.Graph)
+	rg.GET("/character/graph/:ProjectULID", handler.Graph)
 	rg.POST("/character/relation/save", handler.RelationSave)
 	rg.POST("/character/relation/delete", handler.RelationDelete)
 }
@@ -207,22 +208,53 @@ func registerKnowledgeRoutes(rg *gin.RouterGroup, handler *KnowledgeAPI) {
 	rg.POST("/knowledge/delete", handler.Delete)
 	rg.POST("/knowledge/search", handler.Search)
 	rg.POST("/knowledge/reindex", handler.Reindex)
-	rg.GET("/knowledge/chunk/list", handler.ChunkList)
-	rg.GET("/knowledge/content", handler.Content)
+	rg.GET("/knowledge/chunk/list/:DocULID", handler.ChunkList)
+	rg.GET("/knowledge/content/:DocULID", handler.Content)
 }
 
-// registerSlashRoutes 注册斜杠命令路由。
-func registerSlashRoutes(rg *gin.RouterGroup, handler *SlashAPI) {
-	rg.GET("/slash/list", handler.List)
-	rg.POST("/slash/save", handler.Save)
-	rg.POST("/slash/delete", handler.Delete)
-	rg.POST("/slash/parse", handler.Parse)
+// registerSkillRoutes 注册技能路由（读对所有登录用户开放，写收口到 skill:manage）。
+func registerSkillRoutes(rg *gin.RouterGroup, deps RouterDeps) {
+	skillGroup := rg.Group("/skill")
+	skillGroup.GET("/list", deps.SkillAPI.List)
+	skillGroup.GET("/detail/:SkillULID", deps.SkillAPI.Detail)
+	skillGroup.POST("/resolve", deps.SkillAPI.Resolve)
+	skillGroup.GET("/reference/list", deps.SkillAPI.ReferenceList)
+	skillWrite := skillGroup.Group("")
+	skillWrite.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermSkillManage))
+	{
+		skillWrite.POST("/save", deps.SkillAPI.Save)
+		skillWrite.POST("/delete", deps.SkillAPI.Delete)
+		skillWrite.POST("/reference/save", deps.SkillAPI.ReferenceSave)
+		skillWrite.POST("/reference/delete", deps.SkillAPI.ReferenceDelete)
+	}
 }
 
-// registerSettingRoutes 注册应用配置路由。
-func registerSettingRoutes(rg *gin.RouterGroup, handler *SettingAPI) {
-	rg.GET("/setting/list", handler.List)
-	rg.POST("/setting/update", handler.Update)
+// registerMenuRoutes 注册菜单与权限目录路由（导航对登录用户开放，管理收口到权限码）。
+func registerMenuRoutes(rg *gin.RouterGroup, deps RouterDeps) {
+	rg.GET("/menu/nav", deps.MenuAPI.Nav)
+	menuGroup := rg.Group("/menu")
+	menuGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermMenuManage))
+	{
+		menuGroup.GET("/list", deps.MenuAPI.List)
+		menuGroup.GET("/detail/:MenuULID", deps.MenuAPI.Detail)
+		menuGroup.POST("/save", deps.MenuAPI.Save)
+		menuGroup.POST("/delete", deps.MenuAPI.Delete)
+	}
+	permGroup := rg.Group("/menu/permission")
+	permGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermPermissionRead))
+	{
+		permGroup.GET("/catalog", deps.MenuAPI.PermCatalog)
+	}
+}
+
+// registerSettingRoutes 注册应用配置路由（读取开放，写入收口到 system:setting:manage）。
+func registerSettingRoutes(rg *gin.RouterGroup, deps RouterDeps) {
+	rg.GET("/setting/list", deps.SettingAPI.List)
+	settingWrite := rg.Group("/setting")
+	settingWrite.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermSettingManage))
+	{
+		settingWrite.POST("/update", deps.SettingAPI.Update)
+	}
 }
 
 // registerStatsRoutes 注册数据总览路由。

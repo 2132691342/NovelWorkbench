@@ -43,6 +43,8 @@ type docSource struct {
 // chatContextInput 上下文装配输入（纯数据，供 buildContextBlocks 消费，便于测试注入）。
 type chatContextInput struct {
 	SkillTemplate string                    // 命中技能的提示词模板（空为自由对话）
+	SkillVariable map[string]string         // 技能变量取值（渲染模板用）
+	SkillRefList  []string                  // 技能参考资料正文（命中后注入）
 	UserInput     string                    // 解析后的用户正文（技能参数）
 	ChapterList   []chapterSource           // 当前章与引用章（首项为当前章）
 	DocList       []docSource               // @引用文档
@@ -114,16 +116,27 @@ func buildContextBlocks(input chatContextInput) ([]ai.ContextBlock, string) {
 			ContentText: formatHistoryBlock(input.HistoryList),
 		})
 	}
+	if len(input.SkillRefList) > 0 {
+		blocks = append(blocks, ai.ContextBlock{
+			BlockKey:    "skill_reference",
+			Priority:    ai.PrioritySkillRef,
+			ContentText: "【技能参考资料】\n" + strings.Join(input.SkillRefList, "\n\n"),
+		})
+	}
 	if input.SkillTemplate == "" {
 		return blocks, input.UserInput
 	}
 	// 技能渲染块优先级最高：context 取其余块先装配文本，chapter_content 超预算由装配裁剪。
 	contextText, _ := ai.AssembleContext(blocks, ai.ContextBudgetChars)
-	rendered := ai.RenderPrompt(input.SkillTemplate, map[string]string{
+	valueMap := map[string]string{
 		"user_input":      input.UserInput,
 		"chapter_content": truncateRunes(joinChapterContent(input.ChapterList), ai.ContextBudgetChars),
 		"context":         contextText,
-	})
+	}
+	for key, value := range input.SkillVariable {
+		valueMap[key] = value
+	}
+	rendered := ai.RenderPrompt(input.SkillTemplate, valueMap)
 	skillBlock := ai.ContextBlock{BlockKey: "skill", Priority: ai.PrioritySkill, ContentText: rendered}
 	return append([]ai.ContextBlock{skillBlock}, blocks...), rendered
 }

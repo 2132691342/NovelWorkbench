@@ -33,15 +33,16 @@ func (ChatMessageDO) TableName() string { return "chat_messages" }
 
 // ChatSendREQ 发送聊天消息请求（POST，流式以 SSE 响应）。
 type ChatSendREQ struct {
-	SessionULID        string   `json:"session_ulid" binding:"omitempty"`               // 会话 ULID，空则自动创建
-	ProjectULID        string   `json:"project_ulid" binding:"required"`                // 所属项目
-	ContentText        string   `json:"content_text" binding:"required,max=8000"`       // 消息正文
-	SkillCode          string   `json:"skill_code" binding:"omitempty,max=32"`          // 斜杠命令编码
-	RefDocULIDList     []string `json:"ref_doc_ulid_list"`                              // @引用文档
-	RefChapterULIDList []string `json:"ref_chapter_ulid_list"`                          // @引用章节
-	RefMessageULIDList []string `json:"ref_message_ulid_list"`                          // 显式引用的历史消息
-	HistoryCount       int      `json:"history_count" binding:"omitempty,min=0,max=50"` // 历史消息注入条数，0 用全局配置
-	ProviderULID       string   `json:"provider_ulid" binding:"omitempty,max=40"`       // 指定供应商，空用默认
+	SessionULID        string            `json:"session_ulid" binding:"omitempty"`               // 会话 ULID，空则自动创建
+	ProjectULID        string            `json:"project_ulid" binding:"required"`                // 所属项目
+	ContentText        string            `json:"content_text" binding:"required,max=8000"`       // 消息正文
+	SkillCode          string            `json:"skill_code" binding:"omitempty,max=32"`          // 技能编码
+	SkillVariableMap   map[string]string `json:"skill_variable_map"`                             // 技能变量取值
+	RefDocULIDList     []string          `json:"ref_doc_ulid_list"`                              // @引用文档
+	RefChapterULIDList []string          `json:"ref_chapter_ulid_list"`                          // @引用章节
+	RefMessageULIDList []string          `json:"ref_message_ulid_list"`                          // 显式引用的历史消息
+	HistoryCount       int               `json:"history_count" binding:"omitempty,min=0,max=50"` // 历史消息注入条数，0 用全局配置
+	ProviderULID       string            `json:"provider_ulid" binding:"omitempty,max=40"`       // 指定供应商，空用默认
 }
 
 // ChatHistoryREQ 拉取会话历史。

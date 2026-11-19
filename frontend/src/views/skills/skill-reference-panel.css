@@ -1,0 +1,19 @@
+.skill-reference-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.skill-reference-panel__title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.skill-reference-panel__hint {
+  margin: 4px 0 10px;
+  color: var(--text-placeholder);
+  font-size: 12px;
+  line-height: 1.6;
+}

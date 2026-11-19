@@ -352,7 +352,7 @@ onMounted(() => {
                   <NWButton size="small" @click.stop="openNodeDialog(undefined, data.outline_ulid)">
                     子节点
                   </NWButton>
-                  <NWButton type="danger" size="small" @click.stop="removeNode(data)">删除</NWButton>
+                  <NWButton type="danger-text" size="small" @click.stop="removeNode(data)">删除</NWButton>
                 </span>
               </div>
             </template>
@@ -385,7 +385,7 @@ onMounted(() => {
                 <span class="outline-scene-card__words">预计 {{ scene.estimated_words }} 字</span>
                 <span class="outline-scene-card__actions">
                   <NWButton size="small" @click="openSceneDialog(scene)">编辑</NWButton>
-                  <NWButton type="danger" size="small" @click="removeScene(scene)">删除</NWButton>
+                  <NWButton type="danger-text" size="small" @click="removeScene(scene)">删除</NWButton>
                 </span>
               </div>
               <div class="outline-scene-card__grid">

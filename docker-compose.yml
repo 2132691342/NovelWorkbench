@@ -1,6 +1,7 @@
 # NovelWorkbench 容器化编排：应用容器 + 可选本地中间件（profile: infra）
-# 所有凭据从 .env 注入（cp .env.example .env 后填写），本文件不含任何可用口令或固定公网 IP。
-# 本地全栈开发：docker compose --profile infra up -d --build
+# 对外只暴露一个入口端口（默认 14399），前端 nginx 反代 /api 到后端容器。
+# 所有凭据从 .env 注入（cp .env.example .env 后填写），本文件不含任何可用口令。
+# podman：podman-compose up -d --build ；docker：docker compose up -d --build
 name: novel-workbench
 
 services:
@@ -25,6 +26,7 @@ services:
       NW_MINIO_ENDPOINT: ${NW_MINIO_ENDPOINT:?未设置对象存储地址}
       NW_MINIO_ACCESS_KEY: ${NW_MINIO_ACCESS_KEY:?未设置对象存储账号}
       NW_MINIO_SECRET_KEY: ${NW_MINIO_SECRET_KEY:?未设置对象存储口令}
+      NW_MINIO_BUCKET: ${NW_MINIO_BUCKET:-novelworkbench}
       NW_MANTICORE_BASE_URL: ${NW_MANTICORE_BASE_URL:?未设置全文检索地址}
       NW_AI_PROTOCOL_CODE: ${NW_AI_PROTOCOL_CODE:-openai}
       NW_AI_BASE_URL: ${NW_AI_BASE_URL:-}
@@ -40,8 +42,8 @@ services:
       NW_APP_RAG_TOP_K: ${NW_APP_RAG_TOP_K:-6}
       NW_APP_ADMIN_PASSWORD: ${NW_APP_ADMIN_PASSWORD:?未设置引导管理员密码}
       NW_APP_BUILD_VERSION: ${NW_APP_BUILD_VERSION:-dev}
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 30s
@@ -58,14 +60,20 @@ services:
     depends_on:
       - backend
     environment:
-      NGINX_RESOLVER: "127.0.0.11"          # docker 内嵌 DNS，按请求重解析上游
+      NGINX_RESOLVER: "127.0.0.11"          # docker 内嵌 DNS（podman 用网关地址），按请求重解析上游
       API_UPSTREAM: "http://backend:8080"
+      NW_LISTEN_PORT: "80"                  # 容器内监听端口，宿主端口由下面的 ports 决定
     ports:
-      - "80:80"
+      - "${NW_PUBLIC_PORT:-14399}:80"       # 唯一对外入口：http://<host>:14399
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # ---- 以下为本地中间件（--profile infra 时启动），仅用于本地开发；口令来自 .env ----
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     profiles: ["infra"]
     container_name: nw-postgres
     environment:
@@ -78,7 +86,7 @@ services:
       - nw_pg_data:/var/lib/postgresql/data
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     profiles: ["infra"]
     container_name: nw-redis
     command: ["redis-server", "--requirepass", "${NW_REDIS_PASSWORD:?未设置缓存口令}", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]

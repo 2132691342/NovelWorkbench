@@ -28,50 +28,60 @@ func findBlock(blocks []ai.ContextBlock, blockKey string) *ai.ContextBlock {
 	return nil
 }
 
-// enabledSlashCommands 基于内置技能构造测试命令表（含一条禁用命令）。
-func enabledSlashCommands() []domain.SlashCommandDO {
-	commands := ai.BuiltinSkills()
-	for i := range commands {
-		commands[i].EnabledFlag = true
-	}
-	return append(commands, domain.SlashCommandDO{
-		CommandCode: "disabled_cmd",
-		CommandName: "禁用命令",
-		EnabledFlag: false,
-	})
-}
-
 // TestChatRequestPreparationChain 覆盖 AI 对话请求准备链路。
 func TestChatRequestPreparationChain(t *testing.T) {
-	commands := enabledSlashCommands()
-
-	// ---- 环节一：斜杠命令解析，首 token 命中才剥离命令与参数 ----
-	parsed := parseSlashContent("/continue 以林澈视角", commands)
-	if parsed.SkillCode != "continue" || parsed.RemainderText != "以林澈视角" {
-		t.Fatalf("命令与参数分离失败: %+v", parsed)
+	// ---- 环节一：正文首 token 的 /code 解析，命中才剥离命令与参数 ----
+	skillCode, remainder := parseSlashToken("/continue 以林澈视角")
+	if skillCode != "continue" || remainder != "以林澈视角" {
+		t.Fatalf("命令与参数分离失败: %q %q", skillCode, remainder)
 	}
-	if parsed.PlaceholderMap["user_input"] != "以林澈视角" {
-		t.Fatalf("placeholder user_input = %q, want 以林澈视角", parsed.PlaceholderMap["user_input"])
+	skillCode, remainder = parseSlashToken("  /polish \t 加强画面感  \n")
+	if skillCode != "polish" || remainder != "加强画面感" {
+		t.Fatalf("空白归一失败: %q %q", skillCode, remainder)
 	}
-	parsed = parseSlashContent("  /polish \t 加强画面感  \n", commands)
-	if parsed.SkillCode != "polish" || parsed.RemainderText != "加强画面感" {
-		t.Fatalf("空白归一失败: %+v", parsed)
-	}
-	for _, contentText := range []string{
-		"普通的正文开头，不该命中",
-		"/unknown 一些参数",
-		"/disabled_cmd 参数",
-		"续写 /continue",
-	} {
-		parsed = parseSlashContent(contentText, commands)
-		if parsed.SkillCode != "" || parsed.RemainderText != contentText || len(parsed.PlaceholderMap) != 0 {
-			t.Fatalf("content %q 未命中时应原样保留: %+v", contentText, parsed)
+	for _, contentText := range []string{"普通的正文开头，不该命中", "续写 /continue", "/continue"} {
+		parsedCode, parsedRemainder := parseSlashToken(contentText)
+		if parsedCode != "" {
+			t.Fatalf("content %q 未命中时不应产出技能编码: %q", contentText, parsedCode)
+		}
+		if contentText != "/continue" && parsedRemainder != contentText {
+			t.Fatalf("content %q 未命中时应原样保留: %q", contentText, parsedRemainder)
 		}
 	}
 
-	// ---- 环节二：技能命中，模板占位符用其余块装配文本填充 ----
+	// ---- 环节一之二：技能变量取值（显式传值 > 声明缺省值 > 必填缺失） ----
+	variableList := []domain.SkillVariableDO{
+		{VariableName: "tone", VariableLabel: "语气", DefaultValue: "克制"},
+		{VariableName: "scene", VariableLabel: "场景", RequiredFlag: true},
+	}
+	valueMap, missing := resolveSkillVariables("polish", variableList, map[string]string{"scene": "雨夜"}, "正文")
+	if valueMap["tone"] != "克制" || valueMap["scene"] != "雨夜" || valueMap["user_input"] != "正文" {
+		t.Fatalf("变量取值错误: %+v", valueMap)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("必填变量已提供时不应缺失: %v", missing)
+	}
+	_, missing = resolveSkillVariables("polish", variableList, nil, "正文")
+	if len(missing) != 1 || missing[0] != "scene" {
+		t.Fatalf("必填变量缺失应被记录: %v", missing)
+	}
+
+	// ---- 环节一之三：参考资料关键词命中，空关键词总是注入 ----
+	if !matchSkillReferenceKeywords("", []string{"任意正文"}) {
+		t.Fatal("空关键词应总是命中")
+	}
+	if !matchSkillReferenceKeywords("雨夜, 追车", []string{"这是一个雨夜"}) {
+		t.Fatal("关键词出现在正文中应命中")
+	}
+	if matchSkillReferenceKeywords("雨夜", []string{"晴天的午后"}) {
+		t.Fatal("关键词未出现时不应命中")
+	}
+
+	// ---- 环节二：技能命中，模板占位符用其余块装配文本与变量填充 ----
 	input := chatContextInput{
-		SkillTemplate: "润色指令：{{user_input}}｜章节：{{chapter_content}}｜依据：{{context}}",
+		SkillTemplate: "润色指令：{{user_input}}｜语气：{{tone}}｜章节：{{chapter_content}}｜依据：{{context}}",
+		SkillVariable: map[string]string{"tone": "克制"},
+		SkillRefList:  []string{"【文风样例】\n短句为主"},
 		UserInput:     "这段话",
 		ChapterList:   []chapterSource{{ChapterName: "第一章", ContentText: "章节正文", IsCurrent: true}},
 		DocList:       []docSource{{DocName: "设定集", FullText: "文档全文"}},
@@ -87,10 +97,14 @@ func TestChatRequestPreparationChain(t *testing.T) {
 	if instruction != skillBlock.ContentText {
 		t.Fatal("最终指令应为技能渲染结果")
 	}
-	for _, want := range []string{"润色指令：这段话", "章节：章节正文", "依据：", "文档全文"} {
+	for _, want := range []string{"润色指令：这段话", "语气：克制", "章节：章节正文", "依据：", "文档全文"} {
 		if !strings.Contains(instruction, want) {
 			t.Fatalf("渲染结果缺少 %q: %q", want, instruction)
 		}
+	}
+	refBlock := findBlock(blocks, "skill_reference")
+	if refBlock == nil || refBlock.Priority != ai.PrioritySkillRef || !strings.Contains(refBlock.ContentText, "短句为主") {
+		t.Fatalf("技能参考资料块缺失或优先级错误: %+v", refBlock)
 	}
 
 	// ---- 环节三：自由对话（技能未命中）直接用用户正文 ----

@@ -1,6 +1,6 @@
 # AI 子系统设计
 
-本文描述 NovelWorkbench 当前的 AI 子系统：模型网关、提示词与上下文装配、斜杠技能、
+本文描述 NovelWorkbench 当前的 AI 子系统：模型网关、提示词与上下文装配、技能（Skill）、
 无向量检索、流式协议、用量统计与安全边界。
 
 代码位置：
@@ -8,7 +8,8 @@
 | 模块 | 路径 |
 | --- | --- |
 | 模型网关 | `backend/internal/ai/client.go`、`usage.go`、`prompt.go`、`skills.go` |
-| 对话业务 | `backend/internal/service/chat_service.go`、`chat_context.go`、`slash_service.go` |
+| 对话业务 | `backend/internal/service/chat_service.go`、`chat_context.go` |
+| 技能业务 | `backend/internal/service/skill_service.go`、`skill_reference_service.go` |
 | 检索业务 | `backend/internal/service/knowledge_service.go`、`knowledge_manticore.go`、`knowledge_worker.go` |
 | 供应商与用量 | `backend/internal/service/model_provider_service.go`、`model_usage_service.go` |
 | 领域模型 | `backend/internal/domain/chat.go`、`skill.go`、`model_provider.go`、`model_usage.go`、`knowledge.go` |
@@ -45,7 +46,7 @@ AI 能力围绕"单轮可控生成"设计：用户给出意图，系统装配最
 | `ai.ProviderSpec` | 同上 | 一次调用所需的供应商能力快照（密钥明文只在内存） |
 | `ai.UsageRecorder` | `internal/ai/usage.go` | 用量上报接口，由 `service.ModelUsageService` 实现 |
 | `ai.AssembleContext` / `ai.RenderPrompt` / `ai.SystemPrompt` | `internal/ai/prompt.go` | 上下文装配、占位符渲染、系统提示词 |
-| `ai.BuiltinSkills` | `internal/ai/skills.go` | 9 个内置斜杠技能定义 |
+| `ai.BuiltinSkills` | `internal/ai/skills.go` | 9 个内置技能定义（`BuiltinSkill`，与持久化结构解耦） |
 
 `ProviderSpec` 字段：`ProviderULID`、`ProviderName`、`ProtocolCode`、`BaseURL`、`APIKey`、
 `ChatModelName`、`Temperature`、`MaxTokens`、`Timeout`。密钥由 service 解密后传入，`ai` 包不接触存储。
@@ -130,8 +131,9 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] hex |
 
 | 优先级 | 常量 | 块标识（BlockKey） | 内容来源 |
 | --- | --- | --- | --- |
-| 100 | `PrioritySkill` | `skill` | 命中斜杠命令后渲染的提示词模板 |
+| 100 | `PrioritySkill` | `skill` | 命中技能后渲染的提示词模板 |
 | 90 | `PriorityCurrentChapter` | `current_chapter` | 当前编辑章节正文（引用章节列表首项） |
+| 85 | `PrioritySkillRef` | `skill_reference` | 技能参考资料（关键词命中后注入，单技能上限 4000 字符） |
 | 80 | `PriorityExplicitRef` | `ref_chapter` / `ref_doc` | @引用的章节正文 / @引用文档全文拼接 |
 | 70 | `PriorityRAG` | `rag` | 知识库召回切片 |
 | 60 | `PriorityChapterSummary` | `chapter_summary` | 当前章前后相邻章梗概 |
@@ -216,18 +218,25 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] hex |
 角色映射（`chatRoleOf`）：`assistant` → `schema.Assistant`；`system` → `schema.System`；
 其余（含 `user` 与未知值）→ `schema.User`。
 
-## 5. 斜杠技能
+## 5. 技能（Skill）
 
 ### 5.1 数据模型
 
-`domain.SlashCommandDO`（表 `slash_commands`）：`command_ulid`（`SKL_` 前缀）、`command_code`（唯一索引）、
-`command_name`、`category_code`、`description_text`、`prompt_template`、`enabled_flag`、`builtin_flag`、`sort_order`。
+技能 = 作用域 + 提示词模板 + 变量声明 + 参考资料，落在两张表：
+
+| 表 | 关键列 | 说明 |
+| --- | --- | --- |
+| `skills` | `skill_ulid`（`SKL_`）、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`、`description_text`、`prompt_template`、`variable_spec_json`、`enabled_flag`、`builtin_flag`、`sort_order` | 作用域 `global` / `project`；同编码项目技能覆盖全局技能 |
+| `skill_references` | `ref_ulid`（`SKR_`）、`skill_ulid`、`ref_name`、`ref_text`、`keyword_list`、`sort_order` | 关键词为空表示总是注入 |
+
+对应 `domain.SkillDO` / `domain.SkillReferenceDO`，VO/DTO 见 `domain/skill.go`。
 
 ### 5.2 9 个内置技能
 
-`ai.BuiltinSkills()`（`internal/ai/skills.go`）：
+`ai.BuiltinSkills()`（`internal/ai/skills.go`）返回 `[]ai.BuiltinSkill`，播种时由
+`service.SkillService.SeedDefaults` 落库为 `scope_code='global'`：
 
-| command_code | 名称 | category_code | 用途 | 使用占位符 | sort_order |
+| skill_code | 名称 | category_code | 用途 | 使用占位符 | sort_order |
 | --- | --- | --- | --- | --- | --- |
 | `continue` | 续写 | `write` | 依据当前章节与上下文续写下一段正文 | `{{user_input}}`、`{{chapter_content}}`、`{{context}}` | 10 |
 | `outline` | 生成大纲 | `outline` | 根据需求生成章节大纲或情节梗概 | `{{user_input}}`、`{{context}}` | 20 |
@@ -239,28 +248,54 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] hex |
 | `name` | 取名 | `setting` | 为角色、地名、功法等生成候选名字 | `{{user_input}}`、`{{context}}` | 80 |
 | `setting` | 设定问答 | `setting` | 基于世界观设定与知识库回答设定问题 | `{{user_input}}`、`{{context}}` | 90 |
 
-### 5.3 解析优先级
+### 5.3 解析与覆盖优先级
 
-`ChatService.resolveSkill`（`internal/service/chat_service.go`）：
+`ChatService.resolveSkill`（`internal/service/chat_service.go`）委托 `SkillService.Resolve`：
 
-1. 请求体 `skill_code` 非空 → 按编码查**启用中**的技能（`findEnabledSkill`）；查不到 → 业务错误
-   "技能不存在或未启用"；命中时 `user_input` = 请求全文。
-2. `skill_code` 为空 → `slashService.Parse` 解析正文首 token 斜杠命令（`parseSlashContent`）：
-   - 正文 trim 后以 `/` 开头 → 取到首个空白符为止的 token 作为命令码；
-   - 命令码命中启用中的命令 → `skill_code` = 命令码，`remainder_text` = 去掉命令后的正文，
-     `placeholder_map["user_input"]` = 同一段正文；
-   - 未命中（命令不存在或已停用，或正文不以 `/` 开头）→ `skill_code` 为空，**正文原样保留**为用户输入，
+1. 请求体 `skill_code` 非空 → 直接按编码解析（先项目技能、后全局技能）。
+2. `skill_code` 为空 → `parseSlashToken` 解析正文首 token：
+   - 正文 trim 后以 `/` 开头 → 取到首个空白符为止的 token 作为编码；
+   - 命中启用中的技能 → `remainder_text` = 去掉命令后的正文；
+   - 未命中（编码不存在、已停用、或正文不以 `/` 开头）→ 技能编码为空，**正文原样保留**，
      按自由对话处理。
+3. `SkillService.resolveByCode`：`project_ulid` 非空时先查
+   `(project, code)` 且启用 → 命中即用；否则回退 `(global, code)`；都没命中返回
+   "技能不存在或已停用: code"。
 
-### 5.4 播种与生命周期
+命中的技能随 `{{user_input}}`（`remainder_text`）、`{{chapter_content}}`（当前章）、
+`{{context}}`（其余上下文装配文本）与自声明变量一起渲染；参考资料作为独立
+`skill_reference` 块注入（优先级 85）。
 
-`SlashService.SeedBuiltin`（幂等）：逐个内置技能按 `command_code` 查缺补插；已存在则跳过，
-**不覆盖用户对提示词模板的定制**。插入时 `enabled_flag = true`、`builtin_flag = true`。
+### 5.4 变量声明与校验
 
-- 内置技能不可删除：`SlashService.Delete` 对 `builtin_flag = true` 返回 "内置命令不可删除"。
-- 内置技能可停用：`SlashService.Save` 更新 `enabled_flag`；停用后不再参与解析与匹配。
-- `builtin_flag` 不在更新字段列表中（`fields` map 不含该列），创建时固定为 false（用户自建）。
-- 更新时若 `command_code` 被其他记录占用 → 冲突错误。
+- 变量声明存 `variable_spec_json`（`SkillVariableDO` 数组）：
+  `variable_name`、`variable_label`、`default_value`、`required_flag`、`description_text`。
+- 取值优先级：显式传入 > 声明缺省值 > 空串；`required_flag` 且无值时进 `missing_list`。
+- `resolveSkillVariables` 恒注入 `skill_code` 与 `user_input` 两个隐含变量。
+- 保存时 `validateSkillTemplate` 用 `ai.TemplatePlaceholders` 校验：模板中出现的占位符
+  必须是 `user_input` / `chapter_content` / `context` / `skill_code` 或已声明变量，否则
+  `ERR_INVALID_PARAM`。
+- 对话链路渲染发现 `missing_list` 非空时直接拒绝（`SkillRenderDTO` 阶段），避免把空值发给模型。
+
+### 5.5 参考资料命中规则
+
+`SkillService.matchReferences`（`internal/service/skill_reference_service.go`）：
+
+1. 按 `sort_order` 顺序遍历该技能的全部参考资料；
+2. 关键词列表为空 → 总是命中；否则任一关键词出现在正文（或用户输入）中即命中；
+3. 命中后按 `【资料名】\n正文` 拼接，累计字符超过 4000 时停止；
+4. 结果作为 `skill_reference` 块进入上下文装配（优先级 85，高于显式引用、低于当前章节）。
+
+### 5.6 播种与生命周期
+
+`SkillService.SeedDefaults`（幂等）：逐个内置技能按 `(global, "", skill_code)` 查缺补插；
+已存在则跳过，**不覆盖作者对模板/变量的定制**。插入时 `enabled_flag = true`、`builtin_flag = true`。
+
+- 内置技能不可删除：`SkillService.Delete` 对 `builtin_flag = true` 返回"内置技能不允许删除，可停用"。
+- 内置技能可停用、可改模板/变量/参考资料。
+- 内置技能的 `skill_code` 与 `scope_code` 不可改（`Save` 显式校验）。
+- 删除技能时级联清理其参考资料（`DeleteReferencesBySkill`）。
+- 同作用域内编码唯一由服务层保证（先按 `(scope, project, code)` 查重再写）。
 
 ## 6. 无向量检索设计
 

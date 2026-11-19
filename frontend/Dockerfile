@@ -9,7 +9,8 @@ RUN npm run build
 FROM nginx:1.27-alpine
 # nginx.conf.template 由 docker-entrypoint 的 envsubst 渲染；变量缺省见 ENV
 ENV NGINX_RESOLVER=127.0.0.11 \
-    API_UPSTREAM=http://backend:8080
+    API_UPSTREAM=http://backend:8080 \
+    NW_LISTEN_PORT=80
 COPY --from=builder /src/dist /usr/share/nginx/html
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 EXPOSE 80

@@ -33,21 +33,6 @@ func NewAuthAPI(s *service.AuthService) *AuthAPI {
 	return &AuthAPI{svc: s}
 }
 
-// Register 处理用户注册（POST /auth/register）。
-func (a *AuthAPI) Register(c *gin.Context) {
-	var req domain.UserRegisterREQ
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondErr(c, "auth.register", bindErr(err))
-		return
-	}
-	vo, err := a.svc.Register(c.Request.Context(), &req)
-	if err != nil {
-		respondErr(c, "auth.register", err)
-		return
-	}
-	pkg.Ok(c, vo)
-}
-
 // Login 处理用户登录（POST /auth/login）。
 func (a *AuthAPI) Login(c *gin.Context) {
 	var req domain.UserLoginREQ

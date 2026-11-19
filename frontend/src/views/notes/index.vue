@@ -271,7 +271,7 @@ onMounted(() => {
                 </span>
                 <span class="notes-page__item-time">{{ formatTime(noteVo.updated_at_ms) }}</span>
               </div>
-              <NWButton size="small" type="danger" @click.stop="handleDelete(noteVo)">
+              <NWButton size="small" type="danger-text" @click.stop="handleDelete(noteVo)">
                 {{ t('common.delete') }}
               </NWButton>
             </li>

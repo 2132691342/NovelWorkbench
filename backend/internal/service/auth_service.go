@@ -1,4 +1,4 @@
-// 本文件实现认证业务：注册、登录、当前用户与登出吊销。
+// 本文件实现认证业务：登录、当前用户与登出吊销（账号由管理员分配，系统不开放注册）。
 
 package service
 
@@ -13,7 +13,7 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/repo"
 )
 
-// AuthService 认证业务：注册、登录、用户信息、登出吊销。
+// AuthService 认证业务：登录、用户信息、登出吊销。
 type AuthService struct {
 	userRepo   *repo.UserRepo // 用户仓储
 	roleRepo   *repo.RoleRepo // 角色仓储
@@ -24,38 +24,6 @@ type AuthService struct {
 // NewAuthService 构造认证服务。
 func NewAuthService(userRepo *repo.UserRepo, roleRepo *repo.RoleRepo, signer *pkg.JWTSigner, tokenStore pkg.TokenStore) *AuthService {
 	return &AuthService{userRepo: userRepo, roleRepo: roleRepo, signer: signer, tokenStore: tokenStore}
-}
-
-// Register 注册用户（登录名/邮箱唯一，bcrypt 哈希密码）。
-func (s *AuthService) Register(ctx context.Context, req *domain.UserRegisterREQ) (domain.UserVO, error) {
-	existing, err := s.userRepo.GetByUserName(ctx, req.UserName)
-	if err != nil {
-		return domain.UserVO{}, err
-	}
-	if existing != nil {
-		return domain.UserVO{}, pkg.NewBizError(domain.RespCodeConflict, "用户名已被注册")
-	}
-	existing, err = s.userRepo.GetByEmail(ctx, req.UserEmail)
-	if err != nil {
-		return domain.UserVO{}, err
-	}
-	if existing != nil {
-		return domain.UserVO{}, pkg.NewBizError(domain.RespCodeConflict, "邮箱已被注册")
-	}
-	hashBytes, err := bcrypt.GenerateFromPassword([]byte(req.PasswordText), bcrypt.DefaultCost)
-	if err != nil {
-		return domain.UserVO{}, pkg.WrapBizError(domain.RespCodeInternalError, "加密密码失败", err)
-	}
-	do := &domain.UserDO{
-		UserULID:     pkg.NewULID(domain.IDPrefixUser),
-		UserName:     req.UserName,
-		UserEmail:    req.UserEmail,
-		PasswordHash: string(hashBytes),
-	}
-	if err := s.userRepo.Create(ctx, do); err != nil {
-		return domain.UserVO{}, err
-	}
-	return toUserVO(do), nil
 }
 
 // Login 登录（账号匹配登录名或邮箱），成功签发 JWT。

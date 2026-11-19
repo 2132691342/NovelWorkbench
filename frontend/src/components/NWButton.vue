@@ -3,7 +3,7 @@
 // 通用按钮组件：支持 primary/default/text/danger 四种形态与三档尺寸，状态样式挂接全局五态体系。
 import { computed } from 'vue'
 
-type NWButtonType = 'primary' | 'default' | 'text' | 'danger'
+type NWButtonType = 'primary' | 'default' | 'text' | 'danger' | 'danger-text'
 type NWButtonSize = 'large' | 'default' | 'small'
 
 const props = withDefaults(

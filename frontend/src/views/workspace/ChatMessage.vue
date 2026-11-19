@@ -58,7 +58,7 @@ function chunkPreview(chunkText: string): string {
 
       <div v-if="message.error_message" class="chat-message__error">
         <span class="chat-message__error-text">{{ message.error_message }}</span>
-        <NWButton size="small" type="danger" @click="emit('retry')">
+        <NWButton size="small" @click="emit('retry')">
           {{ t('workspace.ai.retry') }}
         </NWButton>
       </div>

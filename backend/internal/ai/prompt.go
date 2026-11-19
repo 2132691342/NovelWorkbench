@@ -10,8 +10,9 @@ import (
 
 // 上下文块优先级常量：数值越大越先获得预算（技能提示与当前章节不可丢弃）。
 const (
-	PrioritySkill          = 100 // 斜杠命令提示词模板
+	PrioritySkill          = 100 // 技能提示词模板
 	PriorityCurrentChapter = 90  // 当前编辑章节正文
+	PrioritySkillRef       = 85  // 技能参考资料（低于当前章节，高于显式引用）
 	PriorityExplicitRef    = 80  // @显式引用的文档/章节
 	PriorityRAG            = 70  // 知识库召回片段
 	PriorityChapterSummary = 60  // 前文章节梗概
@@ -61,6 +62,21 @@ func RenderPrompt(template string, valueMap map[string]string) string {
 		key := placeholderPattern.ReplaceAllString(match, "$1")
 		return valueMap[key]
 	})
+}
+
+// TemplatePlaceholders 返回模板中未登记在 known 里的占位符（去重、按出现顺序）。
+func TemplatePlaceholders(template string, known map[string]bool) []string {
+	unknown := make([]string, 0, 4)
+	seen := make(map[string]bool, 4)
+	for _, match := range placeholderPattern.FindAllStringSubmatch(template, -1) {
+		key := match[1]
+		if known[key] || seen[key] {
+			continue
+		}
+		seen[key] = true
+		unknown = append(unknown, key)
+	}
+	return unknown
 }
 
 // SystemPrompt 生成小说创作助手系统提示词（注入项目文风约束）。

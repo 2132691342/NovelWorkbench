@@ -1,65 +1,146 @@
 <!--
-  主框架：侧边栏（工作台导航：项目上下文 + 项目内页面 + 全局页 + 系统管理）+ 顶栏（项目切换/语言/用户）。
-  项目上下文导航是本项目的主入口：任何项目内页面都能在任意项目中直接切换。
+  主框架：二级侧边栏（后端驱动导航树）+ 顶栏（面包屑 / 项目切换 / 语言 / 用户）。
+  导航完全由 /menu/nav 下发：分组标题与页面项都由菜单表决定，前端不再硬编码菜单结构。
 -->
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
+import { useMenuStore } from '@/stores/menu'
 import { useProjectStore } from '@/stores/project'
 import { NW_LOCALE_OPTIONS } from '@/i18n'
+import type { NWMenuItemVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
+import NWIcon from '@/components/NWIcon.vue'
 
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const menuStore = useMenuStore()
 const projectStore = useProjectStore()
 const { t } = useI18n()
 
-/** 项目内页面路径前缀 → 页面键（用于侧边栏高亮与切换） */
-const NW_PROJECT_PAGE_LIST = [
-  { menu_key: 'workspace', route_name: 'workspace', path_prefix: '/workspace/' },
-  { menu_key: 'outline', route_name: 'outline', path_prefix: '/outline/' },
-  { menu_key: 'continuity', route_name: 'continuity', path_prefix: '/continuity/' },
-  { menu_key: 'character', route_name: 'character', path_prefix: '/character/' },
-  { menu_key: 'lore', route_name: 'lore', path_prefix: '/lore/' },
-  { menu_key: 'knowledge', route_name: 'knowledge', path_prefix: '/knowledge/' },
-  { menu_key: 'notes', route_name: 'notes', path_prefix: '/notes/' },
-]
+/** 图标快速跳转抽屉（顶栏搜索入口） */
+const commandVisible = ref(false)
+const commandKeyword = ref('')
 
-const activeMenuPath = computed(() => route.path)
+/** 项目作用域路由判断：路径里带 project_ulid 参数即项目页 */
+const routeProjectUlid = computed(() => String(route.params.project_ulid ?? ''))
 
-/** 当前路由命中的项目内页面（非项目内页面为 null） */
-const activeProjectPage = computed(() => {
-  const matched = NW_PROJECT_PAGE_LIST.find((pageItem) =>
-    route.path.startsWith(pageItem.path_prefix),
-  )
-  return matched ?? null
-})
-
-/** 路由中的项目 ULID（项目内页面优先于本地存储） */
-const routeProjectUlid = computed(() => {
-  if (!activeProjectPage.value) {
-    return ''
-  }
-  return String(route.params.project_ulid ?? '')
-})
-
-/** 当前生效项目 ULID */
+/** 当前生效项目 ULID（URL 优先于本地选中态） */
 const effectiveProjectUlid = computed(
   () => routeProjectUlid.value || projectStore.current_project_ulid,
 )
 
-/** 是否系统管理员（角色编码包含 admin 时展示系统管理入口） */
-const isAdminUser = computed(() => (authStore.user_vo?.role_codes ?? []).includes('admin'))
+/**
+ * 菜单路由解析：项目内菜单的 route_path 以 :project_ulid 结尾，
+ * 未选中项目时禁用该项（与后端 scope_code=project 对应）。
+ */
+function resolveMenuPath(menuItem: NWMenuItemVo): string {
+  if (menuItem.scope_code === 'project') {
+    return menuItem.route_path.replace(':project_ulid', effectiveProjectUlid.value)
+  }
+  return menuItem.route_path
+}
+
+/** 菜单是否可点击：页面类型且有路由，项目内菜单还要求已选项目 */
+function isMenuDisabled(menuItem: NWMenuItemVo): boolean {
+  if (menuItem.menu_type_code !== 'page' || !menuItem.route_path) {
+    return true
+  }
+  return menuItem.scope_code === 'project' && !effectiveProjectUlid.value
+}
+
+/** 侧边栏渲染数据：过滤掉没有可见子项的分组 */
+const sidebarMenuList = computed(() =>
+  menuStore.menu_tree_list
+    .map((menuItem) => ({
+      ...menuItem,
+      child_list: (menuItem.child_list ?? []).filter((childItem) => childItem.menu_type_code === 'page'),
+    }))
+    .filter((menuItem) =>
+      menuItem.menu_type_code === 'page' ? true : menuItem.child_list.length > 0,
+    ),
+)
+
+/** 扁平化页面菜单（顶栏搜索与快捷键跳转用） */
+const flatPageMenuList = computed(() => {
+  const result: NWMenuItemVo[] = []
+  for (const menuItem of menuStore.menu_tree_list) {
+    if (menuItem.menu_type_code === 'page') {
+      result.push(menuItem)
+      continue
+    }
+    for (const childItem of menuItem.child_list ?? []) {
+      if (childItem.menu_type_code === 'page') {
+        result.push(childItem)
+      }
+    }
+  }
+  return result
+})
+
+/** 搜索命中的菜单项 */
+const commandResultList = computed(() => {
+  const keyword = commandKeyword.value.trim().toLowerCase()
+  if (!keyword) {
+    return flatPageMenuList.value
+  }
+  return flatPageMenuList.value.filter(
+    (menuItem) =>
+      menuItem.menu_name.toLowerCase().includes(keyword) ||
+      menuItem.menu_code.toLowerCase().includes(keyword),
+  )
+})
+
+/**
+ * 当前路由命中的菜单项（面包屑与高亮用）：
+ * 先精确匹配路由，再取最长前缀匹配（项目内路由的实际路径比模板长）。
+ */
+const activeMenuItem = computed(() => {
+  const currentPath = route.path
+  const exactItem = flatPageMenuList.value.find((menuItem) => menuItem.route_path === currentPath)
+  if (exactItem) {
+    return exactItem
+  }
+  let matchedItem: NWMenuItemVo | null = null
+  let matchedLength = 0
+  for (const menuItem of flatPageMenuList.value) {
+    const basePath = menuItem.route_path.replace(':project_ulid', '')
+    if (!basePath || !basePath.endsWith('/') || !currentPath.startsWith(basePath)) {
+      continue
+    }
+    if (basePath.length > matchedLength) {
+      matchedItem = menuItem
+      matchedLength = basePath.length
+    }
+  }
+  return matchedItem
+})
+
+/** 面包屑：分组名 / 页面名 */
+const breadcrumbText = computed(() => {
+  if (!activeMenuItem.value) {
+    return ''
+  }
+  for (const menuItem of sidebarMenuList.value) {
+    if (menuItem.menu_type_code === 'page' && menuItem.menu_code === activeMenuItem.value.menu_code) {
+      return activeMenuItem.value.menu_name
+    }
+    if ((menuItem.child_list ?? []).some((childItem) => childItem.menu_code === activeMenuItem.value?.menu_code)) {
+      return `${menuItem.menu_name} / ${activeMenuItem.value.menu_name}`
+    }
+  }
+  return activeMenuItem.value.menu_name
+})
 
 const avatarText = computed(() => {
   const userName = authStore.user_vo?.user_name ?? ''
-  return userName.length > 0 ? userName.slice(0, 1) : '?'
+  return userName.length > 0 ? userName.slice(0, 1).toUpperCase() : '?'
 })
 
 const currentLocaleLabel = computed(() => {
@@ -69,20 +150,23 @@ const currentLocaleLabel = computed(() => {
   return matchedOption?.locale_label ?? NW_LOCALE_OPTIONS[0].locale_label
 })
 
-function handleMenuSelect(menuPath: string | number): void {
-  void router.push(String(menuPath))
-}
-
-/** 切换项目：停留在同类页面（写作台/角色/设定/知识库/笔记），无同类页面则进写作台 */
-function handleProjectCommand(projectUlid: string | number | object): void {
-  const targetUlid = String(projectUlid)
-  if (targetUlid === 'dashboard') {
-    void router.push('/')
+/** 点击菜单：项目内菜单在切换页面前同步选中项目 */
+function handleMenuClick(menuItem: NWMenuItemVo): void {
+  if (isMenuDisabled(menuItem)) {
     return
   }
+  if (menuItem.scope_code === 'project') {
+    projectStore.setCurrentProject(effectiveProjectUlid.value)
+  }
+  void router.push(resolveMenuPath(menuItem))
+}
+
+/** 切换项目：停留在同类页面（写作台/角色/知识库…），无同类页面则进写作台 */
+function handleProjectCommand(projectUlid: string | number | object): void {
+  const targetUlid = String(projectUlid)
   projectStore.setCurrentProject(targetUlid)
-  const pathSuffix = activeProjectPage.value ? activeProjectPage.value.path_prefix : '/workspace/'
-  void router.push(`${pathSuffix}${targetUlid}`)
+  const suffix = activeMenuItem.value?.scope_code === 'project' ? activeMenuItem.value.route_path : '/workspace/:project_ulid'
+  void router.push(suffix.replace(':project_ulid', targetUlid))
 }
 
 function handleLocaleCommand(command: string | number | object): void {
@@ -97,7 +181,20 @@ async function handleUserCommand(command: string | number | object): Promise<voi
     return
   }
   await authStore.logout()
+  menuStore.resetNav()
   void router.push('/login')
+}
+
+/** 打开快速跳转 */
+function openCommandPalette(): void {
+  commandKeyword.value = ''
+  commandVisible.value = true
+}
+
+/** 快速跳转到选中菜单 */
+function handleCommandSelect(menuItem: NWMenuItemVo): void {
+  commandVisible.value = false
+  handleMenuClick(menuItem)
 }
 
 // 路由中的项目变化时同步到全局选中态（URL 是项目上下文的最高优先级来源）；
@@ -134,6 +231,9 @@ watch(
 )
 
 onMounted(() => {
+  if (!menuStore.nav_loaded) {
+    void menuStore.loadNav()
+  }
   if (!projectStore.project_list.length) {
     void projectStore.loadProjectList()
   }
@@ -144,15 +244,7 @@ onMounted(() => {
   <div class="admin-layout">
     <aside class="admin-layout__aside" :class="{ 'is-collapsed': appStore.sidebar_collapsed }">
       <div class="admin-layout__brand">
-        <svg class="admin-layout__brand-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="5" fill="var(--primary)" />
-          <path
-            d="M8 8v8M8 8h2.6a2.4 2.4 0 0 1 2.4 2.4V16M16 8v8"
-            stroke="#ffffff"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          />
-        </svg>
+        <span class="admin-layout__brand-mark">N</span>
         <span v-show="!appStore.sidebar_collapsed" class="admin-layout__brand-text">
           {{ t('common.appName') }}
         </span>
@@ -162,12 +254,11 @@ onMounted(() => {
       <div v-show="!appStore.sidebar_collapsed" class="admin-layout__project">
         <el-dropdown trigger="click" class="admin-layout__project-dropdown" @command="handleProjectCommand">
           <div class="admin-layout__project-trigger">
+            <NWIcon icon_code="book" :size_px="15" />
             <span class="admin-layout__project-name">
               {{ projectStore.current_project_vo?.project_name || t('layout.noProject') }}
             </span>
-            <svg class="admin-layout__project-arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-            </svg>
+            <NWIcon icon_code="collapse" :size_px="14" class="admin-layout__project-arrow" />
           </div>
           <template #dropdown>
             <el-dropdown-menu>
@@ -183,7 +274,7 @@ onMounted(() => {
               <el-dropdown-item v-if="!projectStore.project_list.length" disabled>
                 {{ t('layout.noProjectTip') }}
               </el-dropdown-item>
-              <el-dropdown-item divided command="dashboard">
+              <el-dropdown-item divided command="dashboard" @click="router.push('/')">
                 {{ t('layout.manageProjects') }}
               </el-dropdown-item>
             </el-dropdown-menu>
@@ -191,211 +282,67 @@ onMounted(() => {
         </el-dropdown>
       </div>
 
-      <el-menu
-        class="admin-layout__menu"
-        :collapse="appStore.sidebar_collapsed"
-        :collapse-transition="false"
-        :default-active="activeMenuPath"
-        @select="handleMenuSelect"
-      >
-        <el-menu-item index="/">
-          <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="4" y="4" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8" />
-            <rect x="13" y="4" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8" />
-            <rect x="4" y="13" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8" />
-            <rect x="13" y="13" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8" />
-          </svg>
-          <template #title>{{ t('layout.menu.dashboard') }}</template>
-        </el-menu-item>
+      <nav class="admin-layout__nav">
+        <template v-for="menuItem in sidebarMenuList" :key="menuItem.menu_code">
+          <!-- 单页菜单（仪表盘 / 系统设置） -->
+          <button
+            v-if="menuItem.menu_type_code === 'page'"
+            type="button"
+            class="admin-layout__nav-item"
+            :class="{ 'is-active': activeMenuItem?.menu_code === menuItem.menu_code }"
+            :title="appStore.sidebar_collapsed ? menuItem.menu_name : ''"
+            @click="handleMenuClick(menuItem)"
+          >
+            <NWIcon :icon_code="menuItem.icon_code" />
+            <span v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-text">
+              {{ menuItem.menu_name }}
+            </span>
+          </button>
 
-        <div v-show="!appStore.sidebar_collapsed" class="admin-layout__group-title">
-          {{ t('layout.projectGroup') }}
-        </div>
-
-        <el-menu-item
-          v-for="pageItem in NW_PROJECT_PAGE_LIST"
-          :key="pageItem.menu_key"
-          :index="
-            effectiveProjectUlid ? `${pageItem.path_prefix}${effectiveProjectUlid}` : pageItem.path_prefix
-          "
-          :disabled="!effectiveProjectUlid"
-        >
-          <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              v-if="pageItem.menu_key === 'outline'"
-              d="M5 4h14v16H5zM9 4v16M13 8h3M13 12h3"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linejoin="round"
-            />
-            <path
-              v-else-if="pageItem.menu_key === 'workspace'"
-              d="M5 5h14v14H5zM5 9h14M9 5v14"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linejoin="round"
-            />
-            <path
-              v-else-if="pageItem.menu_key === 'character'"
-              d="M12 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM5 20c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-            />
-            <path
-              v-else-if="pageItem.menu_key === 'lore'"
-              d="M5 4h9l5 5v11H5zM14 4v5h5M8.5 13h7M8.5 16.5h5"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linejoin="round"
-              stroke-linecap="round"
-            />
-            <path
-              v-else-if="pageItem.menu_key === 'knowledge'"
-              d="M4 6.5c3-1.6 5.3-1.6 8 0 2.7-1.6 5-1.6 8 0v11c-3-1.6-5.3-1.6-8 0-2.7-1.6-5-1.6-8 0zM12 6.5v11"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linejoin="round"
-            />
-            <path
-              v-else
-              d="M6 3.5h9l3 3v14H6zM9 9h6M9 12.5h6M9 16h4"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linejoin="round"
-              stroke-linecap="round"
-            />
-          </svg>
-          <template #title>{{ t(`layout.menu.${pageItem.menu_key}`) }}</template>
-        </el-menu-item>
-
-        <div v-show="!appStore.sidebar_collapsed" class="admin-layout__group-title">
-          {{ t('layout.systemGroup') }}
-        </div>
-
-        <el-menu-item index="/models">
-          <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8" />
-            <path
-              d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6L18 18M18 6l-1.4 1.4M7.4 16.6L6 18"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-            />
-          </svg>
-          <template #title>{{ t('layout.menu.models') }}</template>
-        </el-menu-item>
-
-        <el-menu-item index="/slash-admin">
-          <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M9 5L5 19M19 5l-4 14M4 10h16"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-            />
-          </svg>
-          <template #title>{{ t('layout.menu.slashAdmin') }}</template>
-        </el-menu-item>
-        <el-menu-item index="/workflow">
-          <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="3" y="5" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8" />
-            <rect x="14" y="14" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8" />
-            <path d="M10 7.5h3v7h1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-          </svg>
-          <template #title>{{ t('layout.menu.workflow') }}</template>
-        </el-menu-item>
-
-        <el-menu-item index="/micro-app">
-          <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="3" y="4" width="8" height="7" rx="1.4" stroke="currentColor" stroke-width="1.8" />
-            <rect x="13" y="4" width="8" height="7" rx="1.4" stroke="currentColor" stroke-width="1.8" />
-            <rect x="3" y="13" width="18" height="7" rx="1.4" stroke="currentColor" stroke-width="1.8" />
-          </svg>
-          <template #title>{{ t('layout.menu.microApp') }}</template>
-        </el-menu-item>
-
-
-        <el-menu-item index="/settings">
-          <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12M20 17h0"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-            />
-          </svg>
-          <template #title>{{ t('layout.menu.settings') }}</template>
-        </el-menu-item>
-
-        <el-sub-menu v-if="isAdminUser" index="/admin">
-          <template #title>
-            <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M12 3l7 3v5c0 4.5-2.9 8.3-7 10-4.1-1.7-7-5.5-7-10V6l7-3z"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M9 12l2 2 4-4"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-            <span>{{ t('layout.menu.systemAdmin') }}</span>
-          </template>
-
-          <el-menu-item index="/admin/users">
-            <template #title>{{ t('layout.menu.adminUsers') }}</template>
-          </el-menu-item>
-          <el-menu-item index="/admin/roles">
-            <template #title>{{ t('layout.menu.adminRoles') }}</template>
-          </el-menu-item>
-          <el-menu-item index="/admin/audit">
-            <template #title>{{ t('layout.menu.adminAudit') }}</template>
-          </el-menu-item>
-          <el-menu-item index="/admin/usage">
-            <template #title>{{ t('layout.menu.adminUsage') }}</template>
-          </el-menu-item>
-          <el-menu-item index="/admin/status">
-            <template #title>{{ t('layout.menu.adminStatus') }}</template>
-          </el-menu-item>
-        </el-sub-menu>
-      </el-menu>
+          <!-- 分组菜单 -->
+          <div v-else class="admin-layout__nav-group">
+            <div v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-group-title">
+              {{ menuItem.menu_name }}
+            </div>
+            <button
+              v-for="childItem in menuItem.child_list"
+              :key="childItem.menu_code"
+              type="button"
+              class="admin-layout__nav-item"
+              :class="{
+                'is-active': activeMenuItem?.menu_code === childItem.menu_code,
+                'is-disabled': isMenuDisabled(childItem),
+              }"
+              :title="appStore.sidebar_collapsed ? childItem.menu_name : ''"
+              @click="handleMenuClick(childItem)"
+            >
+              <NWIcon :icon_code="childItem.icon_code" />
+              <span v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-text">
+                {{ childItem.menu_name }}
+              </span>
+            </button>
+          </div>
+        </template>
+      </nav>
     </aside>
 
     <div class="admin-layout__body">
       <header class="admin-layout__header">
-        <NWButton
-          type="text"
-          :aria-label="t('layout.toggleSidebar')"
-          @click="appStore.toggleSidebar()"
-        >
-          <svg class="admin-layout__header-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M4 6h16M4 12h16M4 18h16"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-            />
-          </svg>
+        <NWButton type="text" :aria-label="t('layout.toggleSidebar')" @click="appStore.toggleSidebar()">
+          <NWIcon icon_code="collapse" :size_px="20" />
         </NWButton>
 
-        <span v-if="projectStore.current_project_vo" class="admin-layout__breadcrumb">
-          {{ projectStore.current_project_vo.project_name }}
-          <template v-if="activeProjectPage">
-            / {{ t(`layout.menu.${activeProjectPage.menu_key}`) }}
-          </template>
-        </span>
+        <span class="admin-layout__breadcrumb">{{ breadcrumbText }}</span>
 
         <div class="admin-layout__header-right">
+          <el-tooltip :content="t('layout.quickJump')" placement="bottom">
+            <button type="button" class="admin-layout__header-btn" @click="openCommandPalette">
+              <NWIcon icon_code="search" :size_px="18" />
+            </button>
+          </el-tooltip>
+
           <el-dropdown @command="handleLocaleCommand">
-            <span class="admin-layout__header-link">
-              {{ currentLocaleLabel }}
-            </span>
+            <span class="admin-layout__header-link">{{ currentLocaleLabel }}</span>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item
@@ -411,7 +358,7 @@ onMounted(() => {
 
           <el-dropdown @command="handleUserCommand">
             <span class="admin-layout__user">
-              <el-avatar :size="32" :src="authStore.user_vo?.avatar_url" class="admin-layout__avatar">
+              <el-avatar :size="30" :src="authStore.user_vo?.avatar_url" class="admin-layout__avatar">
                 {{ avatarText }}
               </el-avatar>
               <span class="admin-layout__user-name">
@@ -435,7 +382,32 @@ onMounted(() => {
         </router-view>
       </main>
     </div>
+
+    <!-- 快速跳转：菜单项搜索 -->
+    <el-dialog v-model="commandVisible" :title="t('layout.quickJump')" width="440px" class="admin-layout__command-dialog">
+      <el-input
+        v-model="commandKeyword"
+        :placeholder="t('layout.quickJumpPlaceholder')"
+        clearable
+        autofocus
+      />
+      <div class="admin-layout__command-list">
+        <button
+          v-for="menuItem in commandResultList"
+          :key="menuItem.menu_code"
+          type="button"
+          class="admin-layout__command-item"
+          :disabled="isMenuDisabled(menuItem)"
+          @click="handleCommandSelect(menuItem)"
+        >
+          <NWIcon :icon_code="menuItem.icon_code" :size_px="16" />
+          <span>{{ menuItem.menu_name }}</span>
+        </button>
+        <p v-if="!commandResultList.length" class="admin-layout__command-empty">
+          {{ t('layout.quickJumpEmpty') }}
+        </p>
+      </div>
+    </el-dialog>
   </div>
 </template>
 <style scoped src="./AdminLayout.css"></style>
-

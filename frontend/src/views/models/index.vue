@@ -353,7 +353,7 @@ onMounted(() => {
             <NWButton size="small" @click="handleEdit(providerVo)">{{ t('common.edit') }}</NWButton>
             <NWButton
               v-if="!providerVo.default_flag"
-              type="danger"
+              type="danger-text"
               size="small"
               @click="handleDelete(providerVo)"
             >

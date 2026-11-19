@@ -236,7 +236,7 @@ onUnmounted(() => {
               >
                 {{ t('knowledge.reindex') }}
               </NWButton>
-              <NWButton size="small" type="danger" @click="handleDelete(row)">
+              <NWButton size="small" type="danger-text" @click="handleDelete(row)">
                 {{ t('common.delete') }}
               </NWButton>
             </template>

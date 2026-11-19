@@ -85,7 +85,7 @@ export function listKnowledgeChunks(params: {
   pageSize: number
 }): Promise<NWPageDto<NWKnowledgeChunkVo>> {
   return get<NWPageDto<NWKnowledgeChunkVo>>(
-    `/knowledge/chunk/list?doc_ulid=${encodeURIComponent(params.docUlid)}` +
+    `/knowledge/chunk/list/${encodeURIComponent(params.docUlid)}` +
       `&page_num=${params.pageNum}&page_size=${params.pageSize}`,
     { silent_error: true },
   )
@@ -94,7 +94,7 @@ export function listKnowledgeChunks(params: {
 /** 读取文档原文二进制（GET /knowledge/content，docx/pdf 预览用；二进制流不走包络解包） */
 export async function fetchKnowledgeContent(docUlid: string): Promise<Blob> {
   const response = await fetch(
-    `/api/v1/knowledge/content?doc_ulid=${encodeURIComponent(docUlid)}`,
+    `/api/v1/knowledge/content/${encodeURIComponent(docUlid)}`,
     { headers: { Authorization: `Bearer ${readToken()}` } },
   )
   if (!response.ok) {

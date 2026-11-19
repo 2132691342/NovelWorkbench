@@ -19,7 +19,9 @@ const (
 	IDPrefixChunk           = "CHK_" // 知识库切片
 	IDPrefixSession         = "SES_" // 会话
 	IDPrefixMessage         = "MSG_" // 消息
-	IDPrefixSlashCommand    = "SKL_" // 斜杠命令
+	IDPrefixSkill           = "SKL_" // 技能
+	IDPrefixSkillReference  = "SKR_" // 技能参考资料
+	IDPrefixMenu            = "MNU_" // 菜单
 	IDPrefixJob             = "JOB_" // 异步任务
 	IDPrefixSetting         = "SET_" // 应用配置
 	IDPrefixWordStat        = "WCS_" // 字数统计

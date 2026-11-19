@@ -214,7 +214,7 @@ onMounted(() => {
                 {{ t('admin.users.resetPasswordTitle') }}
               </NWButton>
               <NWButton
-                type="danger"
+                type="danger-text"
                 size="small"
                 :loading="deletingKey === row.user_ulid"
                 @click="handleDeleteUser(row)"

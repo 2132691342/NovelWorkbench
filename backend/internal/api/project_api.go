@@ -79,9 +79,9 @@ func (a *ProjectAPI) List(c *gin.Context) {
 	pkg.Ok(c, page)
 }
 
-// Detail 查询项目详情（GET /project/detail）。
+// Detail 查询项目详情（GET /project/detail/{ProjectULID}）。
 func (a *ProjectAPI) Detail(c *gin.Context) {
-	var req domain.ProjectDetailREQ
+	req := domain.ProjectDetailREQ{ProjectULID: c.Param("ProjectULID")}
 	if err := c.ShouldBindQuery(&req); err != nil {
 		respondErr(c, "project.detail", bindErr(err))
 		return
@@ -94,9 +94,9 @@ func (a *ProjectAPI) Detail(c *gin.Context) {
 	pkg.Ok(c, vo)
 }
 
-// Tree 查询项目目录树（GET /project/tree）。
+// Tree 查询项目目录树（GET /project/tree/{ProjectULID}）。
 func (a *ProjectAPI) Tree(c *gin.Context) {
-	var req domain.ProjectTreeREQ
+	req := domain.ProjectTreeREQ{ProjectULID: c.Param("ProjectULID")}
 	if err := c.ShouldBindQuery(&req); err != nil {
 		respondErr(c, "project.tree", bindErr(err))
 		return

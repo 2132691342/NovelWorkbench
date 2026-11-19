@@ -1,54 +1,37 @@
+<!--
+  登录页：仅登录（系统不开放注册，账号由管理员在「用户管理」中分配）。
+  左侧品牌叙事 + 右侧登录表单，含字段校验、提交加载态与登录失败提示。
+-->
 <script setup lang="ts">
-
-// 登录注册页：登录与注册双表单，含字段校验与提交加载态。
-import { computed, reactive, ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
+import { useMenuStore } from '@/stores/menu'
 import NWButton from '@/components/NWButton.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const menuStore = useMenuStore()
 const { t } = useI18n()
 
-interface NWLoginFormState {
-  account_text: string
-  user_name: string
-  user_email: string
-  password_text: string
-}
-
-const activeTab = ref<string>('login')
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
-const formState = reactive<NWLoginFormState>({
+const formState = reactive({
   account_text: '',
-  user_name: '',
-  user_email: '',
   password_text: '',
 })
 
-// 登录/注册共用一个表单，校验规则按当前 Tab 组装
-const formRules = computed<FormRules>(() => {
-  const rules: FormRules = {
-    password_text: [
-      { required: true, message: t('login.rulePasswordRequired'), trigger: 'blur' },
-      { min: 6, message: t('login.rulePasswordMin'), trigger: 'blur' },
-    ],
-  }
-  if (activeTab.value === 'login') {
-    rules.account_text = [{ required: true, message: t('login.ruleAccountRequired'), trigger: 'blur' }]
-  } else {
-    rules.user_name = [{ required: true, message: t('login.ruleUserNameRequired'), trigger: 'blur' }]
-    rules.user_email = [
-      { required: true, message: t('login.ruleEmailRequired'), trigger: 'blur' },
-      { type: 'email', message: t('login.ruleEmailInvalid'), trigger: 'blur' },
-    ]
-  }
-  return rules
-})
+const formRules: FormRules = {
+  account_text: [{ required: true, message: t('login.ruleAccountRequired'), trigger: 'blur' }],
+  password_text: [
+    { required: true, message: t('login.rulePasswordRequired'), trigger: 'blur' },
+    { min: 6, message: t('login.rulePasswordMin'), trigger: 'blur' },
+  ],
+}
 
+/** 登录并预加载导航（进入业务页前菜单与权限就绪） */
 async function handleSubmit(): Promise<void> {
   if (!formRef.value) {
     return
@@ -60,22 +43,13 @@ async function handleSubmit(): Promise<void> {
   }
   submitting.value = true
   try {
-    if (activeTab.value === 'login') {
-      await authStore.login({
-        account_text: formState.account_text,
-        password_text: formState.password_text,
-      })
-      ElMessage.success(t('login.loginSuccess'))
-      void router.push('/')
-    } else {
-      await authStore.register({
-        user_name: formState.user_name,
-        user_email: formState.user_email,
-        password_text: formState.password_text,
-      })
-      ElMessage.success(t('login.registerSuccess'))
-      activeTab.value = 'login'
-    }
+    await authStore.login({
+      account_text: formState.account_text.trim(),
+      password_text: formState.password_text,
+    })
+    await menuStore.loadNav()
+    ElMessage.success(t('login.loginSuccess'))
+    void router.push('/')
   } catch {
     // 失败提示由 http 层统一弹出
   } finally {
@@ -86,82 +60,68 @@ async function handleSubmit(): Promise<void> {
 
 <template>
   <div class="login-page">
-    <section class="login-page__card">
-      <header class="login-page__header">
-        <svg class="login-page__logo" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="5" fill="var(--primary)" />
-          <path
-            d="M8 8v8M8 8h2.6a2.4 2.4 0 0 1 2.4 2.4V16M16 8v8"
-            stroke="#ffffff"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          />
-        </svg>
-        <h1 class="login-page__title">{{ t('login.title') }}</h1>
-        <p class="login-page__subtitle">{{ t('login.subtitle') }}</p>
-      </header>
-
-      <div class="login-page__tabs">
-        <NWButton
-          class="login-page__tab"
-          :class="{ 'is-active': activeTab === 'login' }"
-          @click="activeTab = 'login'"
-        >
-          {{ t('login.tabLogin') }}
-        </NWButton>
-        <NWButton
-          class="login-page__tab"
-          :class="{ 'is-active': activeTab === 'register' }"
-          @click="activeTab = 'register'"
-        >
-          {{ t('login.tabRegister') }}
-        </NWButton>
+    <section class="login-page__brand">
+      <div class="login-page__brand-inner">
+        <span class="login-page__brand-mark">N</span>
+        <h1 class="login-page__brand-title">{{ t('login.brandTitle') }}</h1>
+        <p class="login-page__brand-desc">{{ t('login.brandDesc') }}</p>
+        <ul class="login-page__brand-list">
+          <li>{{ t('login.brandPointProject') }}</li>
+          <li>{{ t('login.brandPointAi') }}</li>
+          <li>{{ t('login.brandPointKnowledge') }}</li>
+        </ul>
       </div>
+    </section>
 
-      <el-form
-        ref="formRef"
-        class="login-page__form"
-        :model="formState"
-        :rules="formRules"
-        label-position="top"
-        @submit.prevent
-      >
-        <el-form-item v-if="activeTab === 'login'" prop="account_text" :label="t('login.account')">
-          <el-input
-            v-model="formState.account_text"
-            :placeholder="t('login.accountPlaceholder')"
-            size="large"
-          />
-        </el-form-item>
+    <section class="login-page__panel">
+      <div class="login-page__card">
+        <header class="login-page__header">
+          <h2 class="login-page__title">{{ t('login.title') }}</h2>
+          <p class="login-page__subtitle">{{ t('login.subtitle') }}</p>
+        </header>
 
-        <el-form-item v-if="activeTab === 'register'" prop="user_name" :label="t('login.userName')">
-          <el-input v-model="formState.user_name" size="large" />
-        </el-form-item>
-
-        <el-form-item v-if="activeTab === 'register'" prop="user_email" :label="t('login.userEmail')">
-          <el-input v-model="formState.user_email" size="large" />
-        </el-form-item>
-
-        <el-form-item prop="password_text" :label="t('login.password')">
-          <el-input
-            v-model="formState.password_text"
-            type="password"
-            show-password
-            :placeholder="t('login.passwordPlaceholder')"
-            size="large"
-          />
-        </el-form-item>
-
-        <NWButton
-          type="primary"
-          size="large"
-          class="login-page__submit"
-          :loading="submitting"
-          @click="handleSubmit"
+        <el-form
+          ref="formRef"
+          class="login-page__form"
+          :model="formState"
+          :rules="formRules"
+          label-position="top"
+          @submit.prevent="handleSubmit"
         >
-          {{ activeTab === 'login' ? t('login.submitLogin') : t('login.submitRegister') }}
-        </NWButton>
-      </el-form>
+          <el-form-item prop="account_text" :label="t('login.account')">
+            <el-input
+              v-model="formState.account_text"
+              :placeholder="t('login.accountPlaceholder')"
+              size="large"
+              autocomplete="username"
+            />
+          </el-form-item>
+
+          <el-form-item prop="password_text" :label="t('login.password')">
+            <el-input
+              v-model="formState.password_text"
+              type="password"
+              show-password
+              :placeholder="t('login.passwordPlaceholder')"
+              size="large"
+              autocomplete="current-password"
+              @keyup.enter="handleSubmit"
+            />
+          </el-form-item>
+
+          <NWButton
+            type="primary"
+            size="large"
+            class="login-page__submit"
+            :loading="submitting"
+            @click="handleSubmit"
+          >
+            {{ t('login.submitLogin') }}
+          </NWButton>
+        </el-form>
+
+        <p class="login-page__hint">{{ t('login.noRegisterHint') }}</p>
+      </div>
     </section>
   </div>
 </template>
@@ -169,78 +129,109 @@ async function handleSubmit(): Promise<void> {
 <style scoped>
 .login-page {
   display: flex;
-  align-items: center;
-  justify-content: center;
   min-height: 100vh;
   background-color: var(--bg-page);
-  background-image: radial-gradient(circle at 20% 20%, var(--primary-light) 0, transparent 45%),
-    radial-gradient(circle at 80% 80%, var(--primary-light) 0, transparent 45%);
+}
+
+.login-page__brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1.1;
+  padding: 48px;
+  background: linear-gradient(150deg, var(--saas_dashboard-color-5) 0%, var(--saas_dashboard-color-1) 100%);
+  color: var(--text-inverse);
+}
+
+.login-page__brand-inner {
+  max-width: 420px;
+}
+
+.login-page__brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 24px;
+  border-radius: 14px;
+  background-color: rgba(255, 255, 255, 0.16);
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.login-page__brand-title {
+  margin: 0 0 12px;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.login-page__brand-desc {
+  margin: 0 0 24px;
+  font-size: 14px;
+  line-height: 1.8;
+  opacity: 0.82;
+}
+
+.login-page__brand-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+  line-height: 2;
+  opacity: 0.86;
+}
+
+.login-page__panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 48px 32px;
 }
 
 .login-page__card {
-  width: 420px;
-  padding: 36px 40px;
-  background-color: var(--bg-card);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card-hover);
+  width: 100%;
+  max-width: 380px;
 }
 
 .login-page__header {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 24px;
-}
-
-.login-page__logo {
-  width: 48px;
-  height: 48px;
+  margin-bottom: 28px;
 }
 
 .login-page__title {
-  margin: 8px 0 0;
-  font-size: 22px;
-  font-weight: 600;
+  margin: 0 0 6px;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   color: var(--text-main);
 }
 
 .login-page__subtitle {
   margin: 0;
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--text-secondary);
 }
-
-.login-page__tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 20px;
-  padding: 4px;
-  background-color: var(--bg-page);
-  border-radius: var(--radius-base);
-}
-
-.login-page__tab.nw-button {
-  flex: 1;
-  height: 34px;
-  border: none;
-  background-color: transparent;
-  color: var(--text-secondary);
-}
-
-.login-page__tab.nw-button:hover {
-  color: var(--primary);
-}
-
-.login-page__tab.nw-button.is-active {
-  background-color: var(--primary);
-  color: var(--text-inverse);
-  box-shadow: var(--shadow-button-hover);
-}
-
 
 .login-page__submit {
   width: 100%;
-  margin-top: 8px;
+  margin-top: 10px;
+}
+
+.login-page__hint {
+  margin: 20px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-base);
+  background-color: var(--primary-light);
+  color: var(--primary-active);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+@media (max-width: 900px) {
+  .login-page__brand {
+    display: none;
+  }
 }
 </style>

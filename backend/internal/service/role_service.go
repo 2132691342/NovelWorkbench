@@ -163,6 +163,26 @@ func (s *RoleService) RoleCodesOfUser(ctx context.Context, userULID string) ([]s
 	return s.roleRepo.ListRoleCodesByUserULID(ctx, userULID)
 }
 
+// PermCodesOfUser 汇总用户的权限码集合（多角色取并集、去重保序；含 "*" 通配）。
+func (s *RoleService) PermCodesOfUser(ctx context.Context, userULID string) ([]string, error) {
+	roles, err := s.roleRepo.ListRolesByUserULID(ctx, userULID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, 16)
+	permCodes := make([]string, 0, 16)
+	for i := range roles {
+		for _, code := range unmarshalPermCodes(roles[i].PermCodesJSON) {
+			if seen[code] {
+				continue
+			}
+			seen[code] = true
+			permCodes = append(permCodes, code)
+		}
+	}
+	return permCodes, nil
+}
+
 // toRoleVO 组装角色视图对象。
 func toRoleVO(do *domain.RoleDO) domain.RoleVO {
 	return domain.RoleVO{

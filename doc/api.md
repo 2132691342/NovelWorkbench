@@ -18,7 +18,7 @@
 | 时间 | VO 中毫秒时间戳字段后缀 `_at_ms`；日期字段 `YYYY-MM-DD` | `domain` 各 VO |
 | ID | 业务前缀 ULID（`PRJ_` / `CHP_` / `DOC_` …），见 `domain.IDPrefix*` | `domain/common.go` |
 | 分页 | `page_num` 从 1 开始；`page_size` 缺省 20、上限 100 | `domain.PageREQ.Normalize` |
-| 接口总数 | `/api/v1` 下 78 条，另有 2 条探针，共 80 条 | `router.go` |
+| 接口总数 | `/api/v1` 下 87 条，另有 2 条探针，共 89 条 | `router.go` |
 
 响应头 CORS 放行 `Origin`、`Content-Type`、`Authorization`、`X-Request-ID`，
 暴露 `X-Request-ID`。
@@ -96,7 +96,6 @@
 
 | 路径 | 原因 |
 | --- | --- |
-| `/api/v1/auth/register` | 注册本身无令牌 |
 | `/api/v1/auth/login` | 登录本身无令牌 |
 
 其余 `/api/v1` 路径一律需要登录。
@@ -107,7 +106,6 @@
 
 | 路径 | 原因 |
 | --- | --- |
-| `/api/v1/auth/register` | 无登录用户可归属 |
 | `/api/v1/auth/login` | 无登录用户可归属 |
 | `/api/v1/auth/logout` | 无需留痕 |
 | `/api/v1/chat/send` | 高频流式调用，不落审计 |
@@ -129,10 +127,15 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | `system:status:read` | `/system/status` |
 | `system:user:manage` | `/admin/user/*` |
 | `system:role:manage` | `/admin/role/*` |
+| `system:menu:manage` | `/menu/list`、`/menu/detail/{MenuULID}`、`/menu/save`、`/menu/delete` |
+| `system:perm:read` | `/menu/permission/catalog` |
 | `system:audit:read` | `/admin/audit/list` |
+| `system:setting:manage` | `/setting/update` |
+| `skill:manage` | `/skill/save`、`/skill/delete`、`/skill/reference/save`、`/skill/reference/delete` |
 | `*` | 内置 `admin` 角色拥有全部权限 |
 
-未标注权限码的路由一律为「登录用户」。
+未标注权限码的路由一律为「登录用户」。权限目录（`GET /menu/permission/catalog`）由菜单登记
+自动汇总，新增权限码无需改代码即可在角色页勾选。
 
 ## 5. 探针
 
@@ -151,15 +154,15 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 
 | 方法 | 路径 | 权限 | 请求 | 响应 data | Handler |
 | --- | --- | --- | --- | --- | --- |
-| POST | `/auth/register` | 免鉴权 | `UserRegisterREQ` | `UserVO` | `AuthAPI.Register` |
 | POST | `/auth/login` | 免鉴权 | `UserLoginREQ` | `UserLoginDTO` | `AuthAPI.Login` |
 | GET | `/auth/profile` | 登录用户 | 无 | `UserVO` | `AuthAPI.Profile` |
 | POST | `/auth/logout` | 登录用户 | 无（读 `Authorization` 头） | `null` | `AuthAPI.Logout` |
 
-`UserRegisterREQ`：`user_name`(3–64)、`user_email`(email)、`password_text`(6–64)。
+系统不开放注册：账号只能由管理员在用户管理里创建（`POST /admin/user/create`）。
 `UserLoginREQ`：`account_text`（登录名或邮箱）、`password_text`。
 `UserLoginDTO`：`access_token`、`expires_in_sec`、`user_vo`。
-`UserVO.role_codes` 由用户角色关联查出，前端据此显示管理入口。
+`UserVO.role_codes` 由用户角色关联查出；前端菜单与权限码来自 `GET /menu/nav`，
+不再依赖角色编码判断入口。
 
 ### 6.2 项目与卷
 
@@ -169,8 +172,8 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | POST | `/project/update` | 登录用户 | `ProjectUpdateREQ` | `ProjectVO` | `ProjectAPI.Update` |
 | POST | `/project/delete` | 登录用户 | `ProjectDeleteREQ` | `null` | `ProjectAPI.Delete` |
 | POST | `/project/list` | 登录用户 | `ProjectListREQ` | `PageDTO<ProjectVO>` | `ProjectAPI.List` |
-| GET | `/project/detail` | 登录用户 | `project_ulid` | `ProjectVO` | `ProjectAPI.Detail` |
-| GET | `/project/tree` | 登录用户 | `project_ulid` | `ProjectTreeVO` | `ProjectAPI.Tree` |
+| GET | `/project/detail/{ProjectULID}` | 登录用户 | 路径参数 | `ProjectVO` | `ProjectAPI.Detail` |
+| GET | `/project/tree/{ProjectULID}` | 登录用户 | 路径参数 | `ProjectTreeVO` | `ProjectAPI.Tree` |
 | POST | `/volume/create` | 登录用户 | `VolumeCreateREQ` | `VolumeVO` | `VolumeAPI.Create` |
 | POST | `/volume/update` | 登录用户 | `VolumeUpdateREQ` | `VolumeVO` | `VolumeAPI.Update` |
 | POST | `/volume/delete` | 登录用户 | `VolumeDeleteREQ` | `null` | `VolumeAPI.Delete` |
@@ -186,8 +189,8 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | POST | `/chapter/create` | 登录用户 | `ChapterCreateREQ` | `ChapterDetailVO` | `ChapterAPI.Create` |
 | POST | `/chapter/update` | 登录用户 | `ChapterUpdateREQ` | `ChapterDetailVO` | `ChapterAPI.Update` |
 | POST | `/chapter/delete` | 登录用户 | `ChapterDeleteREQ` | `null` | `ChapterAPI.Delete` |
-| GET | `/chapter/detail` | 登录用户 | `chapter_ulid` | `ChapterDetailVO` | `ChapterAPI.Detail` |
-| GET | `/chapter/snapshot/list` | 登录用户 | `chapter_ulid` | `[]ChapterSnapshotVO` | `ChapterAPI.SnapshotList` |
+| GET | `/chapter/detail/{ChapterULID}` | 登录用户 | 路径参数 | `ChapterDetailVO` | `ChapterAPI.Detail` |
+| GET | `/chapter/snapshot/list/{ChapterULID}` | 登录用户 | 路径参数 | `[]ChapterSnapshotVO` | `ChapterAPI.SnapshotList` |
 | POST | `/chapter/snapshot/create` | 登录用户 | `ChapterSnapshotCreateREQ` | `ChapterSnapshotVO` | `ChapterAPI.SnapshotCreate` |
 | POST | `/chapter/snapshot/restore` | 登录用户 | `ChapterSnapshotRestoreREQ` | `ChapterDetailVO` | `ChapterAPI.SnapshotRestore` |
 
@@ -202,7 +205,7 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | POST | `/character/save` | 登录用户 | `CharacterREQ` | `CharacterVO` | `CharacterAPI.Save` |
 | POST | `/character/delete` | 登录用户 | `CharacterDeleteREQ` | `null` | `CharacterAPI.Delete` |
 | POST | `/character/list` | 登录用户 | `CharacterListREQ` | `[]CharacterVO` | `CharacterAPI.List` |
-| GET | `/character/graph` | 登录用户 | `project_ulid` | `CharacterGraphVO` | `CharacterAPI.Graph` |
+| GET | `/character/graph/{ProjectULID}` | 登录用户 | 路径参数 | `CharacterGraphVO` | `CharacterAPI.Graph` |
 | POST | `/character/relation/save` | 登录用户 | `CharacterRelationREQ` | `CharacterEdgeVO` | `CharacterAPI.RelationSave` |
 | POST | `/character/relation/delete` | 登录用户 | `CharacterRelationDeleteREQ` | `null` | `CharacterAPI.RelationDelete` |
 
@@ -243,17 +246,51 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 
 文档索引状态 `doc_status_code`：`pending` / `indexing` / `indexed` / `failed`。
 
-### 6.7 斜杠命令（技能）
+### 6.7 技能（Skill）
+
+技能是带作用域的提示词资产：`global` 全局可用，`project` 仅所属项目可用，同编码项目技能覆盖全局技能。
 
 | 方法 | 路径 | 权限 | 请求 | 响应 data | Handler |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/slash/list` | 登录用户 | `enabled_only` | `[]SlashCommandVO` | `SlashAPI.List` |
-| POST | `/slash/save` | 登录用户 | `SlashCommandREQ` | `SlashCommandVO` | `SlashAPI.Save` |
-| POST | `/slash/delete` | 登录用户 | `SlashDeleteREQ` | `null` | `SlashAPI.Delete` |
-| POST | `/slash/parse` | 登录用户 | `SlashParseREQ` | `SlashParseDTO` | `SlashAPI.Parse` |
+| GET | `/skill/list` | 登录用户 | `scope_code` / `project_ulid` / `category_code` / `keyword_text` / `enabled_only` | `[]SkillVO` | `SkillAPI.List` |
+| GET | `/skill/detail/{SkillULID}` | 登录用户 | 路径参数 | `SkillVO` | `SkillAPI.Detail` |
+| POST | `/skill/resolve` | 登录用户 | `SkillResolveREQ` | `SkillResolveDTO` | `SkillAPI.Resolve` |
+| GET | `/skill/reference/list` | 登录用户 | `skill_ulid` | `[]SkillReferenceVO` | `SkillAPI.ReferenceList` |
+| POST | `/skill/save` | `skill:manage` | `SkillREQ` | `SkillVO` | `SkillAPI.Save` |
+| POST | `/skill/delete` | `skill:manage` | `SkillDeleteREQ` | `null` | `SkillAPI.Delete` |
+| POST | `/skill/reference/save` | `skill:manage` | `SkillReferenceREQ` | `SkillReferenceVO` | `SkillAPI.ReferenceSave` |
+| POST | `/skill/reference/delete` | `skill:manage` | `SkillReferenceDeleteREQ` | `null` | `SkillAPI.ReferenceDelete` |
 
-`SlashParseDTO`：`skill_code`（命中命令，空为自由对话）、`remainder_text`、
-`placeholder_map`。内置命令不可删除。
+- `SkillVO`：`skill_ulid`、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、
+  `category_code`、`description_text`、`prompt_template`、`variable_list`、`ref_count`、
+  `enabled_flag`、`builtin_flag`、`overridden_flag`、`sort_order`、时间戳。
+- `variable_list` 项：`variable_name`、`variable_label`、`default_value`、`required_flag`、`description_text`。
+- `SkillResolveDTO`：`skill_ulid`、`skill_code`、`skill_name`、`remainder_text`、`variable_map`、
+  `missing_list`、`ref_text_list`。`missing_list` 非空表示必填变量未提供，前端应提示补齐。
+- 模板占位符只允许三类内置（`user_input` / `chapter_content` / `context`）与已声明变量，
+  未声明的占位符保存时返回 `ERR_INVALID_PARAM`。
+- 内置技能 `builtin_flag=true`，不可删除，可停用或改提示词；`scope_code` 与 `skill_code` 不可改。
+
+### 6.7.1 菜单与权限目录
+
+菜单表同时是权限码登记处：`page` 行承载页面权限码，`action` 行只登记动作权限码（不进导航）。
+
+| 方法 | 路径 | 权限 | 请求 | 响应 data | Handler |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/menu/nav` | 登录用户 | 无 | `MenuNavDTO` | `MenuAPI.Nav` |
+| GET | `/menu/list` | `system:menu:manage` | `keyword_text` / `menu_type_code` / `scope_code` | `[]MenuVO` | `MenuAPI.List` |
+| GET | `/menu/detail/{MenuULID}` | `system:menu:manage` | 路径参数 | `MenuVO` | `MenuAPI.Detail` |
+| POST | `/menu/save` | `system:menu:manage` | `MenuREQ` | `MenuVO` | `MenuAPI.Save` |
+| POST | `/menu/delete` | `system:menu:manage` | `MenuDeleteREQ` | `null` | `MenuAPI.Delete` |
+| GET | `/menu/permission/catalog` | `system:perm:read` | 无 | `[]PermGroupVO` | `MenuAPI.PermCatalog` |
+
+- `MenuNavDTO`：`menu_tree_list`（`MenuTreeNodeVO` 递归 `child_list`）+ `perm_code_list`。
+  只返回 `enabled_flag=true`、`visible_flag=true`、非 `action`、且当前用户有权限的节点。
+- `MenuREQ`：`menu_code`、`menu_name`、`menu_type_code`（group/page/action）、`scope_code`
+  （global/project）、`route_path`、`icon_code`、`perm_code`、`visible_flag`、`enabled_flag`、
+  `sort_order`、`remark_text`、`parent_ulid`。
+- 约束：菜单编码唯一；权限码全局唯一（同码只能登记一次）；分组不能配路由；
+  上级不能是自己或自己的下级；有下级时不能删除。
 
 ### 6.8 创作规划（大纲与场景卡）
 
@@ -319,7 +356,8 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | `project_ulid` | string | 所属项目（必填） |
 | `session_ulid` | string | 会话 ULID，空则自动创建 |
 | `content_text` | string | 消息正文（必填，≤8000） |
-| `skill_code` | string | 斜杠命令编码（≤32），空为自由对话 |
+| `skill_code` | string | 技能编码（≤32），空为自由对话 |
+| `skill_variable_map` | object | 技能变量取值（`{变量名: 值}`），必填变量缺失时后端拒绝渲染 |
 | `ref_doc_ulid_list` | []string | @引用的知识库文档 |
 | `ref_chapter_ulid_list` | []string | @引用的章节 |
 | `ref_message_ulid_list` | []string | 显式引用的历史消息 |
@@ -333,7 +371,7 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | 方法 | 路径 | 权限 | 请求 | 响应 data | Handler |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/setting/list` | 登录用户 | 无 | `[]SettingVO` | `SettingAPI.List` |
-| POST | `/setting/update` | 登录用户 | `SettingUpdateREQ` | `SettingVO` | `SettingAPI.Update` |
+| POST | `/setting/update` | `system:setting:manage` | `SettingUpdateREQ` | `SettingVO` | `SettingAPI.Update` |
 
 配置键白名单（`service.settingDefaultList`）：
 
@@ -430,7 +468,7 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 
 客户端断开连接会取消上游模型调用；生成失败不落库助手消息，只保留用户消息。
 
-### 7.2 `GET /knowledge/content`（原始字节）
+### 7.2 `GET /knowledge/content/{DocULID}`（原始字节）
 
 该端点不返回业务包络，直接输出文件原始字节（`c.Data`）：
 
@@ -456,14 +494,14 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | --- | --- |
 | `POST /project/list` | JSON body |
 | `POST /knowledge/list` | JSON body |
-| `GET /knowledge/chunk/list` | query |
+| `GET /knowledge/chunk/list/{DocULID}` | query（分页参数） |
 | `POST /chat/history` | JSON body |
 | `POST /admin/user/list` | JSON body |
 | `POST /admin/role/list` | JSON body |
 | `POST /admin/audit/list` | JSON body |
 
-返回普通数组的端点（无分页，全量返回）：`/chapter/snapshot/list`、`/character/list`、
-`/lore/list`、`/slash/list`、`/outline/list`、`/outline/scene/list`、
+返回普通数组的端点（无分页，全量返回）：`/chapter/snapshot/list/{ChapterULID}`、`/character/list`、
+`/lore/list`、`/skill/list`、`/outline/list`、`/outline/scene/list`、
 `/continuity/fact/list`、`/continuity/hook/list`、`/continuity/summary/list`、
 `/chat/session/list`、`/model/provider/list`、`/setting/list`。
 

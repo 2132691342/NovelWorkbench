@@ -78,6 +78,13 @@
   --nw-btn-border: transparent;
 }
 
+/* 表格行内的次要危险操作：默认弱化，悬停/按下才显红 */
+.nw-button--danger-text {
+  --nw-btn-bg: transparent;
+  --nw-btn-text: var(--error);
+  --nw-btn-border: transparent;
+}
+
 .nw-button__content {
   display: inline-flex;
   align-items: center;
@@ -156,6 +163,10 @@
   background-color: var(--primary-light);
 }
 
+.nw-button--danger-text:hover {
+  background-color: var(--error-bg);
+}
+
 /* ===== PRESSED 按下态 ===== */
 .el-button:not(.is-disabled):not(.is-loading):active,
 .nw-button:not(.nw-button--disabled):not(.nw-button--loading):active {
@@ -191,6 +202,11 @@
 .nw-button--text:active {
   background-color: var(--primary-light);
   color: var(--primary-active);
+}
+
+.nw-button--danger-text:active {
+  background-color: var(--error-border);
+  color: var(--error-active);
 }
 
 /* ===== DISABLED 禁用态（降透明、禁交互、无动效） ===== */

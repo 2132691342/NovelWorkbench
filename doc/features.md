@@ -19,16 +19,13 @@
 
 **用户能力**
 
-- 注册账号（登录名 + 邮箱 + 密码）。
-- 用登录名或邮箱登录。
-- 查看当前登录用户信息与角色编码。
+- 用登录名或邮箱登录（系统不开放注册，账号由管理员分配）。
+- 查看当前登录用户信息、角色编码与权限码集合。
 - 退出登录，令牌立即失效。
 
 **实现**
 
-- `api/auth_api.go` 的 `Register` / `Login` / `Profile` / `Logout` 只做参数绑定与包络输出。
-- `service/auth_service.go` 的 `Register`：登录名、邮箱分别查重（`userRepo.GetByUserName` / `GetByEmail`），
-  密码用 `bcrypt.GenerateFromPassword(..., bcrypt.DefaultCost)` 哈希，落库前不写明文。
+- `api/auth_api.go` 的 `Login` / `Profile` / `Logout` 只做参数绑定与包络输出。
 - `service/auth_service.go` 的 `Login`：`userRepo.GetByAccount` 同时匹配登录名或邮箱；
   账号状态为 `disabled` 时返回 `ERR_FORBIDDEN`，密码不匹配返回 `ERR_UNAUTHORIZED`。
 - `service/auth_service.go` 的 `withRoleCodes`：登录与个人信息都带出 `role_codes`（`roleRepo.ListRoleCodesByUserULID`）。
@@ -36,16 +33,38 @@
 - `service/auth_service.go` 的 `Logout`：解析令牌有效期后调用 `tokenStore.Revoke` 写黑名单，TTL 为令牌剩余寿命。
 - `repo/token_repo.go` 的 `tokenBlacklistKey`：黑名单键为 `nw:token:blacklist:<sha256hex(token)>`。
 - `pkg/middleware.go` 的 `AuthMiddleware`：校验 Bearer 令牌 → 查黑名单 → 查用户状态，注入 `user_ulid`。
-- `cmd/server/main.go`：`AuthMiddleware` 的用户状态检查函数查 `userRepo.GetByULID`，
-  账号不存在或 `disabled` 即判不可用；`/api/v1/auth/register` 与 `/api/v1/auth/login` 在免鉴权白名单内。
+- `cmd/server/main.go`：免鉴权白名单只有 `/api/v1/auth/login`；不再有注册路由。
 
 **验收点**
 
-- 登录名重复注册返回 `ERR_CONFLICT`；邮箱重复注册同样返回 `ERR_CONFLICT`。
 - 密码错误与账号不存在都返回 `ERR_UNAUTHORIZED`，提示文案不区分二者。
 - 账号被禁用后登录返回 `ERR_FORBIDDEN`；该账号已签发的旧令牌再访问业务接口返回 `ERR_UNAUTHORIZED`。
 - 登出后原令牌立即失效；被吊销的令牌不写库、不入业务表。
 - 响应中不出现 `password_hash` 字段。
+- `POST /api/v1/auth/register` 不存在（404），前端登录页不再提供注册入口。
+
+### 1.1.1 登录与导航链路
+
+**用户能力**
+
+- 登录后侧边栏出现属于自己的菜单，无权菜单不显示。
+- 顶栏可快速跳转到任意可见页面。
+
+**实现**
+
+- `service/menu_service.go` 的 `Nav`：取角色权限码并集 → 过滤禁用/隐藏/动作节点 → 无权限节点剔除 →
+  `buildMenuTree` 装配递归树。
+- `service/role_service.go` 的 `PermCodesOfUser`：多角色权限码取并集去重。
+- `frontend/src/stores/menu.ts` 的 `loadNav`：登录后与进入业务页前拉取，权限码同步给 auth store。
+- `frontend/src/router/index.ts` 的守卫：未加载导航则先加载，`meta.perm_code` 命中失败回仪表盘。
+- `frontend/src/layout/AdminLayout.vue`：侧边栏按 `menu_tree_list` 渲染（分组/页面），
+  项目内菜单的 `:project_ulid` 用当前项目替换，未选项目时置灰。
+
+**验收点**
+
+- 仅 `skill:manage` 的账号看不到「系统」分组下的管理页，访问 `/admin/users` 被重定向回仪表盘。
+- 禁用某个菜单后刷新导航，该菜单从侧边栏与快速跳转中消失。
+- 项目内菜单在未选择项目时不可点击。
 
 ### 1.2 用户管理
 
@@ -83,7 +102,7 @@
 **用户能力**
 
 - 分页查看角色与权限码。
-- 新建/编辑角色并配置权限码。
+- 新建/编辑角色并从权限目录勾选权限码。
 - 删除角色。
 
 **实现**
@@ -96,10 +115,13 @@
 - `service/role_service.go` 的 `Delete`：内置角色拒删；`roleRepo.CountUsersByRoleULID` 大于 0 时拒删。
 - `service/role_service.go` 的 `HasPerm`：逐请求查库，权限码含 `domain.PermAdminAll`（`*`）即放行。
 - `pkg/access_middleware.go` 的 `RequirePermMiddleware`：无权限返回 `ERR_FORBIDDEN`，未登录返回 `ERR_UNAUTHORIZED`。
-- `domain/role.go` 定义权限码：`system:user:manage`、`system:role:manage`、`system:audit:read`、
-  `system:model:manage`、`system:usage:read`、`system:status:read`。
+- `domain/role.go` 定义权限码常量：`system:user:manage`、`system:role:manage`、`system:menu:manage`、
+  `system:perm:read`、`system:audit:read`、`system:setting:manage`、`system:model:manage`、
+  `system:usage:read`、`system:status:read`、`skill:manage`。
 - `api/router.go` 的 `registerAdminRoutes`：用户组收口到 `system:user:manage`，角色组到 `system:role:manage`，
-  审计组到 `system:audit:read`。
+  审计组到 `system:audit:read`；`registerMenuRoutes` 收口菜单与权限目录；
+  `registerSkillRoutes` 把技能写操作收口到 `skill:manage`。
+- 前端角色页的权限选项来自 `GET /menu/permission/catalog`，不再硬编码。
 
 **验收点**
 
@@ -107,6 +129,49 @@
 - 角色下仍有用户时删除返回 `ERR_CONFLICT`。
 - 普通用户访问管理接口返回 `ERR_FORBIDDEN`；权限码改动后下一次请求即生效（逐请求查库）。
 - `admin` 角色持有 `*`，可访问全部管理接口。
+- 在「菜单管理」新增带 `perm_code` 的菜单后，角色页无需改代码即可勾选该权限。
+
+### 1.3.1 菜单管理
+
+**用户能力**
+
+- 树形查看全部菜单（分组/页面/动作），含编码、路由、权限码与状态标签。
+- 新建/编辑菜单：名称、编码、类型、作用域、路由、图标、权限码、展示与启用开关、排序。
+- 删除菜单（有下级时拒绝）。
+
+**实现**
+
+- `api/menu_api.go` 的 `List` / `Detail` / `Save` / `Delete` / `Nav` / `PermCatalog`。
+- `service/menu_service.go` 的 `Save`：编码唯一、分组不能配路由、权限码唯一（`CountByPermCode`）、
+  `validateParent` 逐级上溯最多 32 层做环检测。
+- `service/menu_service.go` 的 `Delete`：`CountChildren` 大于 0 返回 `ERR_CONFLICT`。
+- 路由：`GET /menu/detail/{MenuULID}`，路径参数置于末尾。
+- 前端 `views/admin/menus.vue`：`el-tree` 展示 + 右侧抽屉表单（图标下拉含预览）。
+
+**验收点**
+
+- 新增菜单后刷新页面，侧边栏立即出现该菜单（同一权限码的前提下）。
+- 同级排序号决定侧边栏顺序。
+- 删除有下级的菜单返回 `ERR_CONFLICT`。
+- 菜单编码重复返回 `ERR_CONFLICT`；权限码已被登记返回 `ERR_CONFLICT`。
+
+### 1.3.2 权限目录
+
+**用户能力**
+
+- 按分组浏览全部已登记权限码、名称与说明。
+
+**实现**
+
+- `service/menu_service.go` 的 `PermissionCatalog`：遍历菜单行，按 `perm_code` 首段分组
+  （`all`/`system`/`skill`/`project`/`other`），同码去重，`*` 单独登记为「全部权限」。
+- `GET /menu/permission/catalog` 收口到 `system:perm:read`。
+- 前端 `views/admin/permissions.vue`：左侧分组、右侧权限表，显示总数。
+
+**验收点**
+
+- 权限目录条目与菜单表中非空 `perm_code` 一一对应（去重后）。
+- 新增菜单登记新权限码后，目录与角色页选项同时出现该码。
 
 ### 1.4 审计日志
 
@@ -121,7 +186,7 @@
 - `pkg/access_middleware.go` 的 `extractAuditTarget`：仅 `/api/v1/admin/` 路径读 body，
   body 上限 64 KiB；从 `user_ulid` / `role_ulid` / `project_ulid` / `chapter_ulid` / `doc_ulid`
   五个白名单键提取目标，读后还原 body 供 handler 绑定。
-- `cmd/server/main.go`：`AuditMiddleware` 跳过名单为注册、登录、登出与 `/api/v1/chat/send`。
+- `cmd/server/main.go`：`AuditMiddleware` 跳过名单为登录、登出与 `/api/v1/chat/send`。
 - `service/audit_service.go` 的 `Record`：自动补全操作用户登录名；落库失败不阻断业务，仅记 warn 日志。
 - `api/audit_api.go` 的 `List` 分页输出审计记录。
 
@@ -663,13 +728,13 @@
   客户端断开即中止生成且不落库助手消息；流结束或失败时通过
   `aiClient.RecordStreamUsage` 上报用量。
 - `service/chat_service.go` 的 `resolveSkill`：请求带 `skill_code` 时按编码取启用中的技能；
-  否则解析正文首 token 的斜杠命令；未命中技能则全文作为用户正文。
+  否则解析正文首 token 的技能命令；未命中技能则全文作为用户正文。
 - `service/chat_service.go` 的 `loadContextInput`：装配引用章节（首项为当前章）、
   当前章前后章梗概、@引用文档全文、项目角色卡、项目设定条目；
   RAG 召回失败时降级为空上下文，不阻断生成；引用章节不属于本项目或文档越权直接报错。
 - `service/chat_context.go` 的 `buildContextBlocks`：产出上下文块，
-  优先级为 skill(100) > current_chapter(90) > ref_chapter / ref_doc(80) > rag(70) >
-  chapter_summary(60) > character / lore(50) > history(40)；技能命中时渲染
+  优先级为 skill(100) > current_chapter(90) > skill_reference(85) > ref_chapter / ref_doc(80) >
+  rag(70) > chapter_summary(60) > character / lore(50) > history(40)；技能命中时渲染
   `{{user_input}}` / `{{chapter_content}}` / `{{context}}` 并把渲染结果作为最高优先级块。
 - `ai/prompt.go` 的 `AssembleContext`：按优先级降序装配，超出字符预算（`ContextBudgetChars=12000`）
   的块整块丢弃并返回被丢弃的块键；空块直接跳过；同优先级保持输入顺序。
@@ -698,37 +763,49 @@
 - `done` 事件的 `reference_list` 带回本次 RAG 召回依据。
 - 插入章节后正文包含 AI 回复内容，并走同一自动保存通道。
 
-### 7.3 技能（斜杠命令）
+### 7.3 技能（Skill）
 
 **用户能力**
 
-- 在输入框用 `/` 触发技能补全。
-- 以斜杠命令方式发起创作任务（续写、大纲、润色、扩写、缩写、梗概、审稿、取名、设定问答）。
-- 在后台管理技能：新建、编辑提示词模板、启用/停用、删除。
+- 在输入框用 `/` 触发技能补全，选中后以徽标形式附带技能编码提交。
+- 以技能发起创作任务（续写、大纲、润色、扩写、缩写、梗概、审稿、取名、设定问答）。
+- 在「技能管理」中维护全局技能与项目技能：编码、名称、分类、提示词模板、变量声明、
+  参考资料、启用开关与排序。
+- 同一编码的项目技能覆盖全局技能，团队可按项目定制而不污染公共资产。
+- 技能可声明变量（必填/缺省值），对话前置解析返回缺失项提示。
 
 **实现**
 
-- `ai/skills.go` 的 `builtinSkillList`：9 个内置技能资产（`continue` / `outline` / `polish` /
-  `expand` / `condense` / `summary` / `review` / `name` / `setting`），含分类、说明与提示词模板。
-- `service/slash_service.go` 的 `SeedBuiltin`：按 `command_code` 查缺补插，
-  已存在不覆盖（保留用户对提示词的定制），`builtin_flag=true`。
-- `service/slash_service.go` 的 `parseSlashContent`：正文首 token 形如 `/code` 且命中启用命令时
-  剥离命令，剩余正文进 `remainder_text` 与 `placeholder_map["user_input"]`；
-  未命中时正文原样保留且 `skill_code` 为空。
-- `service/slash_service.go` 的 `Save`：新建命令 `builtin_flag=false`；
-  更新时 `builtin_flag` 不入更新列（不可变更）。
-- `service/slash_service.go` 的 `Delete`：内置命令拒删，返回 `ERR_BIZ_FAILED`。
-- `frontend/src/views/workspace/ChatComposer.vue`：输入时按 `/` 与 `@` 触发弹层，
-  键盘上下选择、Enter/Tab 确认；选中技能后以 `skill_code` 徽标形式提交。
-- `frontend/src/views/slash-admin/index.vue`：技能管理页。
+- `ai/skills.go` 的 `builtinSkillList`：9 个内置技能（`continue` / `outline` / `polish` /
+  `expand` / `condense` / `summary` / `review` / `name` / `setting`），含分类、说明与模板；
+  `BuiltinSkill` 与持久化结构解耦，落库由 service 完成。
+- `service/skill_service.go` 的 `SeedDefaults`：按 `(global, "", skill_code)` 查缺补插，
+  已存在不覆盖（保留作者对提示词的定制），`builtin_flag=true`。
+- `service/skill_service.go` 的 `Resolve`：显式 `skill_code` 优先，否则解析正文首 token 的 `/code`；
+  `resolveByCode` 先查项目技能（启用）再回退全局技能；命中后返回 `remainder_text`、
+  `variable_map`、`missing_list` 与命中的 `ref_text_list`。
+- `service/skill_service.go` 的 `validateSkillTemplate`：模板占位符只能是
+  `user_input` / `chapter_content` / `context` / `skill_code` 或已声明变量，
+  否则保存返回 `ERR_INVALID_PARAM`。
+- `service/skill_reference_service.go` 的 `matchReferences`：参考资料关键词为空总是注入，
+  否则任一关键词出现在正文即注入；单技能累计注入上限 4000 字符。
+- `service/chat_service.go` 的 `resolveSkill`：把 `SkillResolveDTO` 转成对话链路输入
+  （模板 + 变量 + 参考资料），模板中的 `{{context}}` / `{{chapter_content}}` 仍由上下文装配填充。
+- `service/chat_context.go` 的 `buildContextBlocks`：技能参考资料作为 `skill_reference` 块
+  （优先级 85，低于当前章节、高于显式引用）。
+- `api/router.go` 的 `registerSkillRoutes`：读写分离，写操作收口 `skill:manage`。
+- 前端 `views/skills/index.vue` + `SkillReferencePanel.vue`：表格 + 抽屉 + 参考资料子面板；
+  `ChatComposer.vue` 改为按项目拉取技能（含全局技能）。
 
 **验收点**
 
-- 正文首 token 命中启用命令时命令被剥离，剩余正文作为参数进入提示词模板。
-- 未知命令、已停用命令、命令不在首 token 三种情况正文原样保留（不进入技能分支）。
-- 停用某技能后输入该命令不再命中。
-- 内置技能在管理页不可删除；可修改其提示词模板且重启后不被覆盖。
-- 技能缺省分类与排序号在管理页可见。
+- 正文首 token 命中启用技能时命令被剥离，剩余正文进入 `{{user_input}}`。
+- 未知命令、已停用技能、命令不在首 token 三种情况正文原样保留（不进入技能分支）。
+- 停用某技能后 `/code` 不再命中；项目技能停用后回退同编码全局技能。
+- 同编码项目技能存在时，对话与列表都以项目技能为准（列表里全局项标 `overridden_flag`）。
+- 内置技能不可删除、不可改编码与作用域，可改模板/变量/参考资料。
+- 必填变量缺失时 `resolve` 返回 `missing_list`，对话链路直接拒绝渲染并提示补齐。
+- 模板里写了未声明的占位符时保存失败。
 
 ### 7.4 引用与插入
 
@@ -909,55 +986,23 @@
 
 ---
 
-## 10. 扩展
+## 10. 可扩展点
 
-### 10.1 创作流程设计器
+系统的扩展能力只有一条路径：**技能**（见 7.3）。技能是带作用域的提示词资产，
+模板、变量声明与参考资料全部落库，在「技能管理」页在线维护，无需改代码或重新部署。
 
-**用户能力**
+其余可能的扩展点及其现状：
 
-- 在 BPMN 画布上编辑作品创作流程。
-- 新建、保存、载入流程草稿。
-- 导入 / 导出 BPMN XML 文件。
-- 管理多份本地草稿。
+| 扩展点 | 现状 |
+| --- | --- |
+| 提示词与写作范式 | 技能资产承载：全局技能 + 项目技能（同编码项目覆盖全局） |
+| 模型厂商接入 | 模型供应商页维护，OpenAI 兼容与 Anthropic 双协议，不改代码 |
+| 导航与页面 | 菜单表登记，分组 / 页面 / 动作三级，权限码与菜单同一行登记 |
+| 权限粒度 | 权限目录由菜单汇总，角色按目录勾选，无需改代码 |
+| 检索召回 | 关键词 + 短语双通道，RRF 融合 + 模型重排，模型不可用时自动降级 |
 
-**实现**
-
-- `frontend/src/views/workflow/index.vue`：基于 `bpmn-js` 的 `Modeler` 绘制画布；
-  提供一份默认流程（选题 → 大纲 → 起草 → 复核 → 定稿）。
-- `frontend/src/views/workflow/index.vue` 的 `readDraftList` / `persistDraftList`：
-  草稿保存在浏览器 `localStorage`，键 `nw_workflow_draft_list_v1`。
-- `frontend/src/views/workflow/index.vue` 的导出逻辑：用 `Blob` 生成
-  `application/xml;charset=utf-8` 并触发浏览器下载；导入走文件选择读取 XML。
-
-**验收点**
-
-- 草稿刷新页面后仍在（存于 localStorage）。
-- 导出的 `.bpmn` 文件可被重新导入并还原画布。
-- 草稿列表按更新时间倒序。
-- 流程草稿不进入业务数据库。
-
-### 10.2 微前端装载
-
-**用户能力**
-
-- 登记子应用入口（名称、入口地址、路由前缀）。
-- 启用/停用子应用。
-- 装载与卸载已登记的子应用。
-
-**实现**
-
-- `frontend/src/views/micro-app/index.vue`：使用 `qiankun` 的 `loadMicroApp` 装载子应用，
-  卸载时调用返回实例的卸载方法。
-- `frontend/src/views/micro-app/index.vue` 的 `readAppList` / `persistAppList`：
-  登记表保存在浏览器 `localStorage`，键 `nw_micro_app_registry_v1`。
-- 入口地址用 `new URL(...)` 校验，非法地址给出提示并拒绝登记。
-
-**验收点**
-
-- 登记表刷新页面后仍在。
-- 非法入口地址无法登记。
-- 装载后子应用渲染在挂载点内，卸载后挂载点清空。
-- 子应用登记信息不进入业务数据库。
+系统不设「流程编排」与「微前端」类扩展位：这两类扩展要么把控制流拆到浏览器本地
+（不进业务库、无法审计与协作），要么把一个写作工具拆成多应用（部署与鉴权成本高于收益）。
 
 ---
 
@@ -969,10 +1014,12 @@
 
 **实现**
 
-- `frontend/src/router/index.ts`：路由表覆盖仪表盘、配置、技能管理、流程、微前端、
-  用户/角色/审计/用量/状态，以及项目内的工作台、知识库、角色、笔记、大纲、连续性页面。
+- `frontend/src/router/index.ts`：路由表覆盖仪表盘、系统设置、技能管理、模型供应商，
+  用户/角色/菜单/权限目录/审计/用量/运行状态，以及项目内的工作台、知识库、角色、笔记、大纲、
+  连续性、世界观页面；每条业务路由带 `meta.perm_code`。
 - `frontend/src/router/index.ts` 的 `beforeEach`：无 token 访问非公开页跳 `/login`；
-  已登录访问 `/login` 重定向首页；公开页白名单只有 `/login`。
+  已登录访问 `/login` 重定向首页；首次进入业务页先 `loadNav()`，`meta.perm_code` 校验失败回仪表盘。
+- `frontend/src/stores/menu.ts`：导航树与权限码的唯一来源，`loadNav` 幂等（并发只发一次请求）。
 - `frontend/src/api/http.ts`：axios 实例注入 `Authorization: Bearer <token>`；
   响应拦截器解包 `data`、统一错误提示；遇 `ERR_UNAUTHORIZED` 清 token 并跳登录页。
 - `frontend/src/views/workspace/index.vue`：三栏工作台（左目录树 / 中章节编辑器 / 右 AI 面板），

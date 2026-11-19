@@ -6,11 +6,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listKnowledgeDocuments } from '@/api/knowledge'
-import { listSlashCommands } from '@/api/slash'
+import { listSkills } from '@/api/skill'
 import type {
   NWChapterBriefVo,
   NWKnowledgeDocumentVo,
-  NWSlashCommandItemVo,
+  NWSkillVo,
 } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
 import type { NWChatRefItem, NWChatSendPayload } from './chatTypes'
@@ -39,7 +39,7 @@ const skillCode = ref('')
 const refDocList = ref<NWChatRefItem[]>([])
 const refChapterList = ref<NWChatRefItem[]>([])
 const historyCount = ref(0)
-const slashList = ref<NWSlashCommandItemVo[]>([])
+const slashList = ref<NWSkillVo[]>([])
 const knowledgeList = ref<NWKnowledgeDocumentVo[]>([])
 const slashPopupVisible = ref(false)
 const slashFilter = ref('')
@@ -63,8 +63,8 @@ const filteredSlashList = computed(() => {
   const filterText = slashFilter.value.toLowerCase()
   return slashList.value.filter(
     (item) =>
-      item.command_code.toLowerCase().includes(filterText) ||
-      item.command_name.toLowerCase().includes(filterText),
+      item.skill_code.toLowerCase().includes(filterText) ||
+      item.skill_name.toLowerCase().includes(filterText),
   )
 })
 
@@ -164,8 +164,8 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 /** 选中技能：填入 skill_code 徽标并清掉触发词 */
-function selectSlashOption(item: NWSlashCommandItemVo): void {
-  skillCode.value = item.command_code
+function selectSlashOption(item: NWSkillVo): void {
+  skillCode.value = item.skill_code
   removeTriggerTokenBeforeCursor(SLASH_TOKEN_REGEXP)
   slashPopupVisible.value = false
 }
@@ -278,14 +278,25 @@ async function loadKnowledgeList(): Promise<void> {
 
 watch(() => props.projectUlid, loadKnowledgeList, { immediate: true })
 
-onMounted(() => {
-  void listSlashCommands(true)
+/** 加载技能候选（含当前项目技能与全局技能） */
+function loadSkillList(): void {
+  if (!props.projectUlid) {
+    slashList.value = []
+    return
+  }
+  void listSkills({ project_ulid: props.projectUlid, enabled_only: true })
     .then((listData) => {
       slashList.value = Array.isArray(listData) ? listData : []
     })
     .catch(() => {
       slashList.value = []
     })
+}
+
+watch(() => props.projectUlid, loadSkillList, { immediate: true })
+
+onMounted(() => {
+  loadSkillList()
 })
 </script>
 
@@ -323,14 +334,14 @@ onMounted(() => {
         </li>
         <li
           v-for="(optionItem, optionIndex) in filteredSlashList"
-          :key="optionItem.command_ulid"
+          :key="optionItem.skill_ulid"
           class="chat-slash-option"
           :class="{ 'is-active': optionIndex === slashActiveIndex }"
           @mouseenter="slashActiveIndex = optionIndex"
           @click="selectSlashOption(optionItem)"
         >
-          <span class="chat-slash-option__code">/{{ optionItem.command_code }}</span>
-          <span class="chat-slash-option__name">{{ optionItem.command_name }}</span>
+          <span class="chat-slash-option__code">/{{ optionItem.skill_code }}</span>
+          <span class="chat-slash-option__name">{{ optionItem.skill_name }}</span>
           <span class="chat-slash-option__desc">{{ optionItem.description_text }}</span>
         </li>
       </ul>
@@ -416,7 +427,7 @@ onMounted(() => {
       >
         {{ t('workspace.ai.composer.send') }}
       </NWButton>
-      <NWButton v-else type="danger" size="small" @click="emit('stop')">
+      <NWButton v-else type="primary" size="small" @click="emit('stop')">
         {{ t('workspace.ai.composer.stop') }}
       </NWButton>
     </div>

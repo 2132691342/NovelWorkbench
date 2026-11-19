@@ -400,7 +400,7 @@ defineExpose({ reload: loadGraph })
           {{ selectedEdge.relation_note }}
         </span>
         <span class="character-graph__edge-actions">
-          <NWButton size="small" type="danger" @click="handleDeleteEdge">
+          <NWButton size="small" type="danger-text" @click="handleDeleteEdge">
             {{ t('character.relation.delete') }}
           </NWButton>
           <NWButton size="small" @click="clearSelection">{{ t('character.graph.deselect') }}</NWButton>

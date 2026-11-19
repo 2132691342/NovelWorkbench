@@ -34,12 +34,12 @@ export function listProjects(req: NWProjectListReqVo): Promise<NWPageDto<NWProje
 
 /** 项目详情 */
 export function getProjectDetail(projectUlid: string): Promise<NWProjectVo> {
-  return get<NWProjectVo>(`/project/detail?project_ulid=${encodeURIComponent(projectUlid)}`)
+  return get<NWProjectVo>(`/project/detail/${encodeURIComponent(projectUlid)}`)
 }
 
 /** 项目目录树（卷 + 章节，写作工作台用） */
 export function getProjectTree(projectUlid: string): Promise<NWProjectTreeVo> {
-  return get<NWProjectTreeVo>(`/project/tree?project_ulid=${encodeURIComponent(projectUlid)}`)
+  return get<NWProjectTreeVo>(`/project/tree/${encodeURIComponent(projectUlid)}`)
 }
 
 /** 新建卷 */

@@ -1,0 +1,115 @@
+.skills-page__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skills-page__search {
+  width: 190px;
+}
+
+.skills-page__filter {
+  width: 130px;
+}
+
+.skills-page__hint {
+  margin: 0 0 14px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.skills-page__name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skills-page__code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background-color: var(--primary-light);
+  color: var(--primary-active);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.skills-page__tag-gap {
+  margin-left: 4px;
+}
+
+.skills-page__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.skills-page__full {
+  width: 100%;
+}
+
+.skills-page__template :deep(textarea) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.skills-page__field-hint {
+  margin: 4px 0 0;
+  color: var(--text-placeholder);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.skills-page__section {
+  margin: 4px 0 18px;
+  padding: 14px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-base);
+  background-color: var(--bg-page);
+}
+
+.skills-page__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.skills-page__section-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.skills-page__variable-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.skills-page__variable-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.skills-page__variable-name :deep(input) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+.skills-page__muted {
+  margin: 8px 0 0;
+  color: var(--text-placeholder);
+  font-size: 12.5px;
+}
+
+.skills-page__drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

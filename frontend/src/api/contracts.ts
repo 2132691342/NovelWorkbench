@@ -56,33 +56,114 @@ export interface NWSettingItemVo {
   setting_desc: string
 }
 
-/** 斜杠命令项（字段对齐后端 SlashCommandVO） */
-export interface NWSlashCommandItemVo {
-  command_ulid: string
-  command_code: string
-  command_name: string
-  category_code: string
+/** 技能变量声明（字段对齐后端 SkillVariableDO） */
+export interface NWSkillVariableVo {
+  variable_name: string
+  variable_label: string
+  default_value: string
+  required_flag: boolean
   description_text: string
-  prompt_template: string
-  enabled_flag: boolean
-  builtin_flag: boolean
-  sort_order: number
 }
 
-/** 斜杠命令保存请求（字段对齐后端 SlashCommandREQ） */
-export interface NWSlashCommandSaveReqVo {
-  command_ulid?: string
-  command_code: string
-  command_name: string
+/** 技能视图对象（字段对齐后端 SkillVO） */
+export interface NWSkillVo {
+  skill_ulid: string
+  skill_code: string
+  skill_name: string
+  scope_code: string
+  project_ulid: string
   category_code: string
   description_text: string
   prompt_template: string
+  variable_list: NWSkillVariableVo[]
+  ref_count: number
+  enabled_flag: boolean
+  builtin_flag: boolean
+  overridden_flag: boolean
+  sort_order: number
+  created_at_ms: number
+  updated_at_ms: number
+}
+
+/** 技能参考资料视图对象（字段对齐后端 SkillReferenceVO） */
+export interface NWSkillReferenceVo {
+  ref_ulid: string
+  skill_ulid: string
+  ref_name: string
+  ref_text: string
+  keyword_list: string
+  sort_order: number
+  created_at_ms: number
+}
+
+/** 技能解析结果（字段对齐后端 SkillResolveDTO） */
+export interface NWSkillResolveVo {
+  skill_ulid: string
+  skill_code: string
+  skill_name: string
+  remainder_text: string
+  variable_map: Record<string, string>
+  missing_list: string[]
+  ref_text_list: string[]
+}
+
+/** 菜单树节点（字段对齐后端 MenuTreeNodeVO） */
+export interface NWMenuItemVo {
+  menu_code: string
+  menu_name: string
+  menu_type_code: string
+  scope_code: string
+  route_path: string
+  icon_code: string
+  perm_code: string
+  child_list: NWMenuItemVo[]
+}
+
+/** 导航数据（字段对齐后端 MenuNavDTO） */
+export interface NWMenuNavVo {
+  menu_tree_list: NWMenuItemVo[]
+  perm_code_list: string[]
+}
+
+/** 菜单管理视图对象（字段对齐后端 MenuVO） */
+export interface NWMenuVo {
+  menu_ulid: string
+  parent_ulid: string
+  parent_name: string
+  menu_code: string
+  menu_name: string
+  menu_type_code: string
+  scope_code: string
+  route_path: string
+  icon_code: string
+  perm_code: string
+  visible_flag: boolean
   enabled_flag: boolean
   sort_order: number
+  remark_text: string
+  created_at_ms: number
+  updated_at_ms: number
+}
+
+/** 权限目录条目（字段对齐后端 PermItemVO） */
+export interface NWPermItemVo {
+  perm_code: string
+  perm_name: string
+  perm_desc: string
+  menu_code: string
+  menu_name: string
+  builtin_flag: boolean
+}
+
+/** 权限目录分组（字段对齐后端 PermGroupVO） */
+export interface NWPermGroupVo {
+  group_code: string
+  group_name: string
+  perm_list: NWPermItemVo[]
 }
 
 // ============================================================
-// 写作工作台 / 项目管理契约（wave B，字段对齐后端 domain）
+// 写作工作台 / 项目管理契约（字段对齐后端 domain）
 // ============================================================
 
 /** 分页结果（字段对齐后端 PageDTO） */

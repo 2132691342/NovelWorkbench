@@ -4,13 +4,19 @@ package domain
 
 // 角色与权限码常量：权限码为字符串，"*" 表示全部权限。
 const (
-	PermAdminAll    = "*"                   // 全部权限（内置 admin 角色）
-	PermUserManage  = "system:user:manage"  // 用户管理
-	PermRoleManage  = "system:role:manage"  // 角色管理
-	PermAuditRead   = "system:audit:read"   // 审计日志查看
-	PermModelManage = "system:model:manage" // 模型供应商管理
-	PermUsageRead   = "system:usage:read"   // 用量分析查看
-	PermSystemRead  = "system:status:read"  // 运行状态查看
+	PermAdminAll       = "*"                     // 全部权限（内置 admin 角色）
+	PermUserManage     = "system:user:manage"    // 用户管理
+	PermRoleManage     = "system:role:manage"    // 角色管理
+	PermMenuManage     = "system:menu:manage"    // 菜单管理（含权限码登记）
+	PermPermissionRead = "system:perm:read"      // 权限目录查看
+	PermAuditRead      = "system:audit:read"     // 审计日志查看
+	PermModelManage    = "system:model:manage"   // 模型供应商管理
+	PermUsageRead      = "system:usage:read"     // 用量分析查看
+	PermSystemRead     = "system:status:read"    // 运行状态查看
+	PermSettingManage  = "system:setting:manage" // 运行时配置维护
+	PermProjectDelete  = "project:delete"        // 删除项目
+	PermSkillManage    = "skill:manage"          // 技能资产管理
+	PermSkillApply     = "skill:apply"           // 技能使用
 )
 
 // 内置角色编码常量。

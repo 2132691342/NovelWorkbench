@@ -4,7 +4,7 @@
 所有表名、列名、类型均取自 `backend/internal/domain/*.go` 的 GORM 标签，经 GORM 命名策略
 （`backend/internal/infra/postgres.go` 的 `ULIDNamingStrategy`）归一后与实际 DDL 一致。
 
-数据库结构由 `cmd/server/main.go` 的 `db.AutoMigrate(...)` 一次性声明 26 张表，
+数据库结构由 `cmd/server/main.go` 的 `db.AutoMigrate(...)` 一次性声明 28 张表，
 **没有 SQL 迁移文件**，也没有外键、软删除与数据库级级联。
 
 ## 1. 存储分工
@@ -57,7 +57,9 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`ULIDNamingStrategy.ColumnName`
 | `CHK_` | 知识库切片 | `IDPrefixChunk` |
 | `SES_` | 会话 | `IDPrefixSession` |
 | `MSG_` | 消息 | `IDPrefixMessage` |
-| `SKL_` | 斜杠命令 | `IDPrefixSlashCommand` |
+| `SKL_` | 技能 | `IDPrefixSkill` |
+| `SKR_` | 技能参考资料 | `IDPrefixSkillReference` |
+| `MNU_` | 菜单 | `IDPrefixMenu` |
 | `JOB_` | 异步任务 | `IDPrefixJob` |
 | `SET_` | 应用配置 | `IDPrefixSetting` |
 | `WCS_` | 字数统计 | `IDPrefixWordStat` |
@@ -122,6 +124,29 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`ULIDNamingStrategy.ColumnName`
 
 索引：`idx_user_roles_user_ul_id`、`idx_user_roles_role_ul_id`。
 关联写入走 `RoleRepo.ReplaceUserRoles`（先删后插，单事务）。
+
+#### menus
+
+菜单表，同时是权限码登记处。`page` 行承载页面权限码，`action` 行只登记动作权限码（不进导航）。
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `menu_ulid` | `varchar(40)` | PK |
+| `parent_ulid` | `varchar(40)` | 索引，空为根节点 |
+| `menu_code` | `varchar(64)` | UNIQUE |
+| `menu_name` | `varchar(64)` | |
+| `menu_type_code` | `varchar(16)` | group / page / action |
+| `scope_code` | `varchar(16)` | global / project，索引 |
+| `route_path` | `varchar(128)` | 项目内以 `:project_ulid` 结尾 |
+| `icon_code` | `varchar(32)` | 前端图标表键 |
+| `perm_code` | `varchar(64)` | 索引，空表示登录可见 |
+| `visible_flag` | `boolean` | `DEFAULT true` |
+| `enabled_flag` | `boolean` | `DEFAULT true` |
+| `sort_order` | `bigint` | 同级升序 |
+| `remark_text` | `varchar(256)` | |
+
+索引：`idx_menus_menu_code`(UNIQUE)、`idx_menus_parent_ul_id`、`idx_menus_scope_code`、`idx_menus_perm_code`。
+服务层保证 `perm_code` 全局唯一（同一权限码只能登记一次），数据库不做唯一约束以允许空值多行。
 
 #### audit_logs
 
@@ -425,7 +450,7 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`ULIDNamingStrategy.ColumnName`
 | `session_ulid` | `varchar(40)` | 索引 |
 | `role_code` | `varchar(16)` | user/assistant/system |
 | `content_text` | `text` | |
-| `skill_code` | `varchar(32)` | 命中的斜杠命令编码，空为自由对话 |
+| `skill_code` | `varchar(32)` | 命中的技能编码，空为自由对话 |
 | `ref_doc_json` | `text` | @引用文档 ULID JSON 数组 |
 | `ref_chapter_json` | `text` | @引用章节 ULID JSON 数组 |
 | `ref_message_json` | `text` | 显式引用历史消息 ULID JSON 数组 |
@@ -433,23 +458,43 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`ULIDNamingStrategy.ColumnName`
 
 索引：`idx_chat_messages_session_ul_id`。
 
-#### slash_commands
+#### skills
 
-斜杠命令（技能资产），本质是带占位符的提示词模板。
+技能资产：带作用域的提示词模板。全局技能（`scope_code=global`）与项目技能（`scope_code=project`）
+共存，同编码项目技能覆盖全局技能。
 
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
-| `command_ulid` | `varchar(40)` | PK |
-| `command_code` | `varchar(32)` | UNIQUE |
-| `command_name` | `varchar(64)` | |
-| `category_code` | `varchar(16)` | |
+| `skill_ulid` | `varchar(40)` | PK（`SKL_` 前缀） |
+| `skill_code` | `varchar(32)` | 索引，作用域内唯一 |
+| `skill_name` | `varchar(64)` | |
+| `scope_code` | `varchar(16)` | global / project，索引，默认 global |
+| `project_ulid` | `varchar(40)` | 索引，全局技能为空串 |
+| `category_code` | `varchar(16)` | write / revise / outline / setting / review / other |
 | `description_text` | `varchar(256)` | |
 | `prompt_template` | `text` | `{{占位符}}` 模板 |
+| `variable_spec_json` | `text` | 变量声明 JSON 数组，空为 `"[]"` |
 | `enabled_flag` | `boolean` | `DEFAULT true` |
-| `builtin_flag` | `boolean` | `DEFAULT true`，内置不可删 |
+| `builtin_flag` | `boolean` | `DEFAULT false`，内置不可删 |
 | `sort_order` | `bigint` | |
 
-索引：`idx_slash_commands_command_code`(UNIQUE)。
+索引：`idx_skills_skill_code`、`idx_skills_scope_code`、`idx_skills_project_ul_id`。
+作用域内编码唯一由服务层保证（查询 `(scope_code, project_ulid, skill_code)` 后再写）。
+
+#### skill_references
+
+技能参考资料：技能命中后按关键词挑选注入上下文，空关键词表示总是注入。
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `ref_ulid` | `varchar(40)` | PK（`SKR_` 前缀） |
+| `skill_ulid` | `varchar(40)` | 索引 |
+| `ref_name` | `varchar(64)` | |
+| `ref_text` | `text` | |
+| `keyword_list` | `varchar(256)` | 逗号分隔，空表示总是注入 |
+| `sort_order` | `bigint` | 注入顺序 |
+
+索引：`idx_skill_references_skill_ul_id`。技能删除时级联清理（`SkillRepo.DeleteReferencesBySkill`）。
 
 ### 3.6 模型供应商与用量
 
@@ -590,7 +635,10 @@ RabbitMQ 消费的落库凭据。
 | `knowledge_documents.doc_type_code` | `txt` / `md` / `docx` / `pdf`（由扩展名白名单推导） |
 | `knowledge_documents.doc_status_code` | `pending` / `indexing` / `indexed` / `failed` |
 | `chat_messages.role_code` | `user` / `assistant` / `system` |
-| `slash_commands.category_code` | `write` / `revise` / `outline` / `setting` / `other` |
+| `skills.category_code` | `write` / `revise` / `outline` / `setting` / `review` / `other` |
+| `skills.scope_code` | `global` / `project` |
+| `menus.menu_type_code` | `group` / `page` / `action` |
+| `menus.scope_code` | `global` / `project` |
 | 检索模式（请求参数，非列） | `keyword` / `hybrid`（默认 hybrid，其他值按 keyword 处理） |
 
 ### 4.5 运维
@@ -711,20 +759,27 @@ worker 内部对单个文档最多重试 3 次（`maxIndexRetryCount`），退�
 
 | 顺序 | 动作 | 条件 | 失败处理 |
 | --- | --- | --- | --- |
-| 1 | `providerService.SeedDefault` 播种默认模型供应商 | `model_providers` 表为空（`Count()==0`） | 仅告警（`Warnw`），继续启动 |
-| 2 | `slashService.SeedBuiltin` 播种内置斜杠命令 | 按 `command_code` 查缺补插 | 致命：`os.Exit(1)` |
+| 1 | `providerService.SeedDefault` 播种默认模型供应商 | 已配置 `ai.base_url` 与 `ai.chat_model` 且表为空（`Count()==0`） | 仅告警（`Warnw`），继续启动 |
+| 2 | `skillService.SeedDefaults` 播种内置技能 | 按 `(global, "", skill_code)` 查缺补插 | 致命：`os.Exit(1)` |
 | 3 | `settingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插 | 致命：`os.Exit(1)` |
 | 4 | `roleService.SeedDefaults` 播种内置角色 | 按 `role_code` 查缺补插 | 致命：`os.Exit(1)` |
-| 5 | `userAdminService.BootstrapAdmin` 引导管理员 | `users` 表为空（`Count()==0`） | 致命：`os.Exit(1)` |
+| 5 | `menuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插（父级编码先行解析） | 致命：`os.Exit(1)` |
+| 6 | `userAdminService.BootstrapAdmin` 引导管理员 | `users` 表为空（`Count()==0`） | 致命：`os.Exit(1)` |
 
 播种内容：
 
 - **供应商**：名称固定「默认模型网关」，`enabled_flag=true`、`default_flag=true`、
   `last_test_status_code='untested'`，API Key 用 JWT 密钥派生的材料做 AES-256-GCM 封存。
-- **斜杠命令**：来源 `ai.BuiltinSkills()`，共 9 条内置技能
+- **技能**：来源 `ai.BuiltinSkills()`，共 9 条内置全局技能
   （`continue`/`outline`/`polish`/`expand`/`condense`/`summary`/`review`/`name`/`setting`），
-  `builtin_flag=true`、`enabled_flag=true`；已存在的同编码命令不覆盖。
+  `scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`；已存在的不覆盖（保留作者改动）。
+- **菜单**：来源 `menuSeedList`，共 22 行：3 个分组（创作/平台/系统）、18 个页面与 1 个动作权限
+  （`action_model_write`）。页面含仪表盘、系统设置、7 个项目内页（写作台/创作规划/连续性/
+  角色/世界观/知识库/素材笔记）、模型供应商、技能管理与 7 个管理页（用户/角色/菜单/权限目录/
+  审计/用量/运行状态）；`perm_code` 非空的页面即权限登记处。
 - **应用配置**：`chat_history_count=5`、`rag_top_k=6`。配置键为白名单，值必须为正整数。
+- **权限码**：`system:*`（用户/角色/菜单/权限目录/审计/设置/模型/用量/状态）与 `skill:manage`，
+  全部由内置菜单登记；`*` 为通配全部权限。
 - **角色**：`admin`（`perm_codes_json = ["*"]`）、`user`（`perm_codes_json = "[]"`），
   `builtin_flag=true`；已存在不覆盖。
 - **管理员**：登录名 `admin`，邮箱 `admin@novelworkbench.local`，密码取 `app.admin_password`
@@ -786,7 +841,7 @@ worker 内部对单个文档最多重试 3 次（`maxIndexRetryCount`），退�
 | `jobs` | `JobRepo` 只有 Create/Update/Get，无删除方法；任务留痕永久保留 |
 | `audit_logs` | `AuditRepo` 只增不删，无任何 Delete 方法 |
 
-其他不随项目删除清理的数据：`model_providers`、`model_usage_stats`、`slash_commands`、
+其他不随项目删除清理的数据：`model_providers`、`model_usage_stats`、`skills`（全局行）、`menus`、
 `app_settings`、`roles`、`user_roles`、`users`（均为全局数据，与项目无关联）。
 
 另外，删除大纲节点前需先删除其子节点（`OutlineService.DeleteNode` 校验子节点数为 0），
@@ -799,7 +854,7 @@ worker 内部对单个文档最多重试 3 次（`maxIndexRetryCount`），退�
 | 无外键 | 所有 DO 结构体没有 `gorm:"foreignKey"` 标签，AutoMigrate 不生成 `FOREIGN KEY` |
 | 无软删除 | 没有 `gorm.DeletedAt` 字段，所有删除都是物理 `DELETE` |
 | 无数据库级联 | `ON DELETE CASCADE` 不存在，级联全部由服务层显式编排 |
-| 唯一约束共 6 处 | `users.user_name`、`users.user_email`、`roles.role_code`、`slash_commands.command_code`、`app_settings.setting_key`（均为单列唯一索引），以及 `model_usage_stats.uk_mus_dim`（`stat_date`+`provider_ulid`+`model_name`+`call_type_code` 四列组合唯一索引） |
+| 唯一约束共 7 处 | `users.user_name`、`users.user_email`、`roles.role_code`、`menus.menu_code`、`app_settings.setting_key`（均为单列唯一索引），`model_usage_stats.uk_mus_dim`（`stat_date`+`provider_ulid`+`model_name`+`call_type_code` 四列组合唯一索引），以及 `skills` 作用域内编码（由服务层保证，无数据库唯一索引以允许空值多行） |
 | 归属校验在服务层 | `mustOwnProject` / `mustOwnChapter` 等函数比对 `projects.user_ulid`，不是数据库约束 |
 | 跨表关联用 JOIN | 例如 `RoleRepo.ListRolesByUserULID` 用 `JOIN user_roles ON user_roles.role_ulid = roles.role_ulid` |
 | 分页 | `PageREQ.Normalize` 归一为 `page_num >= 1`、`page_size` 默认 20、上限 100 |
@@ -812,7 +867,7 @@ worker 内部对单个文档最多重试 3 次（`maxIndexRetryCount`），退�
   `UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、
   `CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、
   `DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、
-  `SlashCommandDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、
+  `SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、
   `UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelUsageStatDO`。
 - 仓库内**没有 `.sql` 文件，也没有 migrations 目录**。
 - AutoMigrate 语义：表不存在则 `CREATE TABLE`；表已存在则逐列比对并补列、补索引。

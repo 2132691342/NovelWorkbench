@@ -1,6 +1,6 @@
 <!--
-  角色管理页：角色分页表格（权限标签/内置标签）+ 保存弹窗（权限多选支持自定义）+ 删除。
-  内置角色不可删除，删除按钮禁用并以 tooltip 说明原因。
+  角色管理页：分页表格（权限分组标签/内置标签）+ 保存抽屉（权限目录按组勾选）。
+  权限码来源是「权限目录」（菜单表登记），角色勾选后即对其挂载账号生效。
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -12,20 +12,14 @@ import {
   saveAdminRole,
   type NWRoleVo,
 } from '@/api/admin'
+import { fetchPermCatalog } from '@/api/menu'
+import type { NWPermItemVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 
 const { t } = useI18n()
-
-// 已知权限编码选项（"*" 全部 + 细粒度管理权限，支持自定义输入）
-const NW_PERM_CODE_LIST = [
-  '*',
-  'system:user:manage',
-  'system:role:manage',
-  'system:audit:read',
-] as const
 
 interface NWRoleFormState {
   role_ulid: string
@@ -36,6 +30,8 @@ interface NWRoleFormState {
 }
 
 const roleList = ref<NWRoleVo[]>([])
+/** 权限目录（权限码 → 展示名映射的唯一来源） */
+const permItemList = ref<NWPermItemVo[]>([])
 const listLoading = ref(false)
 const total = ref(0)
 const pageNum = ref(1)
@@ -58,19 +54,29 @@ const formRules = computed<FormRules>(() => ({
   role_name: [{ required: true, message: t('admin.roles.ruleRoleNameRequired'), trigger: 'blur' }],
 }))
 
-/** 权限编码转展示文案 */
+/** 权限编码转展示文案（未登记的权限码原样展示） */
 function permLabel(permCode: string): string {
-  switch (permCode) {
-    case '*':
-      return t('admin.roles.permAll')
-    case 'system:user:manage':
-      return t('admin.roles.permUserManage')
-    case 'system:role:manage':
-      return t('admin.roles.permRoleManage')
-    case 'system:audit:read':
-      return t('admin.roles.permAuditRead')
-    default:
-      return permCode
+  const matchedItem = permItemList.value.find((permItem) => permItem.perm_code === permCode)
+  return matchedItem?.perm_name ?? permCode
+}
+
+/** 已知权限编码选项（来自权限目录） */
+const permOptionList = computed(() =>
+  permItemList.value.map((permItem) => ({
+    perm_code: permItem.perm_code,
+    perm_name: permItem.perm_name,
+  })),
+)
+
+/**
+ * 加载权限目录
+ */
+async function loadPermCatalog(): Promise<void> {
+  try {
+    const groupList = await fetchPermCatalog()
+    permItemList.value = groupList.flatMap((groupItem) => groupItem.perm_list)
+  } catch {
+    permItemList.value = []
   }
 }
 
@@ -178,6 +184,7 @@ function handleSizeChange(size: number): void {
 }
 
 onMounted(() => {
+  void loadPermCatalog()
   void loadRoleList()
 })
 </script>
@@ -195,7 +202,7 @@ onMounted(() => {
         <el-table :data="roleList" stripe>
           <el-table-column prop="role_code" :label="t('admin.roles.roleCode')" width="180" />
           <el-table-column prop="role_name" :label="t('admin.roles.roleName')" width="150" />
-          <el-table-column :label="t('admin.roles.permCodes')" min-width="240">
+          <el-table-column :label="t('admin.roles.permCodes')" min-width="260">
             <template #default="{ row }">
               <template v-if="row.perm_codes && row.perm_codes.length > 0">
                 <el-tag
@@ -203,9 +210,10 @@ onMounted(() => {
                   :key="permCode"
                   class="admin-roles-page__perm-tag"
                   size="small"
-                  :title="permLabel(permCode)"
+                  :type="permCode === '*' ? 'warning' : 'primary'"
+                  :title="permCode"
                 >
-                  {{ permCode }}
+                  {{ permLabel(permCode) }}
                 </el-tag>
               </template>
               <span v-else class="admin-roles-page__muted">-</span>
@@ -229,7 +237,7 @@ onMounted(() => {
               >
                 <span class="admin-roles-page__delete-wrap">
                   <NWButton
-                    type="danger"
+                    type="danger-text"
                     size="small"
                     :disabled="row.builtin_flag"
                     :loading="deletingKey === row.role_ulid"
@@ -278,17 +286,18 @@ onMounted(() => {
             class="admin-roles-page__select"
             multiple
             filterable
-            allow-create
             default-first-option
             clearable
+            :placeholder="t('admin.roles.permPlaceholder')"
           >
             <el-option
-              v-for="permCode in NW_PERM_CODE_LIST"
-              :key="permCode"
-              :value="permCode"
-              :label="`${permLabel(permCode)} (${permCode})`"
+              v-for="permOption in permOptionList"
+              :key="permOption.perm_code"
+              :value="permOption.perm_code"
+              :label="`${permOption.perm_name} (${permOption.perm_code})`"
             />
           </el-select>
+          <p class="admin-roles-page__hint">{{ t('admin.roles.permHint') }}</p>
         </el-form-item>
         <el-form-item prop="remark_text" :label="t('admin.roles.remark')">
           <el-input v-model="formState.remark_text" type="textarea" :rows="2" />
@@ -324,5 +333,12 @@ onMounted(() => {
 .admin-roles-page__pagination {
   margin-top: 14px;
   justify-content: flex-end;
+}
+
+.admin-roles-page__hint {
+  margin: 6px 0 0;
+  color: var(--text-placeholder);
+  font-size: 12px;
+  line-height: 1.6;
 }
 </style>

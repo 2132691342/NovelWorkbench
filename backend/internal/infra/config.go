@@ -137,9 +137,7 @@ func (c *Config) validate() error {
 	if c.Postgres.Host == "" || c.Postgres.DBName == "" {
 		return fmt.Errorf("postgres.host/dbname is required")
 	}
-	if c.AI.BaseURL == "" || c.AI.ChatModel == "" {
-		return fmt.Errorf("ai.base_url/chat_model is required")
-	}
+	// 模型网关不是启动必需项：留空则跳过出厂供应商播种，由页面维护供应商即可启动。
 	if c.AI.ProtocolCode == "" {
 		c.AI.ProtocolCode = "openai" // 默认 OpenAI 兼容协议
 	}

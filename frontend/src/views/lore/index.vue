@@ -276,7 +276,7 @@ onMounted(() => {
                 </span>
                 <span class="lore-card__actions">
                   <NWButton size="small" @click="handleEdit(loreItem)">{{ t('common.edit') }}</NWButton>
-                  <NWButton type="danger" size="small" @click="handleDelete(loreItem)">
+                  <NWButton type="danger-text" size="small" @click="handleDelete(loreItem)">
                     {{ t('common.delete') }}
                   </NWButton>
                 </span>

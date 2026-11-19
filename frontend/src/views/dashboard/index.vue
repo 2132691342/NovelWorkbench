@@ -384,7 +384,7 @@ onUnmounted(() => {
                 {{ t('dashboard.editProject') }}
               </NWButton>
               <NWButton
-                type="danger"
+                type="danger-text"
                 size="small"
                 @click.stop="handleDeleteProject(row)"
               >

@@ -83,7 +83,7 @@ export function listCharacters(req: NWCharacterListReqVo): Promise<NWCharacterVo
 /** 角色关系图（节点 + 边） */
 export function getCharacterGraph(projectUlid: string): Promise<NWCharacterGraphVo> {
   return get<NWCharacterGraphVo>(
-    `/character/graph?project_ulid=${encodeURIComponent(projectUlid)}`,
+    `/character/graph/${encodeURIComponent(projectUlid)}`,
   )
 }
 

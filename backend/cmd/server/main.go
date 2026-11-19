@@ -55,7 +55,9 @@ func main() {
 		&domain.ForeshadowHookDO{},
 		&domain.ChapterSummaryDO{},
 		&domain.KnowledgeChunkDO{},
-		&domain.SlashCommandDO{},
+		&domain.SkillDO{},
+		&domain.SkillReferenceDO{},
+		&domain.MenuDO{},
 		&domain.JobDO{},
 		&domain.AppSettingDO{},
 		&domain.ChatSessionDO{},
@@ -113,7 +115,8 @@ func main() {
 	knowledgeRepo := repo.NewKnowledgeRepo(db)
 	outlineRepo := repo.NewOutlineRepo(db)
 	continuityRepo := repo.NewContinuityRepo(db)
-	slashRepo := repo.NewSlashRepo(db)
+	skillRepo := repo.NewSkillRepo(db)
+	menuRepo := repo.NewMenuRepo(db)
 	settingRepo := repo.NewSettingRepo(db)
 	statsRepo := repo.NewStatsRepo(db)
 	jobRepo := repo.NewJobRepo(db)
@@ -123,6 +126,7 @@ func main() {
 
 	authService := service.NewAuthService(userRepo, roleRepo, signer, tokenRepo)
 	roleService := service.NewRoleService(roleRepo, userRepo)
+	menuService := service.NewMenuService(menuRepo, roleService)
 	userAdminService := service.NewUserAdminService(userRepo, roleRepo)
 	auditService := service.NewAuditService(auditRepo, userRepo)
 	outlineService := service.NewOutlineService(outlineRepo, projectRepo)
@@ -140,7 +144,7 @@ func main() {
 	chapterService := service.NewChapterService(chapterRepo, volumeRepo, projectRepo, db)
 	characterService := service.NewCharacterService(characterRepo, projectRepo, db)
 	loreService := service.NewLoreService(loreRepo, projectRepo)
-	slashService := service.NewSlashService(slashRepo)
+	skillService := service.NewSkillService(skillRepo, projectRepo)
 	settingService := service.NewSettingService(settingRepo)
 	statsService := service.NewStatsService(statsRepo, projectRepo)
 
@@ -155,18 +159,20 @@ func main() {
 	aiClient.SetUsageRecorder(usageService)
 	providerService := service.NewModelProviderService(providerRepo, aiClient, cfg.JWT.Secret,
 		time.Duration(aiTimeoutSec)*time.Second)
-	// 供应商表为空时按配置播种默认供应商（配置文件即"出厂默认"，之后在页面上管理）。
-	if err := providerService.SeedDefault(ctx, service.ProviderSeed{
-		ProviderName:  "默认模型网关",
-		ProtocolCode:  cfg.AI.ProtocolCode,
-		BaseURL:       cfg.AI.BaseURL,
-		APIKey:        cfg.AI.APIKey,
-		ChatModelName: cfg.AI.ChatModel,
-		Temperature:   cfg.AI.Temperature,
-		MaxTokens:     cfg.AI.MaxTokens,
-		TimeoutSec:    aiTimeoutSec,
-	}); err != nil {
-		pkg.SLogger().Warnw("默认模型供应商播种失败，可在页面手工添加", "error", err)
+	// 供应商表为空且配置了网关时播种默认供应商（配置文件即"出厂默认"，之后在页面上管理）。
+	if cfg.AI.BaseURL != "" && cfg.AI.ChatModel != "" {
+		if err := providerService.SeedDefault(ctx, service.ProviderSeed{
+			ProviderName:  "默认模型网关",
+			ProtocolCode:  cfg.AI.ProtocolCode,
+			BaseURL:       cfg.AI.BaseURL,
+			APIKey:        cfg.AI.APIKey,
+			ChatModelName: cfg.AI.ChatModel,
+			Temperature:   cfg.AI.Temperature,
+			MaxTokens:     cfg.AI.MaxTokens,
+			TimeoutSec:    aiTimeoutSec,
+		}); err != nil {
+			pkg.SLogger().Warnw("默认模型供应商播种失败，可在页面手工添加", "error", err)
+		}
 	}
 	knowledgeConfig := service.KnowledgeIndexConfig{
 		UploadMaxMB:    cfg.App.UploadMaxMB,
@@ -178,12 +184,12 @@ func main() {
 	knowledgeService := service.NewKnowledgeService(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
 		settingRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, knowledgeRepo,
-		settingRepo, slashService, knowledgeService, providerService, aiClient, db,
+		settingRepo, skillService, knowledgeService, providerService, aiClient, db,
 		service.ChatConfig{HistoryCount: cfg.AI.HistoryCount})
 
 	// 内置技能与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
-	if err := slashService.SeedBuiltin(ctx); err != nil {
-		pkg.SLogger().Errorw("内置斜杠命令播种失败", "error", err)
+	if err := skillService.SeedDefaults(ctx); err != nil {
+		pkg.SLogger().Errorw("内置技能播种失败", "error", err)
 		os.Exit(1)
 	}
 	if err := settingService.SeedDefaults(ctx); err != nil {
@@ -192,6 +198,10 @@ func main() {
 	}
 	if err := roleService.SeedDefaults(ctx); err != nil {
 		pkg.SLogger().Errorw("内置角色播种失败", "error", err)
+		os.Exit(1)
+	}
+	if err := menuService.SeedDefaults(ctx); err != nil {
+		pkg.SLogger().Errorw("内置菜单播种失败", "error", err)
 		os.Exit(1)
 	}
 	// 用户表为空时引导创建管理员账号，密码取自配置（生产必改）。
@@ -216,9 +226,9 @@ func main() {
 			return false, err
 		}
 		return user != nil && user.UserStatusCode != domain.UserStatusDisabled, nil
-	}, []string{"/api/v1/auth/register", "/api/v1/auth/login"})
+	}, []string{"/api/v1/auth/login"})
 	auditMW := pkg.AuditMiddleware(auditService, []string{
-		"/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/chat/send",
+		"/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/chat/send",
 	})
 	statusService := service.NewSystemStatusService(service.SystemProbeDeps{
 		PostgresProbe: func(probeCtx context.Context) error {
@@ -280,7 +290,8 @@ func main() {
 		KnowledgeAPI:  api.NewKnowledgeAPI(knowledgeService),
 		OutlineAPI:    api.NewOutlineAPI(outlineService),
 		ContinuityAPI: api.NewContinuityAPI(continuityService),
-		SlashAPI:      api.NewSlashAPI(slashService),
+		SkillAPI:      api.NewSkillAPI(skillService),
+		MenuAPI:       api.NewMenuAPI(menuService),
 		SettingAPI:    api.NewSettingAPI(settingService),
 		StatsAPI:      api.NewStatsAPI(statsService),
 		ChatAPI:       api.NewChatAPI(chatService),

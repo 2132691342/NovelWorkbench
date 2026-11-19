@@ -73,7 +73,7 @@ type ChatService struct {
 	characterRepo    *repo.CharacterRepo   // 角色仓储
 	knowledgeRepo    *repo.KnowledgeRepo   // 知识库仓储
 	settingRepo      *repo.SettingRepo     // 应用配置仓储
-	slashService     *SlashService         // 斜杠命令服务（技能解析）
+	skillService     *SkillService         // 技能服务（解析、变量与参考资料）
 	knowledgeService *KnowledgeService     // 知识库服务（RAG 召回）
 	providerSvc      *ModelProviderService // 供应商服务（模型选择）
 	aiClient         *ai.Client            // 模型网关（流式调用与用量上报）
@@ -84,12 +84,12 @@ type ChatService struct {
 // NewChatService 构造对话服务。
 func NewChatService(chatRepo *repo.ChatRepo, projectRepo *repo.ProjectRepo, chapterRepo *repo.ChapterRepo,
 	characterRepo *repo.CharacterRepo, knowledgeRepo *repo.KnowledgeRepo, settingRepo *repo.SettingRepo,
-	slashService *SlashService, knowledgeService *KnowledgeService, providerSvc *ModelProviderService,
+	skillService *SkillService, knowledgeService *KnowledgeService, providerSvc *ModelProviderService,
 	aiClient *ai.Client, db *gorm.DB, config ChatConfig) *ChatService {
 	return &ChatService{
 		chatRepo: chatRepo, projectRepo: projectRepo, chapterRepo: chapterRepo,
 		characterRepo: characterRepo, knowledgeRepo: knowledgeRepo, settingRepo: settingRepo,
-		slashService: slashService, knowledgeService: knowledgeService,
+		skillService: skillService, knowledgeService: knowledgeService,
 		providerSvc: providerSvc, aiClient: aiClient,
 		db: db, config: config,
 	}
@@ -167,10 +167,11 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	if err != nil {
 		return err
 	}
-	skillCode, skillTemplate, userInput, err := s.resolveSkill(ctx, req)
+	skill, err := s.resolveSkill(ctx, req)
 	if err != nil {
 		return err
 	}
+	skillCode, skillTemplate, userInput := skill.SkillCode, skill.PromptTemplate, skill.RemainderText
 	session, err := s.resolveSession(ctx, userULID, req)
 	if err != nil {
 		return err
@@ -189,6 +190,8 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		return err
 	}
 	contextInput.SkillTemplate = skillTemplate
+	contextInput.SkillVariable = skill.VariableMap
+	contextInput.SkillRefList = skill.RefTextList
 	contextInput.UserInput = userInput
 	contextInput.HistoryList = historyList
 	blocks, instructionText := buildContextBlocks(contextInput)
@@ -240,7 +243,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		RefMessageJSON: encodeULIDList(req.RefMessageULIDList),
 		TokenUsedCount: estimateTokenCount(countMessagesRunes(messages), utf8.RuneCountInString(replyText)),
 	}
-	// assistant 消息与今日 AI 字数统计同事务（与 wave A 字数语义一致）
+	// assistant 消息与今日 AI 字数统计同事务，保证两者一致落库
 	if err := repo.WithTx(s.db, func(tx *gorm.DB) error {
 		txChat := repo.NewChatRepo(tx)
 		if err := txChat.CreateMessage(ctx, assistantMessage); err != nil {
@@ -356,48 +359,42 @@ func resetTimer(timer *time.Timer) {
 	timer.Reset(chatPingInterval)
 }
 
-// resolveSkill 解析技能与用户正文：req.SkillCode 优先，否则解析正文首 token 斜杠命令
-// （命中→remainder 为用户正文，未命中→skill_code 空、全文为用户正文）。
-func (s *ChatService) resolveSkill(ctx context.Context, req *domain.ChatSendREQ) (skillCode, promptTemplate, userInput string, err error) {
-	if req.SkillCode != "" {
-		skill, skillErr := s.findEnabledSkill(ctx, req.SkillCode)
-		if skillErr != nil {
-			return "", "", "", skillErr
-		}
-		if skill == nil {
-			return "", "", "", pkg.NewBizError(domain.RespCodeBizFailed, "技能不存在或未启用")
-		}
-		return skill.CommandCode, skill.PromptTemplate, req.ContentText, nil
-	}
-	parsed, err := s.slashService.Parse(ctx, &domain.SlashParseREQ{ContentText: req.ContentText})
-	if err != nil {
-		return "", "", "", err
-	}
-	if parsed.SkillCode == "" {
-		return "", "", parsed.RemainderText, nil
-	}
-	skill, err := s.findEnabledSkill(ctx, parsed.SkillCode)
-	if err != nil {
-		return "", "", "", err
-	}
-	if skill == nil {
-		return "", "", "", pkg.NewBizError(domain.RespCodeBizFailed, "技能不存在或未启用")
-	}
-	return skill.CommandCode, skill.PromptTemplate, parsed.RemainderText, nil
+// chatSkill 对话链路的技能解析结果（模板与变量分离，供上下文装配渲染）。
+type chatSkill struct {
+	SkillCode      string            // 技能编码（空为自由对话）
+	PromptTemplate string            // 提示词模板（保留 {{context}} 等内置占位符）
+	VariableMap    map[string]string // 声明的变量取值
+	RefTextList    []string          // 命中的参考资料正文
+	RemainderText  string            // 去掉斜杠命令后的用户正文
 }
 
-// findEnabledSkill 按编码查找启用中的技能，不存在返回 (nil, nil)。
-func (s *ChatService) findEnabledSkill(ctx context.Context, skillCode string) (*domain.SlashCommandVO, error) {
-	skills, err := s.slashService.List(ctx, &domain.SlashListREQ{EnabledOnly: true})
+// resolveSkill 解析技能与用户正文：skill_code 优先，否则解析正文首 token 的 /code；
+// 项目技能覆盖同编码全局技能，未命中技能时按自由对话处理。
+func (s *ChatService) resolveSkill(ctx context.Context, req *domain.ChatSendREQ) (chatSkill, error) {
+	resolved, err := s.skillService.Resolve(ctx, &domain.SkillResolveREQ{
+		ProjectULID:   req.ProjectULID,
+		ContentText:   req.ContentText,
+		SkillCode:     req.SkillCode,
+		VariableValue: req.SkillVariableMap,
+	})
 	if err != nil {
-		return nil, err
+		return chatSkill{}, err
 	}
-	for i := range skills {
-		if skills[i].CommandCode == skillCode {
-			return &skills[i], nil
-		}
+	result := chatSkill{
+		SkillCode:     resolved.SkillCode,
+		RemainderText: resolved.RemainderText,
+		VariableMap:   resolved.VariableMap,
+		RefTextList:   resolved.RefTextList,
 	}
-	return nil, nil
+	if resolved.SkillCode == "" {
+		return result, nil
+	}
+	skill, err := s.skillService.SkillTemplate(ctx, req.ProjectULID, resolved.SkillCode)
+	if err != nil {
+		return chatSkill{}, err
+	}
+	result.PromptTemplate = skill.PromptTemplate
+	return result, nil
 }
 
 // resolveSession 解析会话：session_ulid 为空自动创建，否则校验归属与项目匹配。
