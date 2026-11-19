@@ -212,6 +212,22 @@ Docker 内嵌 DNS 应答裸服务名，根目录 Compose 使用 `http://backend:
 `2132691342/NovelWorkbench` → `ghcr.io/2132691342/novelworkbench/backend`。
 归一在 `Normalize image prefix` 步骤完成，两个镜像构建步骤共用同一前缀输出。
 
+前端锁文件在 `frontend/package-lock.json` 而非仓库根目录，因此 `setup-node` 的
+`cache-dependency-path` 必须显式指向 `frontend/package-lock.json`；
+`setup-node` 按仓库根解析该路径，缺省会直接报
+`Dependencies lock file is not found` 并使整个 Frontend Check 失败。
+
+工作流使用的 action 版本（均已切到 Node 24 运行时，避免 Node 20 弃用告警）：
+
+| Action | 版本 |
+| --- | --- |
+| `actions/checkout` | v5 |
+| `actions/setup-go` | v6 |
+| `actions/setup-node` | v5 |
+| `docker/setup-buildx-action` | v4 |
+| `docker/login-action` | v4 |
+| `docker/build-push-action` | v7 |
+
 CI 不注入任何真实凭据：单元测试不依赖外部服务，镜像构建不使用运行期环境变量。
 
 发布与更新镜像：
