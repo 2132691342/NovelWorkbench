@@ -1,0 +1,107 @@
+.ai-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 8px;
+  min-height: 0;
+}
+
+.ai-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-panel__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.ai-panel__model-select {
+  width: 150px;
+}
+
+.ai-panel__notice {
+  padding: 8px 10px;
+  border-radius: var(--radius-base);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ai-panel__notice.is-down {
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+
+
+.ai-panel__sessions {
+  max-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-panel__sessions-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--text-placeholder);
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-base);
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  transition: background-color var(--transition-base);
+}
+
+.session-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.session-item.is-active {
+  background-color: var(--primary-light);
+}
+
+.session-item__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.session-item__count {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.session-item__delete.nw-button {
+  height: 22px;
+  padding: 0 4px;
+  color: var(--text-placeholder);
+}
+
+.session-item__delete.nw-button:hover {
+  color: var(--error);
+  background-color: transparent;
+}
+
+
+.ai-panel__messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}

@@ -294,16 +294,16 @@ onMounted(() => {
     <!-- 技能徽标 -->
     <div v-if="skillCode" class="chat-composer__badge">
       <span class="chat-composer__badge-text">/{{ skillCode }}</span>
-      <button type="button" class="chat-composer__badge-close" @click="removeSkill">
+      <NWButton type="text" size="small" class="chat-composer__badge-close" @click="removeSkill">
         {{ t('workspace.ai.composer.removeSkill') }}
-      </button>
+      </NWButton>
     </div>
 
     <!-- 引用 chips -->
     <div v-if="refDocList.length + refChapterList.length > 0" class="chat-composer__chips">
       <span v-for="refItem in refDocList" :key="refItem.ref_ulid" class="chat-composer__chip">
         {{ t('workspace.ai.composer.atDocs') }}: {{ refItem.ref_name }}
-        <button type="button" @click="removeRefItem('doc', refItem.ref_ulid)">x</button>
+        <NWButton type="text" size="small" class="chat-composer__chip-close" @click="removeRefItem('doc', refItem.ref_ulid)">x</NWButton>
       </span>
       <span
         v-for="refItem in refChapterList"
@@ -311,7 +311,7 @@ onMounted(() => {
         class="chat-composer__chip"
       >
         {{ t('workspace.ai.composer.atChapters') }}: {{ refItem.ref_name }}
-        <button type="button" @click="removeRefItem('chapter', refItem.ref_ulid)">x</button>
+        <NWButton type="text" size="small" class="chat-composer__chip-close" @click="removeRefItem('chapter', refItem.ref_ulid)">x</NWButton>
       </span>
     </div>
 
@@ -338,23 +338,25 @@ onMounted(() => {
       <!-- 引用选择器 -->
       <div v-if="refPickerVisible" class="chat-composer__popup chat-composer__popup--ref">
         <div class="chat-ref-picker__tabs">
-          <button
-            type="button"
+          <NWButton
+            type="text"
+            size="small"
             class="chat-ref-picker__tab"
             :class="{ 'is-active': refPickerTab === 'doc' }"
             @click="refPickerTab = 'doc'"
           >
             {{ t('workspace.ai.composer.atDocs') }}
-          </button>
-          <button
-            type="button"
+          </NWButton>
+          <NWButton
+            type="text"
+            size="small"
             class="chat-ref-picker__tab"
             :class="{ 'is-active': refPickerTab === 'chapter' }"
             @click="refPickerTab = 'chapter'"
           >
             {{ t('workspace.ai.composer.atChapters') }}
-          </button>
-          <button type="button" class="chat-ref-picker__close" @click="closeRefPicker">x</button>
+          </NWButton>
+          <NWButton type="text" size="small" class="chat-ref-picker__close" @click="closeRefPicker">x</NWButton>
         </div>
         <ul class="chat-ref-picker__list">
           <li v-if="filteredRefList.length === 0" class="chat-composer__popup-empty">

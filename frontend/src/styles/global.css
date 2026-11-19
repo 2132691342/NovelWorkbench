@@ -34,6 +34,24 @@ body {
   opacity: 0;
   transform: translateY(-12px);
 }
+/* 下拉项 / 菜单项的统一微交互 */
+.el-dropdown-menu__item,
+.el-menu-item,
+.el-select-dropdown__item {
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.el-dropdown-menu__item:not(.is-disabled):hover,
+.el-select-dropdown__item:not(.is-disabled):hover {
+  transform: translateX(2px);
+}
+
+/* 键盘可达性：按钮与交互项的焦点反馈 */
+.nw-button:focus-visible,
+.el-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 
 /* 卡片基础外观与悬停微抬起 */
 .nw-card {

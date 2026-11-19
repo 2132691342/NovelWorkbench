@@ -101,18 +101,3 @@ func (r *ModelProviderRepo) FindDefault(ctx context.Context) (*domain.ModelProvi
 	}
 	return &do, nil
 }
-
-// FindEmbeddingProvider 查询首个可提供向量的启用供应商（默认优先）。
-func (r *ModelProviderRepo) FindEmbeddingProvider(ctx context.Context) (*domain.ModelProviderDO, error) {
-	var do domain.ModelProviderDO
-	err := r.db.WithContext(ctx).
-		Where("enabled_flag = ? AND embedding_model_name <> ''", true).
-		Order("default_flag DESC, sort_order ASC, created_at ASC").First(&do).Error
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("find embedding provider: %w", err)
-	}
-	return &do, nil
-}

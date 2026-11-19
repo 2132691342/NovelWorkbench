@@ -1,6 +1,5 @@
 <!--
-  知识库检索区：关键词 / 语义 / hybrid 模式切换 + top_k_count，
-  结果卡片展示 doc_name、chunk_index、score_value、source_mode 徽标与命中高亮文本。
+  知识库检索区：关键词 / 词法混合模式 + top_k_count，命中卡片展示来源与高亮文本。
 -->
 <script setup lang="ts">
 import { ref } from 'vue'
@@ -9,7 +8,6 @@ import { searchKnowledge, type NWKnowledgeSearchReqVo } from '@/api/knowledge'
 import type { NWKnowledgeChunkVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
-import NWLoading from '@/components/NWLoading.vue'
 
 const props = defineProps<{
   projectUlid: string
@@ -17,8 +15,8 @@ const props = defineProps<{
 
 const { t } = useI18n()
 
-/** 检索模式：keyword 关键词 / vector 语义 / hybrid 混合 */
-type NWSearchMode = 'keyword' | 'vector' | 'hybrid'
+/** 检索模式：keyword 关键词 / hybrid 词法混合 */
+type NWSearchMode = 'keyword' | 'hybrid'
 
 const searchMode = ref<NWSearchMode>('hybrid')
 const keywordText = ref('')
@@ -27,6 +25,7 @@ const topKCount = ref(6)
 const searchingFlag = ref(false)
 const searchedFlag = ref(false)
 const resultList = ref<NWKnowledgeChunkVo[]>([])
+const traceText = ref('')
 
 /** 文本高亮片段 */
 interface NWHighlightSegment {
@@ -39,8 +38,6 @@ function searchModeText(mode: string): string {
   switch (mode) {
     case 'keyword':
       return t('knowledge.search.modeKeyword')
-    case 'vector':
-      return t('knowledge.search.modeVector')
     default:
       return t('knowledge.search.modeHybrid')
   }
@@ -51,8 +48,6 @@ function sourceModeText(sourceMode: string): string {
   switch (sourceMode) {
     case 'keyword':
       return t('knowledge.search.sourceKeyword')
-    case 'vector':
-      return t('knowledge.search.sourceVector')
     default:
       return t('knowledge.search.sourceHybrid')
   }
@@ -83,6 +78,17 @@ function buildHighlightSegments(text: string): NWHighlightSegment[] {
   }
   return segments
 }
+/** 检索追踪摘要：让召回依据可解释 */
+function buildTraceText(trace: {
+  query_terms: string[]
+  candidate_count: number
+  reranked: boolean
+  rerank_note: string
+  source_mode: string
+}): string {
+  const terms = trace.query_terms.slice(0, 8).join(' / ') || '—'
+  return `查询词 ${terms} · 候选 ${trace.candidate_count} · 来源 ${trace.source_mode} · 重排 ${trace.reranked ? '是' : '否'}${trace.rerank_note ? `（${trace.rerank_note}）` : ''}`
+}
 
 /** 执行检索 */
 async function handleSearch(): Promise<void> {
@@ -94,23 +100,17 @@ async function handleSearch(): Promise<void> {
     search_mode: searchMode.value,
     top_k_count: topKCount.value,
   }
-  if (searchMode.value !== 'vector') {
-    req.keyword_text = keywordText.value || undefined
-  }
-  if (searchMode.value !== 'keyword') {
-    req.query_text = queryText.value || undefined
-  }
-  if (searchMode.value === 'keyword' && !req.keyword_text) {
-    return
-  }
-  if (searchMode.value === 'vector' && !req.query_text) {
+  req.keyword_text = keywordText.value || undefined
+  req.query_text = queryText.value || undefined
+  if (!req.keyword_text && !req.query_text) {
     return
   }
   searchingFlag.value = true
   try {
-    const listData = await searchKnowledge(req)
-    resultList.value = Array.isArray(listData) ? listData : []
+    const searchVo = await searchKnowledge(req)
+    resultList.value = Array.isArray(searchVo.result_list) ? searchVo.result_list : []
     searchedFlag.value = true
+    traceText.value = buildTraceText(searchVo.trace)
   } catch {
     // 失败提示由 http 层统一弹出
     resultList.value = []
@@ -126,11 +126,9 @@ async function handleSearch(): Promise<void> {
     <div class="knowledge-search__bar">
       <el-radio-group v-model="searchMode" size="default">
         <el-radio-button value="keyword">{{ searchModeText('keyword') }}</el-radio-button>
-        <el-radio-button value="vector">{{ searchModeText('vector') }}</el-radio-button>
         <el-radio-button value="hybrid">{{ searchModeText('hybrid') }}</el-radio-button>
       </el-radio-group>
       <el-input
-        v-if="searchMode !== 'vector'"
         v-model="keywordText"
         class="knowledge-search__input"
         clearable
@@ -151,8 +149,7 @@ async function handleSearch(): Promise<void> {
         {{ t('knowledge.search.run') }}
       </NWButton>
     </div>
-
-    <NWLoading v-if="searchingFlag" />
+    <p v-if="traceText" class="knowledge-search__trace">{{ traceText }}</p>
     <NWEmpty
       v-else-if="searchedFlag && resultList.length === 0"
       :description_text="t('knowledge.search.resultEmpty')"
@@ -249,6 +246,15 @@ async function handleSearch(): Promise<void> {
   white-space: nowrap;
 }
 
+.knowledge-search__trace {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--primary-light);
+  border-radius: var(--radius-base);
+}
 .knowledge-search__source {
   margin-left: auto;
   flex-shrink: 0;
@@ -264,10 +270,6 @@ async function handleSearch(): Promise<void> {
   background-color: #fef3c7;
 }
 
-.knowledge-search__source.is-vector {
-  color: var(--primary);
-  background-color: var(--primary-light);
-}
 
 .knowledge-search__text {
   margin: 0;

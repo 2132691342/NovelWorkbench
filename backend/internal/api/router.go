@@ -13,27 +13,29 @@ import (
 
 // RouterDeps 路由注册的依赖聚合（由 main.go 装配注入）。
 type RouterDeps struct {
-	AuthMW       gin.HandlerFunc   // 鉴权中间件（pkg.AuthMiddleware 产物）
-	AuditMW      gin.HandlerFunc   // 审计中间件（pkg.AuditMiddleware 产物）
-	PermChecker  pkg.PermChecker   // 权限判定（admin 路由收口）
-	ReadyCheck   func() error      // 就绪探针（DB Ping）
-	AuthAPI      *AuthAPI          // 认证模块处理器
-	ProjectAPI   *ProjectAPI       // 项目模块处理器
-	VolumeAPI    *VolumeAPI        // 卷模块处理器
-	ChapterAPI   *ChapterAPI       // 章节模块处理器
-	CharacterAPI *CharacterAPI     // 角色模块处理器
-	LoreAPI      *LoreAPI          // 设定模块处理器
-	KnowledgeAPI *KnowledgeAPI     // 知识库模块处理器
-	SlashAPI     *SlashAPI         // 斜杠命令模块处理器
-	SettingAPI   *SettingAPI       // 应用配置模块处理器
-	StatsAPI     *StatsAPI         // 数据总览模块处理器
-	ChatAPI      *ChatAPI          // AI 对话模块处理器
-	UserAdminAPI *UserAdminAPI     // 用户管理模块处理器
-	RoleAPI      *RoleAPI          // 角色管理模块处理器
-	AuditAPI     *AuditAPI         // 审计日志模块处理器
-	ProviderAPI  *ModelProviderAPI // 模型供应商模块处理器
-	UsageAPI     *ModelUsageAPI    // 模型用量模块处理器
-	StatusAPI    *SystemStatusAPI  // 系统运行状态模块处理器
+	AuthMW        gin.HandlerFunc   // 鉴权中间件（pkg.AuthMiddleware 产物）
+	AuditMW       gin.HandlerFunc   // 审计中间件（pkg.AuditMiddleware 产物）
+	PermChecker   pkg.PermChecker   // 权限判定（admin 路由收口）
+	ReadyCheck    func() error      // 就绪探针（DB Ping）
+	AuthAPI       *AuthAPI          // 认证模块处理器
+	ProjectAPI    *ProjectAPI       // 项目模块处理器
+	VolumeAPI     *VolumeAPI        // 卷模块处理器
+	ChapterAPI    *ChapterAPI       // 章节模块处理器
+	CharacterAPI  *CharacterAPI     // 角色模块处理器
+	LoreAPI       *LoreAPI          // 设定模块处理器
+	KnowledgeAPI  *KnowledgeAPI     // 知识库模块处理器
+	OutlineAPI    *OutlineAPI       // 创作规划模块处理器
+	ContinuityAPI *ContinuityAPI    // 连续性看板模块处理器
+	SlashAPI      *SlashAPI         // 斜杠命令模块处理器
+	SettingAPI    *SettingAPI       // 应用配置模块处理器
+	StatsAPI      *StatsAPI         // 数据总览模块处理器
+	ChatAPI       *ChatAPI          // AI 对话模块处理器
+	UserAdminAPI  *UserAdminAPI     // 用户管理模块处理器
+	RoleAPI       *RoleAPI          // 角色管理模块处理器
+	AuditAPI      *AuditAPI         // 审计日志模块处理器
+	ProviderAPI   *ModelProviderAPI // 模型供应商模块处理器
+	UsageAPI      *ModelUsageAPI    // 模型用量模块处理器
+	StatusAPI     *SystemStatusAPI  // 系统运行状态模块处理器
 }
 
 // NewRouter 装配 HTTP 路由；中间件顺序：Recovery → 请求ID → 日志 → CORS（先处理预检）→ 方法白名单 → 鉴权 → 审计。
@@ -64,6 +66,8 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	registerCharacterRoutes(v1, deps.CharacterAPI)
 	registerLoreRoutes(v1, deps.LoreAPI)
 	registerKnowledgeRoutes(v1, deps.KnowledgeAPI)
+	registerOutlineRoutes(v1, deps.OutlineAPI)
+	registerContinuityRoutes(v1, deps.ContinuityAPI)
 	registerSlashRoutes(v1, deps.SlashAPI)
 	registerSettingRoutes(v1, deps.SettingAPI)
 	registerStatsRoutes(v1, deps.StatsAPI)
@@ -231,4 +235,25 @@ func registerChatRoutes(rg *gin.RouterGroup, handler *ChatAPI) {
 	rg.POST("/chat/session/create", handler.SessionCreate)
 	rg.POST("/chat/session/list", handler.SessionList)
 	rg.POST("/chat/session/delete", handler.SessionDelete)
+}
+
+// registerOutlineRoutes 注册创作规划路由（大纲树与场景卡）。
+func registerOutlineRoutes(rg *gin.RouterGroup, handler *OutlineAPI) {
+	rg.POST("/outline/node/save", handler.SaveNode)
+	rg.POST("/outline/node/delete", handler.DeleteNode)
+	rg.POST("/outline/list", handler.ListTree)
+	rg.POST("/outline/scene/save", handler.SaveScene)
+	rg.POST("/outline/scene/delete", handler.DeleteScene)
+	rg.POST("/outline/scene/list", handler.ListScenes)
+}
+
+// registerContinuityRoutes 注册连续性看板路由（事实/伏笔/摘要）。
+func registerContinuityRoutes(rg *gin.RouterGroup, handler *ContinuityAPI) {
+	rg.POST("/continuity/fact/save", handler.SaveFact)
+	rg.POST("/continuity/fact/review", handler.ReviewFact)
+	rg.POST("/continuity/fact/list", handler.ListFacts)
+	rg.POST("/continuity/hook/save", handler.SaveHook)
+	rg.POST("/continuity/hook/list", handler.ListHooks)
+	rg.POST("/continuity/summary/save", handler.SaveSummary)
+	rg.POST("/continuity/summary/list", handler.ListSummaries)
 }

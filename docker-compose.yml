@@ -1,6 +1,6 @@
 # NovelWorkbench 容器化编排：应用容器 + 可选本地中间件（profile: infra）
-# 生产环境中间件使用云服务器（见 doc/deploy.md），本地全栈开发用：
-#   docker compose --profile infra up -d
+# 所有凭据从 .env 注入（cp .env.example .env 后填写），本文件不含任何可用口令或固定公网 IP。
+# 本地全栈开发：docker compose --profile infra up -d --build
 name: novel-workbench
 
 services:
@@ -13,22 +13,24 @@ services:
     restart: unless-stopped
     environment:
       NW_SERVER_PORT: "8080"
-      NW_JWT_SECRET: ${NW_JWT_SECRET:-novel-workbench-dev-secret-change-me}
-      NW_POSTGRES_HOST: ${NW_POSTGRES_HOST:-47.108.73.153}
-      NW_POSTGRES_PASSWORD: ${NW_POSTGRES_PASSWORD:-admin_public}
-      NW_REDIS_ADDR: ${NW_REDIS_ADDR:-47.108.73.153:6379}
-      NW_REDIS_PASSWORD: ${NW_REDIS_PASSWORD:-admin_public}
-      NW_RABBITMQ_URL: ${NW_RABBITMQ_URL:-amqp://admin:admin_public@47.108.73.153:5672/}
-      NW_MINIO_ENDPOINT: ${NW_MINIO_ENDPOINT:-47.108.73.153:9000}
-      NW_MINIO_ACCESS_KEY: ${NW_MINIO_ACCESS_KEY:-minioadmin}
-      NW_MINIO_SECRET_KEY: ${NW_MINIO_SECRET_KEY:-minioadminpublic}
-      NW_MANTICORE_BASE_URL: ${NW_MANTICORE_BASE_URL:-http://47.108.73.153:9308}
+      NW_JWT_SECRET: ${NW_JWT_SECRET:?未设置 JWT 密钥}
+      NW_POSTGRES_HOST: ${NW_POSTGRES_HOST:?未设置数据库地址}
+      NW_POSTGRES_PORT: ${NW_POSTGRES_PORT:-5432}
+      NW_POSTGRES_USER: ${NW_POSTGRES_USER:-postgres}
+      NW_POSTGRES_PASSWORD: ${NW_POSTGRES_PASSWORD:?未设置数据库口令}
+      NW_POSTGRES_DBNAME: ${NW_POSTGRES_DBNAME:-postgres}
+      NW_REDIS_ADDR: ${NW_REDIS_ADDR:?未设置缓存地址}
+      NW_REDIS_PASSWORD: ${NW_REDIS_PASSWORD:?未设置缓存口令}
+      NW_RABBITMQ_URL: ${NW_RABBITMQ_URL:?未设置队列连接串}
+      NW_MINIO_ENDPOINT: ${NW_MINIO_ENDPOINT:?未设置对象存储地址}
+      NW_MINIO_ACCESS_KEY: ${NW_MINIO_ACCESS_KEY:?未设置对象存储账号}
+      NW_MINIO_SECRET_KEY: ${NW_MINIO_SECRET_KEY:?未设置对象存储口令}
+      NW_MANTICORE_BASE_URL: ${NW_MANTICORE_BASE_URL:?未设置全文检索地址}
       NW_AI_PROTOCOL_CODE: ${NW_AI_PROTOCOL_CODE:-openai}
-      NW_AI_BASE_URL: ${NW_AI_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      NW_AI_API_KEY: ${NW_AI_API_KEY:-sk-your-api-key}
-      NW_AI_CHAT_MODEL: ${NW_AI_CHAT_MODEL:-qwen-plus}
-      NW_AI_EMBEDDING_MODEL: ${NW_AI_EMBEDDING_MODEL:-text-embedding-v3}
-      NW_APP_ADMIN_PASSWORD: ${NW_APP_ADMIN_PASSWORD:-Admin@123456}
+      NW_AI_BASE_URL: ${NW_AI_BASE_URL:-}
+      NW_AI_API_KEY: ${NW_AI_API_KEY:-}
+      NW_AI_CHAT_MODEL: ${NW_AI_CHAT_MODEL:-}
+      NW_APP_ADMIN_PASSWORD: ${NW_APP_ADMIN_PASSWORD:?未设置引导管理员密码}
       NW_APP_BUILD_VERSION: ${NW_APP_BUILD_VERSION:-dev}
     ports:
       - "8080:8080"
@@ -53,23 +55,25 @@ services:
     ports:
       - "80:80"
 
-  # ---- 以下为本地中间件（--profile infra 时启动），生产直连云服务器 ----
+  # ---- 以下为本地中间件（--profile infra 时启动），仅用于本地开发；口令来自 .env ----
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16-alpine
     profiles: ["infra"]
     container_name: nw-postgres
     environment:
-      POSTGRES_PASSWORD: admin_public
+      POSTGRES_USER: ${NW_POSTGRES_USER:?未设置数据库账号}
+      POSTGRES_PASSWORD: ${NW_POSTGRES_PASSWORD:?未设置数据库口令}
+      POSTGRES_DB: ${NW_POSTGRES_DBNAME:?未设置数据库名}
     ports:
       - "5432:5432"
     volumes:
       - nw_pg_data:/var/lib/postgresql/data
 
   redis:
-    image: redis:8.4
+    image: redis:7-alpine
     profiles: ["infra"]
     container_name: nw-redis
-    command: ["redis-server", "--requirepass", "admin_public", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--requirepass", "${NW_REDIS_PASSWORD:?未设置缓存口令}", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6379:6379"
 
@@ -79,8 +83,8 @@ services:
     container_name: nw-minio
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadminpublic
+      MINIO_ROOT_USER: ${NW_MINIO_ACCESS_KEY:?未设置对象存储账号}
+      MINIO_ROOT_PASSWORD: ${NW_MINIO_SECRET_KEY:?未设置对象存储口令}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -92,8 +96,8 @@ services:
     profiles: ["infra"]
     container_name: nw-rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: admin_public
+      RABBITMQ_DEFAULT_USER: ${NW_RABBITMQ_USER:?未设置队列账号}
+      RABBITMQ_DEFAULT_PASS: ${NW_RABBITMQ_PASSWORD:?未设置队列口令}
     ports:
       - "5672:5672"
       - "15672:15672"

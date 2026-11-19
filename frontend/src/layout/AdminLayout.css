@@ -1,0 +1,186 @@
+.admin-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background-color: var(--bg-page);
+}
+
+.admin-layout__aside {
+  display: flex;
+  flex-direction: column;
+  width: 220px;
+  flex-shrink: 0;
+  background-color: var(--bg-card);
+  border-right: 1px solid var(--border-light);
+  transition: width 0.2s ease;
+}
+
+.admin-layout__aside.is-collapsed {
+  width: 64px;
+}
+
+.admin-layout__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border-light);
+  overflow: hidden;
+}
+
+.admin-layout__brand-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.admin-layout__brand-text {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-main);
+}
+
+/* 项目切换器 */
+.admin-layout__project {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.admin-layout__project-dropdown {
+  width: 100%;
+}
+
+.admin-layout__project-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  background-color: var(--bg-page);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.admin-layout__project-trigger:hover {
+  border-color: var(--primary-hover);
+  color: var(--primary);
+  box-shadow: var(--shadow-button-hover);
+}
+
+.admin-layout__project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.admin-layout__project-arrow {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.admin-layout__project-meta {
+  margin-left: 8px;
+  color: var(--text-placeholder);
+  font-size: 12px;
+}
+
+.admin-layout__menu {
+  flex: 1;
+  border-right: none;
+  overflow-y: auto;
+}
+
+.admin-layout__group-title {
+  padding: 12px 16px 6px;
+  color: var(--text-placeholder);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.admin-layout__menu-icon {
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+}
+
+.admin-layout__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-layout__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 20px;
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.admin-layout__header-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.admin-layout__breadcrumb {
+  color: var(--text-secondary);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-layout__header-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-left: auto;
+}
+
+.admin-layout__header-link {
+  color: var(--text-secondary);
+  cursor: pointer;
+  outline: none;
+  transition: color 0.2s ease;
+}
+
+.admin-layout__header-link:hover {
+  color: var(--primary);
+}
+
+.admin-layout__user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  outline: none;
+}
+
+.admin-layout__avatar {
+  background-color: var(--primary);
+  color: var(--text-inverse);
+  font-weight: 600;
+}
+
+.admin-layout__user-name {
+  color: var(--text-main);
+  font-size: 14px;
+}
+
+.admin-layout__content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}

@@ -2,25 +2,15 @@ package ai
 
 import "context"
 
-// 模型调用类型常量（与 domain.ModelCallType* 对齐）。
-const (
-	CallTypeChat      = "chat"      // 对话生成
-	CallTypeEmbedding = "embedding" // 向量化
-)
-
-// 向量通道探测结论常量。
-const (
-	EmbeddingStatusReady         = "ready"          // 可用
-	EmbeddingStatusNotConfigured = "not_configured" // 未配置
-	EmbeddingStatusFailed        = "failed"         // 不可用
-)
+// CallTypeChat 对话生成调用类型（与 domain.ModelCallTypeChat 对齐）。
+const CallTypeChat = "chat"
 
 // UsageRecord 一次模型调用的用量记录（由 service 落库聚合）。
 type UsageRecord struct {
 	ProviderULID     string // 供应商 ULID
 	ProviderName     string // 供应商名称
 	ModelName        string // 模型名
-	CallTypeCode     string // chat/embedding
+	CallTypeCode     string // 调用类型：chat
 	SuccessFlag      bool   // 是否成功
 	PromptTokens     int    // 输入 token
 	CompletionTokens int    // 输出 token

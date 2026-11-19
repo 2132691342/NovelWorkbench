@@ -27,7 +27,6 @@ services:
       NW_AI_BASE_URL: ${NW_AI_BASE_URL:?未设置模型网关地址}
       NW_AI_API_KEY: ${NW_AI_API_KEY:?未设置模型网关密钥}
       NW_AI_CHAT_MODEL: ${NW_AI_CHAT_MODEL:?未设置对话模型}
-      NW_AI_EMBEDDING_MODEL: ${NW_AI_EMBEDDING_MODEL:-}
       NW_APP_ADMIN_PASSWORD: ${NW_APP_ADMIN_PASSWORD:?未设置引导管理员密码}
       NW_APP_BUILD_VERSION: ${NW_APP_BUILD_VERSION:-dev}
     ports:
@@ -60,7 +59,7 @@ services:
       retries: 3
 
 networks:
-  # 中间件栈的默认网络（目录名 liteworkbench），以 guest 加入，不改动中间件容器。
+  # 加入既有中间件栈网络（网络名由 NW_INFRA_NETWORK 指定，默认见 .env.example）。
   infra:
     external: true
-    name: ${NW_INFRA_NETWORK:-liteworkbench_default}
+    name: ${NW_INFRA_NETWORK:-novelworkbench_default}

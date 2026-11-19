@@ -1,10 +1,7 @@
 package domain
 
-// 模型调用类型常量（用量统计维度）。
-const (
-	ModelCallTypeChat      = "chat"      // 对话生成
-	ModelCallTypeEmbedding = "embedding" // 向量化
-)
+// ModelCallTypeChat 对话生成调用类型（用量统计维度）。
+const ModelCallTypeChat = "chat"
 
 // ModelUsageStatDO 模型用量按日聚合持久化对象（供应商 × 模型 × 调用类型 × 日期 唯一）。
 type ModelUsageStatDO struct {
@@ -14,7 +11,7 @@ type ModelUsageStatDO struct {
 	ProviderULID     string `json:"provider_ulid" gorm:"column:provider_ulid;size:40;uniqueIndex:uk_mus_dim"`   // 供应商 ULID
 	ProviderName     string `json:"provider_name" gorm:"column:provider_name;size:64"`                          // 供应商名称快照
 	ModelName        string `json:"model_name" gorm:"column:model_name;size:128;uniqueIndex:uk_mus_dim"`        // 模型名
-	CallTypeCode     string `json:"call_type_code" gorm:"column:call_type_code;size:16;uniqueIndex:uk_mus_dim"` // 调用类型：chat/embedding
+	CallTypeCode     string `json:"call_type_code" gorm:"column:call_type_code;size:16;uniqueIndex:uk_mus_dim"` // 调用类型：chat
 	CallCount        int64  `json:"call_count" gorm:"column:call_count"`                                        // 调用次数
 	SuccessCount     int64  `json:"success_count" gorm:"column:success_count"`                                  // 成功次数
 	FailCount        int64  `json:"fail_count" gorm:"column:fail_count"`                                        // 失败次数

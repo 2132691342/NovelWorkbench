@@ -7,21 +7,23 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getSystemStatus, type NWSystemStatusVo } from '@/api/model'
 import NWButton from '@/components/NWButton.vue'
-import NWCard from '@/components/NWCard.vue'
+import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 
 const { t } = useI18n()
 
 const loading = ref(false)
 const statusVo = ref<NWSystemStatusVo | null>(null)
-
+const loadError = ref(false)
 /** 加载运行状态 */
 async function loadStatus(): Promise<void> {
   loading.value = true
+  loadError.value = false
   try {
     statusVo.value = await getSystemStatus()
   } catch {
-    // 失败提示由 http 层统一弹出
+    loadError.value = true
+    statusVo.value = null
   } finally {
     loading.value = false
   }
@@ -70,6 +72,10 @@ onMounted(() => {
     </header>
 
     <NWLoading v-if="loading && !statusVo" />
+    <div v-else-if="loadError" class="status-page__error">
+      <NWEmpty :description_text="t('status.loadFailed')" />
+      <NWButton type="primary" @click="loadStatus">{{ t('status.retry') }}</NWButton>
+    </div>
     <template v-else-if="statusVo">
       <div class="status-page__summary">
         <NWCard :title="t('status.processTitle')">
@@ -98,9 +104,9 @@ onMounted(() => {
             <span class="status-ai__item" :class="statusVo.chat_ready ? 'is-up' : 'is-down'">
               {{ t('status.chatReady') }}：{{ statusVo.chat_ready ? t('status.up') : t('status.down') }}
             </span>
-            <span class="status-ai__item" :class="statusVo.embedding_ready ? 'is-up' : 'is-degraded'">
-              {{ t('status.embeddingReady') }}：{{
-                statusVo.embedding_ready ? t('status.up') : t('status.degraded')
+            <span class="status-ai__item" :class="statusVo.chat_ready ? 'is-up' : 'is-degraded'">
+              {{ t('status.searchReady') }}：{{
+                statusVo.chat_ready ? t('status.up') : t('status.degraded')
               }}
             </span>
             <p class="status-ai__hint">{{ statusVo.hint_text }}</p>
@@ -233,5 +239,16 @@ onMounted(() => {
 .status-badge.is-down {
   background-color: #fee2e2;
   color: #b91c1c;
+}
+
+.status-page__error {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 8px 0 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 </style>

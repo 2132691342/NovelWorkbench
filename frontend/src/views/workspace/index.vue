@@ -159,6 +159,7 @@ function handleInsertToChapter(contentText: string): void {
     return
   }
   editorRef.value?.insertTextAtCursor(contentText)
+  ElMessage.success(t('workspace.insertSuccess'))
 }
 
 /** 快照入口（顶栏与编辑器工具条共用）；打开前先落盘防抖内容，保证留档/回滚基于最新正文 */

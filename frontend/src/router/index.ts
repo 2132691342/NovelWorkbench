@@ -98,6 +98,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/notes/index.vue'),
         meta: { menu_key: 'notes' },
       },
+      {
+        path: 'outline/:project_ulid',
+        name: 'OutlineView',
+        component: () => import('@/views/outline/index.vue'),
+        meta: { menu_key: 'outline' },
+      },
+      {
+        path: 'continuity/:project_ulid',
+        name: 'ContinuityView',
+        component: () => import('@/views/continuity/index.vue'),
+        meta: { menu_key: 'continuity' },
+      },
     ],
   },
   {

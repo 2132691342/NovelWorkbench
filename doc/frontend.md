@@ -5,114 +5,174 @@
 ```
 frontend/
 ├── src/
-│   ├── api/          http.ts（axios 实例 + 包络解包）与各模块 api 封装（含 model.ts）
-│   ├── components/   NWButton / NWCard / NWEmpty / NWLoading 等无业务组件
-│   ├── layout/       AdminLayout（项目切换器 + 项目内导航 + 顶栏）
-│   ├── router/       路由表 + 登录守卫
-│   ├── stores/       auth（token/用户）、app（locale/布局）、project（当前项目上下文）
-│   ├── styles/       variables.css（五色主题）、button-states.css（按钮五态）
+│   ├── api/          HTTP 客户端与模块 API 封装
+│   ├── components/   无业务组件：NWButton/NWCard/NWEmpty/NWLoading/ProjectPageHeader
+│   ├── composables/  useSSE 等组合式函数
 │   ├── i18n/         zh-CN / en-US 文案
-│   └── views/        login / dashboard / workspace / character / lore / knowledge / notes /
-│                     models（供应商）/ settings / slash-admin / admin（users|roles|audit|usage|status）
-├── vite.config.ts    别名 @→src、/api 代理、手动分包
-└── uno.config.ts     UnoCSS（presetUno + transformerDirectives）
+│   ├── layout/       AdminLayout：侧栏、项目切换器、顶栏、内容区
+│   ├── router/       路由表与登录守卫
+│   ├── stores/       auth / app / project
+│   ├── styles/       variables.css / global.css / button-states.css
+│   ├── utils/        localStorage 封装
+│   └── views/        业务页面
+├── vite.config.ts    别名、/api 代理、手动分包
+└── uno.config.ts     UnoCSS 预设
 ```
 
-页面样式约定：单个 `.vue` 超过约 450 行时，样式抽到同目录 `<page>.css`，在组件里以 `<style scoped src="./<page>.css"></style>` 引用（`character`/`knowledge`/`notes`/`lore`/`models` 均按此约定）。
+页面样式约定：单文件超过约 450 行时，样式抽到同目录 `*.css`，通过 `<style scoped src="./page.css"></style>` 引用；组件超过 500 行时拆分子组件。所有前端源文件保持 ≤500 行。
 
 ## 2. 设计系统
 
-### 2.1 色彩
+### 2.1 品牌色
 
-| 变量 | 值 | 用途 |
+```css
+:root {
+  --saas_dashboard-color-1: #6366f1;
+  --saas_dashboard-color-2: #818cf8;
+  --saas_dashboard-color-3: #e0e7ff;
+  --saas_dashboard-color-4: #f8fafc;
+  --saas_dashboard-color-5: #1e293b;
+}
+```
+
+语义变量由五色派生：`--primary`、`--primary-hover`、`--primary-light`、`--bg-page`、`--bg-card`、`--text-main`、`--border`、`--success`、`--warning`、`--error`。组件只引用语义变量，换肤只改变量层。
+
+### 2.2 按钮五态
+
+所有按钮与按钮式控件必须实现五态，统一定义在 `styles/button-states.css`，覆盖 Element Plus 按钮、自定义 `NWButton` 与页面内按钮式控件：
+
+| 状态 | 表现 | 动效 |
 | --- | --- | --- |
-| --saas_dashboard-color-1 | #6366f1 | 主色（品牌、主按钮、选中态） |
-| --saas_dashboard-color-2 | #818cf8 | 主色浅阶（悬停、次强调） |
-| --saas_dashboard-color-3 | #e0e7ff | 背景点缀（浅底、标签） |
-| --saas_dashboard-color-4 | #f8fafc | 页面底色 |
-| --saas_dashboard-color-5 | #1e293b | 主文字 |
+| DEFAULT | 正常颜色、基础阴影 | `transition: 0.2s ease` |
+| HOVER | 颜色提亮、阴影加深、`scale(1.05)` | 平滑放大 |
+| PRESSED | 颜色加深、阴影收敛、`scale(0.95)` | 平滑缩小，形成点击感 |
+| DISABLED | 降透明、灰化、禁止交互 | 无动效 |
+| LOADING | spinner 旋转、微光扫过、禁止重复点击 | 持续动画 |
 
-语义派生变量（`--primary/--primary-hover/--bg-page/--text-main/--border/--success/--warning/--error` 等）由五色推导，组件一律引用语义变量，换肤只改变量层。
-
-### 2.2 按钮五态（核心体验规范）
-
-| 状态 | 触发 | 表现 |
-| --- | --- | --- |
-| DEFAULT | 常态 | 主色底/白字，阴影 1 级 |
-| HOVER | 悬停 | 放大 `scale(1.05)`，颜色过渡到 --primary-hover，阴影加深 |
-| PRESSED | 按下 | 缩小 `scale(0.95)`，颜色变深，阴影收敛（点击感） |
-| DISABLED | 禁用 | 透明度降低、灰化、`pointer-events: none`、无动效 |
-| LOADING | 加载 | 转圈 spinner、禁止点击、微光扫过，保持按下前的尺寸 |
-
-所有状态共享 `transition: 0.2s ease`（颜色/变换/阴影）；实现为全局样式（覆盖 Element Plus `.el-button`）+ `NWButton` 组件复用同一套类，任何页面不得另写按钮状态样式。
+页面不得自定义按钮状态样式；新增按钮优先使用 `NWButton` 或 Element Plus 组件并挂接全局样式。
 
 ### 2.3 交互反馈
 
-- 操作成功/失败一律 `ElMessage` 提示（含错误码对应的可读文案）。
-- 路由切换 fade-slide 页面过渡；卡片悬停微抬起；列表有加载骨架与空态（NWEmpty）。
-- 表单提交期间按钮进入 LOADING 态并禁用重复提交；危险操作（删除）二次确认。
+- 写操作成功/失败均有 `ElMessage` 提示；错误码映射为可读文案。
+- 路由切换使用 fade-slide 过渡；卡片悬停微抬起。
+- 列表有加载态（`NWLoading`）与空态（`NWEmpty`）；加载失败有明确错误与重试入口。
+- 表单提交期间按钮进入 LOADING，防止重复提交。
+- 删除等危险操作二次确认。
+- AI 流式输出逐字展示；停止按钮可取消；插入正文需用户显式点击。
 
-## 3. 状态管理与 API 层
+## 3. 状态与数据流
 
-| 模块 | 职责 |
-| --- | --- |
-| stores/auth | access_token 与 user_vo 持久化 localStorage；login/register/logout action |
-| stores/app | locale（zh-CN/en-US）、侧边栏折叠 |
-| api/http | baseURL `/api/v1`；请求拦截注入 Bearer；响应拦截按 `{resp_code, data}` 解包，非 SUCCESS reject(`resp_message`)；`ERR_UNAUTHORIZED` 清 token 跳登录 |
+| Store | 状态 | 说明 |
+| --- | --- | --- |
+| `auth` | `access_token`、`user_vo` | 持久化到 localStorage；登录/注册/登出 |
+| `app` | `locale_code`、`sidebar_collapsed` | 语言与布局 |
+| `project` | `current_project_ulid`、`project_vo` | 当前项目上下文 |
 
-页面组件只消费解包后的业务数据；错误提示统一在拦截器与页面 catch 里出，杜绝静默失败。
+Axios 层：
 
-## 4. 路由与守卫
+- baseURL `/api/v1`；
+- 请求拦截注入 Bearer Token；
+- 响应拦截解包 `{resp_code, data}`，非 SUCCESS reject `resp_message`；
+- `ERR_UNAUTHORIZED` 清 token 并跳登录；
+- SSE 走独立 fetch 流，不走普通响应拦截。
+
+## 4. 路由
 
 | 路径 | 页面 | 说明 |
 | --- | --- | --- |
-| /login | 登录/注册 | 免鉴权 |
-| / | dashboard | 统计总览 + 项目管理 |
-| /workspace/:project_ulid | 写作工作台 | 目录树 + 编辑器 + AI 面板 |
-| /character/:project_ulid | 角色管理 | 角色卡 + X6 关系图 |
-| /lore/:project_ulid | 世界观设定 | 设定分类 + 卡片列表 + 编辑抽屉 |
-| /knowledge/:project_ulid | 知识库 | 上传/检索/预览（docx/pdf） |
-| /notes/:project_ulid | 创作笔记 | WangEditor 富文本 |
-| /models | 模型供应商 | 双协议供应商、密钥、连通性测试、默认切换 |
-| /settings | 设置 | 运行时配置 |
-| /slash-admin | 斜杠命令 | 技能资产管理 |
-| /admin/users · /admin/roles · /admin/audit | 系统管理 | 用户/角色/审计 |
-| /admin/usage | 用量分析 | ECharts 调用与 token 趋势、供应商/模型分布 |
-| /admin/status | 运行状态 | 依赖健康 + AI 能力 |
+| `/login` | 登录/注册 | 免鉴权 |
+| `/` | 仪表盘 | 统计卡、字数趋势、项目管理 |
+| `/workspace/:project_ulid` | 写作台 | 目录树、编辑器、AI 面板 |
+| `/character/:project_ulid` | 角色管理 | 角色卡、X6 关系图 |
+| `/lore/:project_ulid` | 世界观设定 | 分类、搜索、编辑抽屉 |
+| `/knowledge/:project_ulid` | 知识库 | 上传、检索、预览 |
+| `/notes/:project_ulid` | 创作笔记 | 富文本编辑 |
+| `/outline/:project_ulid` | 创作规划 | 大纲树与场景卡 |
+| `/continuity/:project_ulid` | 连续性看板 | 时序事实、伏笔、章节摘要 |
+| `/models` | 模型供应商 | 双协议、测试、默认切换 |
+| `/settings` | 系统设置 | 运行时配置 |
+| `/slash-admin` | 斜杠技能 | 技能模板管理 |
+| `/admin/users` · `/admin/roles` · `/admin/audit` | 系统管理 | 用户/角色/审计 |
+| `/admin/usage` | 用量分析 | 调用与 token 趋势 |
+| `/admin/status` | 运行状态 | 依赖健康与 AI 能力 |
 
-守卫：无 token 访问受保护路由 → 跳 `/login`；已登录访问 `/login` → 重定向 `/`。
+守卫：无 token 跳 `/login`；已登录访问登录页回 `/`。路由按页面懒加载，Element Plus、ECharts、X6 独立分包。
 
-**项目上下文导航**（本轮改造重点）：侧边栏顶部是项目切换器（列出全部项目，切换后停留在同类页面），下方固定展示"写作台 / 角色管理 / 世界观设定 / 知识库 / 素材笔记"五个项目内入口；URL 中的 `project_ulid` 是最高优先级来源，路由变化会反写 `stores/project` 的选中态。登录后就地即可进入任一项目内的全部功能，不必回仪表盘找项目行。
+**项目上下文导航**：侧栏顶部是项目切换器，下面固定七个项目内入口：写作台、创作规划、连续性看板、角色管理、世界观设定、知识库、素材笔记。URL 中的 `project_ulid` 优先级最高，路由变化反写 store。任意项目页面可直接切到另一项目的同类页面。
 
-## 5. 关键页面交互
+## 5. 页面实现
 
-| 页面 | 交互要点 |
-| --- | --- |
-| 登录 | 登录/注册双 Tab、字段校验、提交 LOADING、成功提示跳转 |
-| 仪表盘 | 4 统计卡 + ECharts 近 30 天双系列（人工/AI 字数）+ 项目列表（新建/编辑/删除，编辑支持状态与概要清空） |
-| 工作台 | 左：卷/章树（下拉菜单增删改、XLSX 大纲导出）；中：CodeMirror 编辑器（自动保存、字数实时统计、快照/回滚）；右：AI 面板（流式打字、斜杠自动补全、@引用选择器、历史条数设置、模型选择、召回依据展示、"插入到章节"） |
-| 角色 | 卡片列表 + 编辑抽屉 + X6 关系图（拖拽节点布局、表单保存关系边） |
-| 世界观设定 | 左侧分类（全部/世界背景/规则/地点/物品/事件，带计数）+ 关键词搜索 + 设定卡片（类型标签、内容摘要、更新时间）+ 编辑抽屉（名称/类型/内容/排序） |
-| 模型供应商 | 能力提示条（对话/向量是否就绪）+ 供应商卡片（协议/地址/模型/密钥掩码/测试状态/默认标记）+ 抽屉表单（协议切换时向量项自动禁用）+ 一键测试与设为默认 |
-| 用量分析 | 区间（7/14/30 天）+ 4 指标卡 + ECharts 双轴趋势（调用量柱 / token 折线）+ 供应商与模型分布表 |
-| 运行状态 | 进程信息（版本/Go 版本/启动时间/运行时长）+ AI 能力结论 + 依赖健康表（up/degraded/down + 探测耗时 + 结论） |
-| 知识库 | 上传（拖拽）、索引状态徽标（pending/indexing 3s 轮询）、混合检索（高亮命中）；txt/md 原文预览、docx/pdf 原文渲染；未配置向量模型时提示"仅关键词检索" |
-| 斜杠命令 | 表格 + 弹窗表单（提示词模板编辑器）、内置技能只读徽标 |
+### 5.1 登录
 
-## 6. 可视化与工具库分工
+登录/注册双 Tab，字段校验，提交 LOADING，成功提示后进入仪表盘。
+
+### 5.2 仪表盘
+
+四张统计卡：项目总数、累计字数、今日新增、AI 生成字数。ECharts 近 30 天双系列折线（人工/AI）。项目列表支持新建、编辑、删除；删除二次确认。
+
+### 5.3 写作台
+
+三栏布局：
+
+- 左：卷/章目录树。下拉菜单增删改；XLSX 导出大纲；拖拽或按钮排序。
+- 中：CodeMirror 编辑器。自动保存、字数实时统计、快照创建与回滚。
+- 右：AI 面板。流式打字、斜杠补全、@引用选择器、历史条数、模型选择、召回依据展示、插入章节。
+
+AI 面板会话可创建/删除/切换，停止生成按钮取消 SSE；所有动作有 toast 反馈。
+
+### 5.3.1 创作规划
+
+左侧大纲树按层级展示卷/幕/故事块/章节，支持新建、编辑与删除（有子节点不可删）；右侧展示选中节点的场景卡列表，支持新建、编辑、删除。表单覆盖角色、地点、冲突、节奏、目标、关键选择、结果与状态字段。
+
+### 5.3.2 连续性看板
+
+三个标签页分别展示时序事实、伏笔钩子与章节摘要。事实列表支持候选/确认/取代/失效状态与审核操作；伏笔列表支持状态流转；摘要列表展示内容哈希与 stale 标记。
+
+### 5.4 角色与关系
+
+角色卡片列表 + 编辑抽屉；关系图用 AntV X6：节点是角色，边是关系；支持拖拽布局与表单保存关系。删除角色二次确认。
+
+### 5.5 世界观设定
+
+左侧分类（全部/世界背景/规则/地点/物品/事件，带计数）+ 关键词搜索；右侧设定卡片展示类型、摘要、更新时间；编辑抽屉支持名称/类型/内容/排序。
+
+### 5.6 知识库
+
+上传区支持拖拽；列表显示索引状态（pending/indexing 每 3 秒轮询）；检索支持关键词与词法混合，无向量选项；召回结果高亮命中词；原文明细可预览：txt/md 直接渲染，docx/pdf 用组件渲染。检索结果展示 query trace，让 AI 依据可见。
+
+### 5.7 模型供应商
+
+顶部能力提示：对话是否就绪、如何配置。卡片展示协议、地址、模型、密钥掩码、默认标记、测试状态。抽屉表单可新增/编辑，切换协议时 Anthropic 不显示向量字段；一键测试与设为默认。
+
+### 5.8 管理页
+
+- 用户：分页列表、创建/编辑/删除、重置密码、角色分配。
+- 角色：列表、权限码勾选、内置角色只读。
+- 审计：按操作者/动作/时间筛选。
+- 用量：7/14/30 天切换、指标卡、ECharts 双轴趋势、供应商与模型分布表。
+- 运行状态：进程信息与依赖健康表；失败时显示错误页与重试入口，绝不空白。
+
+### 5.9 设置与技能
+
+设置页展示可修改的运行时配置白名单。斜杠技能页展示内置/自定义技能表格与提示词模板编辑器。
+
+## 6. 可视化与编辑器分工
 
 | 库 | 用途 |
 | --- | --- |
-| ECharts 5.5 | 字数趋势、统计图 |
-| AntV X6 2.18 | 角色关系图（节点=角色、边=关系） |
-| CodeMirror 6 | 章节正文编辑（轻量、可控、中文友好） |
-| WangEditor 5 | 创作笔记富文本 |
-| XLSX | 写作台目录导出（卷/章/排序/字数/状态，按需加载） |
-| docx-preview / vue-pdf-embed | 知识库文档在线预览 |
+| ECharts 5.5 | 字数趋势、用量趋势 |
+| AntV X6 2.18 | 角色关系图 |
+| CodeMirror 6 | 章节正文编辑 |
+| WangEditor 5 | 创作笔记 |
+| Mavon-Editor | Markdown 编辑能力（按需接入） |
+| XLSX | 大纲导出 |
+| docx-preview | docx 预览 |
+| vue-pdf-embed | PDF 预览 |
+| Qiankun | 微前端接入协议预留，当前无子应用 |
+| BPMN-JS | 工作流图形建模预留，当前以列表/树实现 |
 
-未采用：Qiankun（无微前端子应用，引之徒增运行时复杂度）、BPMN-JS（剧情流程用目录树 + 时间线已覆盖）、Mavon-Editor（Markdown 编辑由 CodeMirror 承担）。当前无正式用户，宁可少一个依赖也不留死代码。
+未使用的库只保留依赖与入口约定，不在业务里制造空壳页面。
 
 ## 7. 国际化
 
-- Vue I18n 9.10，locale 文件按页面组织（`login.*`、`dashboard.*`…），键名语义化。
-- 默认 zh-CN，顶栏可切换 en-US；数字/日期用毫秒时间戳本地化格式化。
+Vue I18n 9.10，默认 zh-CN，顶栏切换 en-US。文案按模块组织：`common.*`、`layout.*`、`dashboard.*`、`workspace.*`、`knowledge.*` 等。时间使用毫秒时间戳或日期字符串本地化格式化。

@@ -3,10 +3,23 @@ node_modules/
 dist/
 out/
 
-# 环境与密钥
+# 环境与密钥（禁止提交任何真实凭据）
 .env
+.env.*
+!.env.example
+!.env.*.example
 .env.local
 *.local
+*.env
+!*.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials.json
+service-account*.json
 
 # Go
 backend/vendor/

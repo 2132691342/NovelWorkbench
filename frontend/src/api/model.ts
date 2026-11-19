@@ -13,8 +13,6 @@ export interface NWModelProviderVo {
   api_key_masked: string
   api_key_configured: boolean
   chat_model_name: string
-  embedding_model_name: string
-  embedding_dim: number
   temperature: number
   max_tokens: number
   enabled_flag: boolean
@@ -24,7 +22,6 @@ export interface NWModelProviderVo {
   last_test_status_code: string
   last_test_message: string
   last_test_at_ms: number
-  last_embed_status_code: string
   updated_at_ms: number
 }
 
@@ -36,8 +33,6 @@ export interface NWModelProviderSaveReqVo {
   base_url: string
   api_key_text?: string
   chat_model_name: string
-  embedding_model_name?: string
-  embedding_dim?: number
   temperature?: number
   max_tokens?: number
   enabled_flag?: boolean
@@ -52,17 +47,14 @@ export interface NWModelProviderTestVo {
   message_text: string
   latency_ms: number
   reply_text: string
-  embedding_status: string
 }
 
 /** AI 能力探测结果（字段对齐后端 ModelCapabilityVO） */
 export interface NWModelCapabilityVo {
   chat_ready: boolean
-  embedding_ready: boolean
   default_provider_ulid: string
   default_provider_name: string
   default_chat_model_name: string
-  embedding_provider_name: string
   hint_text: string
 }
 
@@ -121,7 +113,6 @@ export interface NWSystemStatusVo {
   build_version_text: string
   dependency_list: NWDependencyHealthVo[]
   chat_ready: boolean
-  embedding_ready: boolean
   hint_text: string
 }
 

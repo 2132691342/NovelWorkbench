@@ -23,11 +23,13 @@ const { t } = useI18n()
 /** 项目内页面路径前缀 → 页面键（用于侧边栏高亮与切换） */
 const NW_PROJECT_PAGE_LIST = [
   { menu_key: 'workspace', route_name: 'workspace', path_prefix: '/workspace/' },
+  { menu_key: 'outline', route_name: 'outline', path_prefix: '/outline/' },
+  { menu_key: 'continuity', route_name: 'continuity', path_prefix: '/continuity/' },
   { menu_key: 'character', route_name: 'character', path_prefix: '/character/' },
   { menu_key: 'lore', route_name: 'lore', path_prefix: '/lore/' },
   { menu_key: 'knowledge', route_name: 'knowledge', path_prefix: '/knowledge/' },
   { menu_key: 'notes', route_name: 'notes', path_prefix: '/notes/' },
-] as const
+]
 
 const activeMenuPath = computed(() => route.path)
 
@@ -220,7 +222,14 @@ onMounted(() => {
         >
           <svg class="admin-layout__menu-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
-              v-if="pageItem.menu_key === 'workspace'"
+              v-if="pageItem.menu_key === 'outline'"
+              d="M5 4h14v16H5zM9 4v16M13 8h3M13 12h3"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linejoin="round"
+            />
+            <path
+              v-else-if="pageItem.menu_key === 'workspace'"
               d="M5 5h14v14H5zM5 9h14M9 5v14"
               stroke="currentColor"
               stroke-width="1.8"
@@ -410,192 +419,5 @@ onMounted(() => {
     </div>
   </div>
 </template>
+<style scoped src="./AdminLayout.css"></style>
 
-<style scoped>
-.admin-layout {
-  display: flex;
-  height: 100vh;
-  overflow: hidden;
-  background-color: var(--bg-page);
-}
-
-.admin-layout__aside {
-  display: flex;
-  flex-direction: column;
-  width: 220px;
-  flex-shrink: 0;
-  background-color: var(--bg-card);
-  border-right: 1px solid var(--border-light);
-  transition: width 0.2s ease;
-}
-
-.admin-layout__aside.is-collapsed {
-  width: 64px;
-}
-
-.admin-layout__brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 56px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border-light);
-  overflow: hidden;
-}
-
-.admin-layout__brand-icon {
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-}
-
-.admin-layout__brand-text {
-  font-size: 16px;
-  font-weight: 600;
-  white-space: nowrap;
-  color: var(--text-main);
-}
-
-/* 项目切换器 */
-.admin-layout__project {
-  padding: 12px;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.admin-layout__project-dropdown {
-  width: 100%;
-}
-
-.admin-layout__project-trigger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-base);
-  background-color: var(--bg-page);
-  cursor: pointer;
-  transition: all var(--transition-base);
-}
-
-.admin-layout__project-trigger:hover {
-  border-color: var(--primary-hover);
-  color: var(--primary);
-  box-shadow: var(--shadow-button-hover);
-}
-
-.admin-layout__project-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.admin-layout__project-arrow {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
-
-.admin-layout__project-meta {
-  margin-left: 8px;
-  color: var(--text-placeholder);
-  font-size: 12px;
-}
-
-.admin-layout__menu {
-  flex: 1;
-  border-right: none;
-  overflow-y: auto;
-}
-
-.admin-layout__group-title {
-  padding: 12px 16px 6px;
-  color: var(--text-placeholder);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-}
-
-.admin-layout__menu-icon {
-  width: 18px;
-  height: 18px;
-  margin-right: 8px;
-}
-
-.admin-layout__body {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-
-.admin-layout__header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 56px;
-  padding: 0 20px;
-  background-color: var(--bg-card);
-  border-bottom: 1px solid var(--border-light);
-}
-
-.admin-layout__header-icon {
-  width: 20px;
-  height: 20px;
-}
-
-.admin-layout__breadcrumb {
-  color: var(--text-secondary);
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.admin-layout__header-right {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  margin-left: auto;
-}
-
-.admin-layout__header-link {
-  color: var(--text-secondary);
-  cursor: pointer;
-  outline: none;
-  transition: color 0.2s ease;
-}
-
-.admin-layout__header-link:hover {
-  color: var(--primary);
-}
-
-.admin-layout__user {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  outline: none;
-}
-
-.admin-layout__avatar {
-  background-color: var(--primary);
-  color: var(--text-inverse);
-  font-weight: 600;
-}
-
-.admin-layout__user-name {
-  color: var(--text-main);
-  font-size: 14px;
-}
-
-.admin-layout__content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-}
-</style>

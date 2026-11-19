@@ -23,7 +23,7 @@ type SystemProbeDeps struct {
 	BuildVersion   string          // 构建版本（编译期注入或默认 dev）
 }
 
-// SystemStatusService 系统运行状态业务：并行探测外部依赖并汇总 AI 能力。
+// SystemStatusService 系统运行状态业务：并行探测外部依赖并汇总 AI 对话能力。
 type SystemStatusService struct {
 	deps        SystemProbeDeps
 	providerSvc *ModelProviderService
@@ -46,7 +46,7 @@ func (s *SystemStatusService) Status(ctx context.Context) (domain.SystemStatusVO
 		probe    DependencyProbe
 		required bool
 	}{
-		{"postgres", "PostgreSQL（主库 + pgvector）", s.deps.PostgresProbe, true},
+		{"postgres", "PostgreSQL（主库）", s.deps.PostgresProbe, true},
 		{"redis", "Redis（令牌吊销 / 缓存）", s.deps.RedisProbe, false},
 		{"rabbitmq", "RabbitMQ（索引任务队列）", s.deps.RabbitMQProbe, false},
 		{"minio", "MinIO（知识库原文对象存储）", s.deps.MinIOProbe, false},
@@ -75,19 +75,15 @@ func (s *SystemStatusService) Status(ctx context.Context) (domain.SystemStatusVO
 		pkg.SLogger().Warnw("AI 能力探测失败", "error", err)
 	}
 	vo.ChatReady = capability.ChatReady
-	vo.EmbeddingReady = capability.EmbeddingReady
 	vo.HintText = capability.HintText
 	modelHealth := domain.DependencyHealthVO{
 		DependencyCode: "model",
-		DependencyName: "模型供应商（对话 / 向量）",
+		DependencyName: "模型供应商（对话）",
 		StatusCode:     domain.HealthStatusUp,
 		MessageText:    capability.HintText,
 	}
-	switch {
-	case !capability.ChatReady:
+	if !capability.ChatReady {
 		modelHealth.StatusCode = domain.HealthStatusDown
-	case !capability.EmbeddingReady:
-		modelHealth.StatusCode = domain.HealthStatusDegraded
 	}
 	vo.DependencyList = append(vo.DependencyList, modelHealth)
 	return vo, nil

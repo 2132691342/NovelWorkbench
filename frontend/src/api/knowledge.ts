@@ -18,6 +18,23 @@ export interface NWKnowledgeSearchReqVo {
   doc_ulid_list?: string[]
 }
 
+/** 检索追踪（字段对齐后端 KnowledgeSearchTraceVO） */
+export interface NWKnowledgeSearchTraceVo {
+  query_terms: string[]
+  query_expr: string
+  candidate_count: number
+  reranked: boolean
+  rerank_note: string
+  selected_ids: string[]
+  source_mode: string
+}
+
+/** 知识库检索响应（字段对齐后端 KnowledgeSearchVO） */
+export interface NWKnowledgeSearchVo {
+  result_list: NWKnowledgeChunkVo[]
+  trace: NWKnowledgeSearchTraceVo
+}
+
 /** 知识库文档分页列表 */
 export function listKnowledgeDocuments(
   req: NWKnowledgeListReqVo,
@@ -56,9 +73,9 @@ export async function reindexKnowledgeDocument(docUlid: string): Promise<void> {
   await post('/knowledge/reindex', { doc_ulid: docUlid })
 }
 
-/** 知识库检索（keyword/vector/hybrid） */
-export function searchKnowledge(req: NWKnowledgeSearchReqVo): Promise<NWKnowledgeChunkVo[]> {
-  return post<NWKnowledgeChunkVo[]>('/knowledge/search', req)
+/** 知识库检索（keyword 关键词 / hybrid 词法混合） */
+export function searchKnowledge(req: NWKnowledgeSearchReqVo): Promise<NWKnowledgeSearchVo> {
+  return post<NWKnowledgeSearchVo>('/knowledge/search', req)
 }
 
 /** 文档切片分页（预览/切片列表弹窗用） */

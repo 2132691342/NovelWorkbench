@@ -82,16 +82,14 @@ type ManticoreConfig struct {
 
 // AIConfig 模型网关配置（仅作为供应商表的出厂默认：为空时播种一条默认供应商）。
 type AIConfig struct {
-	ProtocolCode   string  `yaml:"protocol_code" mapstructure:"protocol_code"`     // 协议：openai/anthropic
-	BaseURL        string  `yaml:"base_url" mapstructure:"base_url"`               // 网关地址（OpenAI 含 /v1；Anthropic 为根地址）
-	APIKey         string  `yaml:"api_key" mapstructure:"api_key"`                 // API Key
-	ChatModel      string  `yaml:"chat_model" mapstructure:"chat_model"`           // 对话模型名
-	EmbeddingModel string  `yaml:"embedding_model" mapstructure:"embedding_model"` // 向量模型名
-	EmbeddingDim   int     `yaml:"embedding_dim" mapstructure:"embedding_dim"`     // 向量维度
-	Temperature    float64 `yaml:"temperature" mapstructure:"temperature"`         // 采样温度
-	MaxTokens      int     `yaml:"max_tokens" mapstructure:"max_tokens"`           // 单次输出上限
-	TimeoutSec     int     `yaml:"timeout_sec" mapstructure:"timeout_sec"`         // 调用超时（秒）
-	HistoryCount   int     `yaml:"history_count" mapstructure:"history_count"`     // 历史消息注入默认条数
+	ProtocolCode string  `yaml:"protocol_code" mapstructure:"protocol_code"` // 协议：openai/anthropic
+	BaseURL      string  `yaml:"base_url" mapstructure:"base_url"`           // 网关地址（OpenAI 含 /v1；Anthropic 为根地址）
+	APIKey       string  `yaml:"api_key" mapstructure:"api_key"`             // API Key
+	ChatModel    string  `yaml:"chat_model" mapstructure:"chat_model"`       // 对话模型名
+	Temperature  float64 `yaml:"temperature" mapstructure:"temperature"`     // 采样温度
+	MaxTokens    int     `yaml:"max_tokens" mapstructure:"max_tokens"`       // 单次输出上限
+	TimeoutSec   int     `yaml:"timeout_sec" mapstructure:"timeout_sec"`     // 调用超时（秒）
+	HistoryCount int     `yaml:"history_count" mapstructure:"history_count"` // 历史消息注入默认条数
 }
 
 // AppConfig 业务参数配置。

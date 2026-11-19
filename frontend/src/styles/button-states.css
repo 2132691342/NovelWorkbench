@@ -83,6 +83,33 @@
   align-items: center;
   gap: 6px;
 }
+/* 图标按钮与文本标签按钮：紧凑外观 + 五态缩放 */
+.nw-button--icon {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.nw-button--icon:hover {
+  background-color: var(--border-light);
+  color: var(--text-main);
+}
+
+.nw-button--tab {
+  border: none;
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.nw-button--tab.is-active {
+  background-color: var(--primary);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-button-hover);
+}
+
 
 /* ===== HOVER 悬停态 ===== */
 .el-button:not(.is-disabled):not(.is-loading):hover,

@@ -4,19 +4,20 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
 	"io"
-
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ledongthuc/pdf"
 	"gorm.io/gorm"
 
-	"github.com/2132691342/NovelWorkbench/backend/internal/ai"
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 	"github.com/2132691342/NovelWorkbench/backend/internal/infra"
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
@@ -26,31 +27,26 @@ import (
 // maxIndexRetryCount 单个索引任务的最大重试次数（首次失败后重试 ≤3 次）。
 const maxIndexRetryCount = 3
 
-// consumeReconnectInterval 索引队列消费中断后的重连间隔。
 const consumeReconnectInterval = 5 * time.Second
 
-// KnowledgeWorker 知识库索引 worker：消费队列完成提取/切片/向量化/入库与 Manticore 同步。
+// KnowledgeWorker 知识库索引 worker：消费队列完成提取/切片/内容哈希/Manticore 同步。
 type KnowledgeWorker struct {
 	knowledgeRepo *repo.KnowledgeRepo
 	objectRepo    *repo.ObjectRepo
 	mqRepo        *repo.MQRepo
 	jobRepo       *repo.JobRepo
-	aiClient      *ai.Client
-	providerSvc   *ModelProviderService
 	manticore     *infra.ManticoreClient
 	db            *gorm.DB
 	config        KnowledgeIndexConfig
 }
 
 // NewKnowledgeWorker 构造知识库索引 worker。
-func NewKnowledgeWorker(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo, jobRepo *repo.JobRepo, aiClient *ai.Client, providerSvc *ModelProviderService, manticore *infra.ManticoreClient, db *gorm.DB, config KnowledgeIndexConfig) *KnowledgeWorker {
+func NewKnowledgeWorker(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo, jobRepo *repo.JobRepo, manticore *infra.ManticoreClient, db *gorm.DB, config KnowledgeIndexConfig) *KnowledgeWorker {
 	return &KnowledgeWorker{
 		knowledgeRepo: knowledgeRepo,
 		objectRepo:    objectRepo,
 		mqRepo:        mqRepo,
 		jobRepo:       jobRepo,
-		aiClient:      aiClient,
-		providerSvc:   providerSvc,
 		manticore:     manticore,
 		db:            db,
 		config:        config,
@@ -115,7 +111,7 @@ func (w *KnowledgeWorker) handleIndexJob(ctx context.Context, job domain.Knowled
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				return ctx.Err() // 关闭中断，消息 requeue 待重启后重投
+				return ctx.Err()
 			case <-time.After(time.Duration(attempt) * time.Second):
 			}
 		}
@@ -135,7 +131,7 @@ func (w *KnowledgeWorker) handleIndexJob(ctx context.Context, job domain.Knowled
 	return nil
 }
 
-// indexDocument 单次索引：提取文本 → 切片 → 向量化 → 事务写切片 → Manticore 同步 → 置 indexed。
+// indexDocument 单次索引：提取文本 → 切片 → 内容哈希去重 → 事务写切片 → Manticore 同步 → 置 indexed。
 func (w *KnowledgeWorker) indexDocument(ctx context.Context, doc *domain.KnowledgeDocumentDO) error {
 	reader, err := w.objectRepo.GetObject(ctx, doc.ObjectKey)
 	if err != nil {
@@ -150,39 +146,33 @@ func (w *KnowledgeWorker) indexDocument(ctx context.Context, doc *domain.Knowled
 	if len(pieces) == 0 {
 		return fmt.Errorf("文档内容为空，无法建立索引")
 	}
-	// 向量模型缺失或调用失败时只建关键词索引：文档仍可被全文检索，语义通道待配置后重投即可
-	embeddingSpec, embeddingAvailable, specErr := w.providerSvc.EmbeddingSpec(ctx)
-	var vectors [][]float32
-	if specErr != nil {
-		pkg.SLogger().Warnw("向量供应商解析失败，本次仅建关键词索引", "doc_ulid", doc.DocULID, "error", specErr)
-	} else if !embeddingAvailable {
-		pkg.SLogger().Warnw("未配置向量模型，本次仅建关键词索引", "doc_ulid", doc.DocULID)
-	} else {
-		embedded, embedErr := w.aiClient.Embed(ctx, embeddingSpec, pieces)
-		if embedErr != nil {
-			pkg.SLogger().Warnw("切片向量化失败，本次仅建关键词索引", "doc_ulid", doc.DocULID, "error", embedErr)
-		} else if len(embedded) != len(pieces) {
-			pkg.SLogger().Warnw("向量数量与切片数量不一致，本次仅建关键词索引",
-				"doc_ulid", doc.DocULID, "vector_count", len(embedded), "chunk_count", len(pieces))
-		} else {
-			vectors = embedded
-		}
+	existing, err := w.knowledgeRepo.ListChunksByDocAll(ctx, doc.DocULID)
+	if err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "既有切片读取失败", err)
+	}
+	oldByHash := make(map[string]domain.KnowledgeChunkDO, len(existing))
+	for _, old := range existing {
+		oldByHash[old.ContentHash] = old
 	}
 	chunks := make([]domain.KnowledgeChunkDO, 0, len(pieces))
 	var totalTokenCount int64
+	used := make(map[string]bool, len(pieces))
 	for i, piece := range pieces {
-		tokenCount := int(pkg.CountWords(piece))
-		totalTokenCount += int64(tokenCount)
+		hash := contentHashOf(piece)
 		chunkDO := domain.KnowledgeChunkDO{
-			ChunkULID:   pkg.NewULID(domain.IDPrefixChunk),
 			DocULID:     doc.DocULID,
 			ProjectULID: doc.ProjectULID,
 			ChunkIndex:  i,
 			ChunkText:   piece,
-			TokenCount:  tokenCount,
+			TokenCount:  int(pkg.CountWords(piece)),
+			ContentHash: hash,
 		}
-		if vectors != nil {
-			chunkDO.EmbeddingVec = vectors[i]
+		totalTokenCount += int64(chunkDO.TokenCount)
+		if old, ok := oldByHash[hash]; ok && !used[hash] {
+			chunkDO.ChunkULID = old.ChunkULID
+			used[hash] = true
+		} else {
+			chunkDO.ChunkULID = pkg.NewULID(domain.IDPrefixChunk)
 		}
 		chunks = append(chunks, chunkDO)
 	}
@@ -192,13 +182,7 @@ func (w *KnowledgeWorker) indexDocument(ctx context.Context, doc *domain.Knowled
 			return err
 		}
 		for i := range chunks {
-			if vectors == nil {
-				if err := txKnowledge.InsertChunkTextOnly(ctx, &chunks[i]); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := txKnowledge.InsertChunkWithVector(ctx, &chunks[i]); err != nil {
+			if err := txKnowledge.InsertChunk(ctx, &chunks[i]); err != nil {
 				return err
 			}
 		}
@@ -218,6 +202,11 @@ func (w *KnowledgeWorker) indexDocument(ctx context.Context, doc *domain.Knowled
 		return pkg.WrapBizError(domain.RespCodeStorageError, "文档状态更新失败", err)
 	}
 	return nil
+}
+
+func contentHashOf(text string) string {
+	digest := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(digest[:])
 }
 
 // extractDocumentText 按文档类型提取纯文本（txt/md 直读，docx/pdf 纯 Go 解析）。
@@ -289,7 +278,6 @@ func extractPDFText(raw []byte) (string, error) {
 }
 
 // chunkText 滑窗切片：窗口 chunkSize 字符、重叠 chunkSize-overlap 步进，
-// 窗口内优先在段落/句末边界裁剪（边界不早于窗口中点），短文本返回单切片。
 func chunkText(text string, chunkSize, overlap int) []string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -323,13 +311,12 @@ func chunkText(text string, chunkSize, overlap int) []string {
 		if next := end - overlap; next > start {
 			start = next
 		} else {
-			start = end // 重叠过大时保证前进
+			start = end
 		}
 	}
 	return chunks
 }
 
-// lastBoundary 返回窗口内最后一个段落/句末边界之后的位置（无边界返回 0）。
 func lastBoundary(window []rune) int {
 	for i := len(window) - 1; i >= 0; i-- {
 		switch window[i] {
@@ -414,10 +401,22 @@ func deleteManticoreChunks(ctx context.Context, client *infra.ManticoreClient, t
 	return err
 }
 
-// queryManticoreChunkIDs 关键词通道：Manticore MATCH 命中切片 ULID（保持相关度返回顺序）。
-func queryManticoreChunkIDs(ctx context.Context, client *infra.ManticoreClient, table string, req *domain.KnowledgeSearchREQ, topK int) ([]string, error) {
-	sql := fmt.Sprintf("SELECT chunk_ulid FROM %s WHERE MATCH('@chunk_text \"%s\"') AND project_ulid = '%s'",
-		manticoreTableName(table), escapeManticoreString(req.KeywordText), escapeManticoreString(req.ProjectULID))
+// queryManticoreHits 执行 Manticore MATCH，返回按相关度排序的 chunk_ulid 与得分。
+func queryManticoreHits(ctx context.Context, client *infra.ManticoreClient, table string, req *domain.KnowledgeSearchREQ, topK int, channel string) ([]string, map[string]float64, error) {
+	matchExpr := `"` + escapeManticoreString(req.KeywordText) + `"`
+	if channel == "term" {
+		terms := extractQueryTerms(req.KeywordText)
+		if len(terms) == 0 {
+			terms = []string{req.KeywordText}
+		}
+		quoted := make([]string, len(terms))
+		for i, term := range terms {
+			quoted[i] = `"` + escapeManticoreString(term) + `"`
+		}
+		matchExpr = strings.Join(quoted, " | ")
+	}
+	sql := fmt.Sprintf("SELECT chunk_ulid, WEIGHT() AS score FROM %s WHERE MATCH('@chunk_text %s') AND project_ulid = '%s'",
+		manticoreTableName(table), matchExpr, escapeManticoreString(req.ProjectULID))
 	if len(req.DocULIDList) > 0 {
 		docValues := make([]string, len(req.DocULIDList))
 		for i, docULID := range req.DocULIDList {
@@ -425,38 +424,56 @@ func queryManticoreChunkIDs(ctx context.Context, client *infra.ManticoreClient, 
 		}
 		sql += " AND doc_ulid IN (" + strings.Join(docValues, ",") + ")"
 	}
-	sql += fmt.Sprintf(" LIMIT %d", topK)
+	sql += fmt.Sprintf(" ORDER BY score DESC LIMIT %d", topK)
 	body, err := client.Exec(ctx, sql)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return parseManticoreChunkIDs(body)
+	return parseManticoreHits(body)
 }
 
-// parseManticoreChunkIDs 解析 Manticore raw SQL 响应中的 chunk_ulid 列（保持返回顺序）。
-func parseManticoreChunkIDs(body []byte) ([]string, error) {
+// parseManticoreHits 解析 Manticore raw SQL 响应中的 chunk_ulid 与 score 列（保持返回顺序）。
+func parseManticoreHits(body []byte) ([]string, map[string]float64, error) {
 	var resultSets []struct {
 		Data  []map[string]any `json:"data"`
 		Error string           `json:"error"`
 	}
 	if err := json.Unmarshal(body, &resultSets); err != nil {
-		return nil, fmt.Errorf("parse manticore response: %w", err)
+		return nil, nil, fmt.Errorf("parse manticore response: %w", err)
 	}
-	chunkULIDs := make([]string, 0, 8)
+	ids := make([]string, 0, 8)
+	scores := make(map[string]float64, 8)
 	for _, resultSet := range resultSets {
 		if resultSet.Error != "" {
-			return nil, fmt.Errorf("manticore query error: %s", resultSet.Error)
+			return nil, nil, fmt.Errorf("manticore query error: %s", resultSet.Error)
 		}
 		for _, row := range resultSet.Data {
-			if chunkULID, ok := row["chunk_ulid"].(string); ok {
-				chunkULIDs = append(chunkULIDs, chunkULID)
+			chunkULID, ok := row["chunk_ulid"].(string)
+			if !ok {
+				continue
 			}
+			ids = append(ids, chunkULID)
+			scores[chunkULID] = scoreOf(row["score"])
 		}
 	}
-	return chunkULIDs, nil
+	return ids, scores, nil
 }
 
-// manticoreTableName 返回全文表名（空值回退 nw_chunks）。
+func scoreOf(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case json.Number:
+		parsed, _ := typed.Float64()
+		return parsed
+	case string:
+		parsed, _ := strconv.ParseFloat(typed, 64)
+		return parsed
+	default:
+		return 0
+	}
+}
+
 func manticoreTableName(table string) string {
 	if strings.TrimSpace(table) == "" {
 		return "nw_chunks"
@@ -464,10 +481,8 @@ func manticoreTableName(table string) string {
 	return table
 }
 
-// manticoreEscaper Manticore SQL 字符串/匹配串转义器。
 var manticoreEscaper = strings.NewReplacer(`\`, `\\`, `'`, `\'`, `"`, `\"`)
 
-// escapeManticoreString 转义 Manticore SQL 字符串/匹配串中的反斜杠与引号。
 func escapeManticoreString(value string) string {
 	return manticoreEscaper.Replace(value)
 }

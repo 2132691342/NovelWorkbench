@@ -36,9 +36,6 @@ func main() {
 		pkg.SLogger().Errorw("Postgres 连接失败", "error", err)
 		os.Exit(1)
 	}
-	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
-		pkg.SLogger().Warnw("创建 vector 扩展失败，知识库向量功能将不可用", "error", err)
-	}
 	if err := db.AutoMigrate(
 		&domain.UserDO{},
 		&domain.ProjectDO{},
@@ -50,6 +47,11 @@ func main() {
 		&domain.CharacterRelationDO{},
 		&domain.LoreDO{},
 		&domain.KnowledgeDocumentDO{},
+		&domain.OutlineNodeDO{},
+		&domain.DetailedSceneDO{},
+		&domain.TemporalFactDO{},
+		&domain.ForeshadowHookDO{},
+		&domain.ChapterSummaryDO{},
 		&domain.KnowledgeChunkDO{},
 		&domain.SlashCommandDO{},
 		&domain.JobDO{},
@@ -107,6 +109,8 @@ func main() {
 	characterRepo := repo.NewCharacterRepo(db)
 	loreRepo := repo.NewLoreRepo(db)
 	knowledgeRepo := repo.NewKnowledgeRepo(db)
+	outlineRepo := repo.NewOutlineRepo(db)
+	continuityRepo := repo.NewContinuityRepo(db)
 	slashRepo := repo.NewSlashRepo(db)
 	settingRepo := repo.NewSettingRepo(db)
 	statsRepo := repo.NewStatsRepo(db)
@@ -119,6 +123,8 @@ func main() {
 	roleService := service.NewRoleService(roleRepo, userRepo)
 	userAdminService := service.NewUserAdminService(userRepo, roleRepo)
 	auditService := service.NewAuditService(auditRepo, userRepo)
+	outlineService := service.NewOutlineService(outlineRepo, projectRepo)
+	continuityService := service.NewContinuityService(continuityRepo, projectRepo)
 	projectService := service.NewProjectService(projectRepo, volumeRepo, chapterRepo, db, service.ProjectCascadeDeps{
 		CharacterRepo:  characterRepo,
 		LoreRepo:       loreRepo,
@@ -149,16 +155,13 @@ func main() {
 		time.Duration(aiTimeoutSec)*time.Second)
 	// 供应商表为空时按配置播种默认供应商（配置文件即"出厂默认"，之后在页面上管理）。
 	if err := providerService.SeedDefault(ctx, service.ProviderSeed{
-		ProviderName:       "默认模型网关",
-		ProtocolCode:       cfg.AI.ProtocolCode,
-		BaseURL:            cfg.AI.BaseURL,
-		APIKey:             cfg.AI.APIKey,
-		ChatModelName:      cfg.AI.ChatModel,
-		EmbeddingModelName: cfg.AI.EmbeddingModel,
-		EmbeddingDim:       cfg.AI.EmbeddingDim,
-		Temperature:        cfg.AI.Temperature,
-		MaxTokens:          cfg.AI.MaxTokens,
-		TimeoutSec:         aiTimeoutSec,
+		ProviderName:  "默认模型网关",
+		ProtocolCode:  cfg.AI.ProtocolCode,
+		BaseURL:       cfg.AI.BaseURL,
+		ChatModelName: cfg.AI.ChatModel,
+		Temperature:   cfg.AI.Temperature,
+		MaxTokens:     cfg.AI.MaxTokens,
+		TimeoutSec:    aiTimeoutSec,
 	}); err != nil {
 		pkg.SLogger().Warnw("默认模型供应商播种失败，可在页面手工添加", "error", err)
 	}
@@ -195,7 +198,7 @@ func main() {
 	}
 
 	// 知识库索引 worker：消费 RabbitMQ 完成文档索引，随 ctx 取消优雅退出。
-	knowledgeWorker := service.NewKnowledgeWorker(knowledgeRepo, objectRepo, mqRepo, jobRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
+	knowledgeWorker := service.NewKnowledgeWorker(knowledgeRepo, objectRepo, mqRepo, jobRepo, manticoreClient, db, knowledgeConfig)
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
@@ -265,23 +268,25 @@ func main() {
 			defer cancel()
 			return sqlDB.PingContext(pingCtx)
 		},
-		AuthAPI:      api.NewAuthAPI(authService),
-		ProjectAPI:   api.NewProjectAPI(projectService),
-		VolumeAPI:    api.NewVolumeAPI(volumeService),
-		ChapterAPI:   api.NewChapterAPI(chapterService),
-		CharacterAPI: api.NewCharacterAPI(characterService),
-		LoreAPI:      api.NewLoreAPI(loreService),
-		KnowledgeAPI: api.NewKnowledgeAPI(knowledgeService),
-		SlashAPI:     api.NewSlashAPI(slashService),
-		SettingAPI:   api.NewSettingAPI(settingService),
-		StatsAPI:     api.NewStatsAPI(statsService),
-		ChatAPI:      api.NewChatAPI(chatService),
-		UserAdminAPI: api.NewUserAdminAPI(userAdminService),
-		RoleAPI:      api.NewRoleAPI(roleService),
-		AuditAPI:     api.NewAuditAPI(auditService),
-		ProviderAPI:  api.NewModelProviderAPI(providerService),
-		UsageAPI:     api.NewModelUsageAPI(usageService),
-		StatusAPI:    api.NewSystemStatusAPI(statusService),
+		AuthAPI:       api.NewAuthAPI(authService),
+		ProjectAPI:    api.NewProjectAPI(projectService),
+		VolumeAPI:     api.NewVolumeAPI(volumeService),
+		ChapterAPI:    api.NewChapterAPI(chapterService),
+		CharacterAPI:  api.NewCharacterAPI(characterService),
+		LoreAPI:       api.NewLoreAPI(loreService),
+		KnowledgeAPI:  api.NewKnowledgeAPI(knowledgeService),
+		OutlineAPI:    api.NewOutlineAPI(outlineService),
+		ContinuityAPI: api.NewContinuityAPI(continuityService),
+		SlashAPI:      api.NewSlashAPI(slashService),
+		SettingAPI:    api.NewSettingAPI(settingService),
+		StatsAPI:      api.NewStatsAPI(statsService),
+		ChatAPI:       api.NewChatAPI(chatService),
+		UserAdminAPI:  api.NewUserAdminAPI(userAdminService),
+		RoleAPI:       api.NewRoleAPI(roleService),
+		AuditAPI:      api.NewAuditAPI(auditService),
+		ProviderAPI:   api.NewModelProviderAPI(providerService),
+		UsageAPI:      api.NewModelUsageAPI(usageService),
+		StatusAPI:     api.NewSystemStatusAPI(statusService),
 	})
 
 	server := &http.Server{

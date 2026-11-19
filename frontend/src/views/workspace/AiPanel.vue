@@ -4,7 +4,7 @@
 -->
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import {
   createChatSession,
@@ -47,6 +47,7 @@ const sessionList = ref<NWChatSessionVo[]>([])
 const currentSessionUlid = ref('')
 const messageList = ref<NWChatDisplayMessage[]>([])
 const historyLoading = ref(false)
+const sessionCreating = ref(false)
 const providerList = ref<NWModelProviderVo[]>([])
 const capabilityVo = ref<NWModelCapabilityVo | null>(null)
 const selectedProviderUlid = ref('')
@@ -182,7 +183,11 @@ function handleRetry(message: NWChatDisplayMessage): void {
 
 /** 停止生成（AbortController 中止 SSE 流） */
 function handleStop(): void {
+  if (!streamingFlag.value) {
+    return
+  }
   stopStream()
+  ElMessage.success(t('workspace.ai.stopSuccess'))
 }
 
 /** 加载会话列表（无当前会话时选中第一个） */
@@ -200,12 +205,19 @@ async function loadSessions(): Promise<void> {
 
 /** 新建会话并切换 */
 async function handleCreateSession(): Promise<void> {
+  if (sessionCreating.value) {
+    return
+  }
+  sessionCreating.value = true
   try {
     const sessionVo = await createChatSession({ project_ulid: props.projectUlid })
     sessionList.value.unshift(sessionVo)
     await selectSession(sessionVo.session_ulid)
+    ElMessage.success(t('workspace.ai.sessionCreateSuccess'))
   } catch {
     // 失败提示由 http 层统一弹出
+  } finally {
+    sessionCreating.value = false
   }
 }
 
@@ -227,6 +239,7 @@ async function handleDeleteSession(sessionUlid: string): Promise<void> {
       messageList.value = []
     }
     await loadSessions()
+    ElMessage.success(t('workspace.ai.sessionDeleteSuccess'))
   } catch {
     // 失败提示由 http 层统一弹出
   }
@@ -311,24 +324,11 @@ onMounted(() => {
           :label="`${providerItem.provider_name} / ${providerItem.chat_model_name}`"
         />
       </el-select>
-      <NWButton size="small" type="primary" @click="handleCreateSession">
+      <NWButton size="small" type="primary" :loading="sessionCreating" @click="handleCreateSession">
         {{ t('workspace.ai.sessionCreate') }}
       </NWButton>
     </header>
 
-    <!-- 能力提示：未配置供应商 / 无向量模型时给出可操作指引 -->
-    <div v-if="capabilityVo && !capabilityVo.chat_ready" class="ai-panel__notice is-down">
-      {{ t('workspace.ai.noProviderTip') }}
-      <router-link to="/models" class="ai-panel__notice-link">
-        {{ t('workspace.ai.goConfigure') }}
-      </router-link>
-    </div>
-    <div
-      v-else-if="capabilityVo && capabilityVo.chat_ready && !capabilityVo.embedding_ready"
-      class="ai-panel__notice is-degraded"
-    >
-      {{ t('workspace.ai.noEmbeddingTip') }}
-    </div>
 
     <!-- 会话列表 -->
     <div class="ai-panel__sessions">
@@ -348,14 +348,15 @@ onMounted(() => {
         <span class="session-item__count">
           {{ t('workspace.ai.messageCount', { count: sessionItem.message_count }) }}
         </span>
-        <button
-          type="button"
+        <NWButton
+          type="text"
+          size="small"
           class="session-item__delete"
           :aria-label="t('workspace.ai.sessionDelete')"
           @click.stop="handleDeleteSession(sessionItem.session_ulid)"
         >
           x
-        </button>
+        </NWButton>
       </div>
     </div>
 
@@ -387,128 +388,5 @@ onMounted(() => {
     />
   </div>
 </template>
+<style scoped src="./AiPanel.css"></style>
 
-<style scoped>
-.ai-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  gap: 8px;
-  min-height: 0;
-}
-
-.ai-panel__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.ai-panel__title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-main);
-}
-
-.ai-panel__model-select {
-  width: 150px;
-}
-
-.ai-panel__notice {
-  padding: 8px 10px;
-  border-radius: var(--radius-base);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.ai-panel__notice.is-down {
-  background-color: #fef2f2;
-  color: #b91c1c;
-}
-
-.ai-panel__notice.is-degraded {
-  background-color: #fffbeb;
-  color: #b45309;
-}
-
-.ai-panel__notice-link {
-  margin-left: 6px;
-  color: var(--primary);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.ai-panel__notice-link:hover {
-  text-decoration: underline;
-}
-
-.ai-panel__sessions {
-  max-height: 120px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.ai-panel__sessions-empty {
-  padding: 8px;
-  font-size: 12px;
-  color: var(--text-placeholder);
-  text-align: center;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-base);
-}
-
-.session-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: var(--radius-base);
-  cursor: pointer;
-  transition: background-color var(--transition-base);
-}
-
-.session-item:hover {
-  background-color: var(--bg-hover);
-}
-
-.session-item.is-active {
-  background-color: var(--primary-light);
-}
-
-.session-item__name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  color: var(--text-main);
-}
-
-.session-item__count {
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.session-item__delete {
-  padding: 0 4px;
-  border: none;
-  background: transparent;
-  color: var(--text-placeholder);
-  cursor: pointer;
-}
-
-.session-item__delete:hover {
-  color: var(--error);
-}
-
-.ai-panel__messages {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-</style>

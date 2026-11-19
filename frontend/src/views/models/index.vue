@@ -1,6 +1,5 @@
 <!--
-  模型供应商页：供应商卡片列表（协议/模型/密钥掩码/默认标记/测试状态）+ 新建编辑抽屉 +
-  连通性测试。OpenAI 兼容协议支持对话与向量，Anthropic 协议仅支持对话。
+  模型供应商页：供应商卡片列表 + 新建编辑抽屉 + 连通性测试。系统仅用对话协议，不接入向量模型。
 -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -45,8 +44,6 @@ interface ProviderFormState {
   base_url: string
   api_key_text: string
   chat_model_name: string
-  embedding_model_name: string
-  embedding_dim: number
   temperature: number
   max_tokens: number
   enabled_flag: boolean
@@ -61,8 +58,6 @@ const formState = reactive<ProviderFormState>({
   base_url: '',
   api_key_text: '',
   chat_model_name: '',
-  embedding_model_name: '',
-  embedding_dim: 1024,
   temperature: 0.7,
   max_tokens: 2048,
   enabled_flag: true,
@@ -89,8 +84,6 @@ const formRules = computed<FormRules>(() => ({
   ],
 }))
 
-/** Anthropic 协议不支持向量模型（协议层限制，填写无效） */
-const embeddingDisabled = computed(() => formState.protocol_code === 'anthropic')
 
 /** 协议展示文案 */
 function protocolText(protocolCode: string): string {
@@ -136,8 +129,6 @@ function handleCreate(): void {
   formState.base_url = ''
   formState.api_key_text = ''
   formState.chat_model_name = ''
-  formState.embedding_model_name = ''
-  formState.embedding_dim = 1024
   formState.temperature = 0.7
   formState.max_tokens = 2048
   formState.enabled_flag = true
@@ -155,8 +146,6 @@ function handleEdit(providerVo: NWModelProviderVo): void {
   formState.base_url = providerVo.base_url
   formState.api_key_text = ''
   formState.chat_model_name = providerVo.chat_model_name
-  formState.embedding_model_name = providerVo.embedding_model_name
-  formState.embedding_dim = providerVo.embedding_dim || 1024
   formState.temperature = providerVo.temperature || 0.7
   formState.max_tokens = providerVo.max_tokens || 2048
   formState.enabled_flag = providerVo.enabled_flag
@@ -198,10 +187,6 @@ async function handleSubmit(): Promise<void> {
     if (formState.api_key_text.trim()) {
       saveReq.api_key_text = formState.api_key_text.trim()
     }
-    if (!embeddingDisabled.value && formState.embedding_model_name.trim()) {
-      saveReq.embedding_model_name = formState.embedding_model_name.trim()
-      saveReq.embedding_dim = formState.embedding_dim
-    }
     saveReq.temperature = formState.temperature
     saveReq.max_tokens = formState.max_tokens
     await saveModelProvider(saveReq)
@@ -242,8 +227,6 @@ async function handleSetDefault(providerVo: NWModelProviderVo): Promise<void> {
       protocol_code: providerVo.protocol_code,
       base_url: providerVo.base_url,
       chat_model_name: providerVo.chat_model_name,
-      embedding_model_name: providerVo.embedding_model_name || undefined,
-      embedding_dim: providerVo.embedding_dim || undefined,
       temperature: providerVo.temperature,
       max_tokens: providerVo.max_tokens,
       default_flag: true,
@@ -297,8 +280,7 @@ onMounted(() => {
       v-if="capabilityVo"
       class="models-page__capability"
       :class="{
-        'is-ready': capabilityVo.chat_ready && capabilityVo.embedding_ready,
-        'is-degraded': capabilityVo.chat_ready && !capabilityVo.embedding_ready,
+        'is-ready': capabilityVo.chat_ready,
         'is-down': !capabilityVo.chat_ready,
       }"
     >
@@ -342,21 +324,6 @@ onMounted(() => {
             <div>
               <dt>{{ t('models.chatModel') }}</dt>
               <dd>{{ providerVo.chat_model_name }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('models.embeddingModel') }}</dt>
-              <dd>
-                {{ providerVo.embedding_model_name || t('models.embeddingNone') }}
-                <template v-if="providerVo.embedding_model_name">
-                  ({{ providerVo.embedding_dim }})
-                </template>
-                <span
-                  v-if="providerVo.last_embed_status_code === 'failed'"
-                  class="provider-card__embed-failed"
-                >
-                  {{ t('models.embeddingProbeFailed') }}
-                </span>
-              </dd>
             </div>
             <div>
               <dt>{{ t('models.apiKey') }}</dt>
@@ -432,19 +399,6 @@ onMounted(() => {
         </el-form-item>
         <el-form-item :label="t('models.chatModel')" prop="chat_model_name">
           <el-input v-model="formState.chat_model_name" :placeholder="t('models.chatModelPlaceholder')" />
-        </el-form-item>
-        <el-form-item :label="t('models.embeddingModel')">
-          <el-input
-            v-model="formState.embedding_model_name"
-            :disabled="embeddingDisabled"
-            :placeholder="t('models.embeddingPlaceholder')"
-          />
-          <p class="models-form__hint">
-            {{ embeddingDisabled ? t('models.embeddingAnthropicHint') : t('models.embeddingHint') }}
-          </p>
-        </el-form-item>
-        <el-form-item v-if="!embeddingDisabled" :label="t('models.embeddingDim')">
-          <el-input-number v-model="formState.embedding_dim" :min="0" :max="8192" />
         </el-form-item>
         <div class="models-form__row">
           <el-form-item :label="t('models.temperature')">

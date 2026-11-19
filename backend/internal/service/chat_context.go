@@ -323,8 +323,8 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 	if strings.TrimSpace(userInput) != "" {
 		hits, err := s.knowledgeService.Search(ctx, userULID, &domain.KnowledgeSearchREQ{
 			ProjectULID: req.ProjectULID,
-			QueryText:   userInput,
-			SearchMode:  searchModeHybrid,
+			KeywordText: userInput,
+			SearchMode:  domain.SearchModeHybrid,
 			TopKCount:   s.config.RAGTopK,
 		})
 		if err != nil {

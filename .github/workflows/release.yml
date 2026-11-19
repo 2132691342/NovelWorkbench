@@ -21,6 +21,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # 后端镜像由 backend/Dockerfile 构建：CGO_ENABLED=0 静态编译（见该文件）
       - name: Backend image
         uses: docker/build-push-action@v6
         with:

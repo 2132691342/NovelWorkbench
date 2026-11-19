@@ -24,6 +24,5 @@ type SystemStatusVO struct {
 	BuildVersionText  string               `json:"build_version_text"`   // 构建版本
 	DependencyList    []DependencyHealthVO `json:"dependency_list"`      // 依赖健康列表
 	ChatReady         bool                 `json:"chat_ready"`           // 对话链路是否可用
-	EmbeddingReady    bool                 `json:"embedding_ready"`      // 向量链路是否可用
 	HintText          string               `json:"hint_text"`            // 面向运维的提示
 }

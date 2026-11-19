@@ -89,19 +89,19 @@ func (a *KnowledgeAPI) Delete(c *gin.Context) {
 	pkg.Ok(c, nil)
 }
 
-// Search 知识库检索（POST /knowledge/search）。
+// Search 知识库检索（POST /knowledge/search，返回检索结果与可解释检索过程）。
 func (a *KnowledgeAPI) Search(c *gin.Context) {
 	var req domain.KnowledgeSearchREQ
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondErr(c, "knowledge.search", bindErr(err))
 		return
 	}
-	vos, err := a.svc.Search(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), &req)
+	dto, err := a.svc.SearchWithTrace(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), &req)
 	if err != nil {
 		respondErr(c, "knowledge.search", err)
 		return
 	}
-	pkg.Ok(c, vos)
+	pkg.Ok(c, dto)
 }
 
 // Reindex 重投索引任务（POST /knowledge/reindex）。

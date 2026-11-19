@@ -3,15 +3,13 @@ package repo
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"gorm.io/gorm"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 )
 
-// KnowledgeRepo 知识库文档与切片持久化仓储（embedding_vec 读写走 pgvector raw SQL）。
+// KnowledgeRepo 知识库文档与切片持久化仓储（全文索引写入 Manticore）。
 type KnowledgeRepo struct {
 	db *gorm.DB
 }
@@ -130,54 +128,15 @@ func (r *KnowledgeRepo) DeleteChunksByDoc(ctx context.Context, docULID string) e
 	return nil
 }
 
-// InsertChunkWithVector 以 raw SQL 插入切片（embedding_vec 写 pgvector 列）。
-func (r *KnowledgeRepo) InsertChunkWithVector(ctx context.Context, do *domain.KnowledgeChunkDO) error {
-	sql := `INSERT INTO knowledge_chunks (chunk_ulid, doc_ulid, project_ulid, chunk_index, chunk_text, token_count, embedding_vec, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?::vector, NOW(), NOW())`
-	err := r.db.WithContext(ctx).Exec(sql,
-		do.ChunkULID, do.DocULID, do.ProjectULID, do.ChunkIndex, do.ChunkText, do.TokenCount,
-		vectorLiteral(do.EmbeddingVec),
-	).Error
-	if err != nil {
+// InsertChunk 插入一条文本切片（含内容哈希，全文索引由 Manticore 独立维护）。
+func (r *KnowledgeRepo) InsertChunk(ctx context.Context, do *domain.KnowledgeChunkDO) error {
+	if err := r.db.WithContext(ctx).Create(do).Error; err != nil {
 		return fmt.Errorf("insert knowledge chunk: %w", err)
 	}
 	return nil
 }
 
-// InsertChunkTextOnly 插入不含向量的切片（未配置向量模型时仅建关键词索引）。
-func (r *KnowledgeRepo) InsertChunkTextOnly(ctx context.Context, do *domain.KnowledgeChunkDO) error {
-	sql := `INSERT INTO knowledge_chunks (chunk_ulid, doc_ulid, project_ulid, chunk_index, chunk_text, token_count, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`
-	err := r.db.WithContext(ctx).Exec(sql,
-		do.ChunkULID, do.DocULID, do.ProjectULID, do.ChunkIndex, do.ChunkText, do.TokenCount,
-	).Error
-	if err != nil {
-		return fmt.Errorf("insert knowledge chunk without vector: %w", err)
-	}
-	return nil
-}
-
-// SearchByVector 按 pgvector 余弦距离召回最近切片（向量字面量在仓储内拼接，可限定文档范围）。
-func (r *KnowledgeRepo) SearchByVector(ctx context.Context, projectULID string, vector []float32, limit int, docULIDs []string) ([]domain.KnowledgeChunkVO, error) {
-	sql := `SELECT c.chunk_ulid, c.doc_ulid, d.doc_name, c.chunk_index, c.chunk_text
-		FROM knowledge_chunks c
-		JOIN knowledge_documents d ON d.doc_ulid = c.doc_ulid
-		WHERE c.project_ulid = ?`
-	args := []any{projectULID}
-	if len(docULIDs) > 0 {
-		sql += ` AND c.doc_ulid IN ?`
-		args = append(args, docULIDs)
-	}
-	sql += ` AND c.embedding_vec IS NOT NULL`
-	sql += fmt.Sprintf(` ORDER BY c.embedding_vec <=> '%s' LIMIT %d`, vectorLiteral(vector), limit)
-	var vos []domain.KnowledgeChunkVO
-	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&vos).Error; err != nil {
-		return nil, fmt.Errorf("search knowledge chunks by vector: %w", err)
-	}
-	return vos, nil
-}
-
-// GetChunksByULIDs 按切片 ULID 批量取切片（含文档名，供关键词通道回表）。
+// GetChunksByULIDs 按切片 ULID 批量取切片（含文档名，供全文检索回表）。
 func (r *KnowledgeRepo) GetChunksByULIDs(ctx context.Context, chunkULIDs []string) ([]domain.KnowledgeChunkVO, error) {
 	if len(chunkULIDs) == 0 {
 		return []domain.KnowledgeChunkVO{}, nil
@@ -201,7 +160,7 @@ func (r *KnowledgeRepo) ListChunksByDoc(ctx context.Context, docULID string, pag
 		return nil, 0, fmt.Errorf("count knowledge chunks: %w", err)
 	}
 	var dos []domain.KnowledgeChunkDO
-	err := query.Select("chunk_ulid", "doc_ulid", "project_ulid", "chunk_index", "chunk_text", "token_count", "created_at", "updated_at").
+	err := query.Select("chunk_ulid", "doc_ulid", "project_ulid", "chunk_index", "chunk_text", "token_count", "content_hash", "created_at", "updated_at").
 		Order("chunk_index ASC").
 		Offset((pageNum - 1) * pageSize).Limit(pageSize).
 		Find(&dos).Error
@@ -211,11 +170,13 @@ func (r *KnowledgeRepo) ListChunksByDoc(ctx context.Context, docULID string, pag
 	return dos, total, nil
 }
 
-// vectorLiteral 将向量格式化为 pgvector 字面量（'[0.1,0.2,...]'）。
-func vectorLiteral(vector []float32) string {
-	values := make([]string, len(vector))
-	for i, value := range vector {
-		values[i] = strconv.FormatFloat(float64(value), 'f', -1, 32)
+// ListChunksByDocAll 查询文档下全部切片（含内容哈希，供重索引增量复用）。
+func (r *KnowledgeRepo) ListChunksByDocAll(ctx context.Context, docULID string) ([]domain.KnowledgeChunkDO, error) {
+	var dos []domain.KnowledgeChunkDO
+	if err := r.db.WithContext(ctx).Model(&domain.KnowledgeChunkDO{}).
+		Where("doc_ulid = ?", docULID).
+		Order("chunk_index ASC").Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list knowledge chunks by document: %w", err)
 	}
-	return "[" + strings.Join(values, ",") + "]"
+	return dos, nil
 }

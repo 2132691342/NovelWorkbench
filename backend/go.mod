@@ -4,7 +4,6 @@ go 1.24.1
 
 require (
 	github.com/cloudwego/eino v0.9.23
-	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20261109121412-fa3cb9b7ad6a
 	github.com/cloudwego/eino-ext/components/model/claude v0.1.26
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.14-0.20261109121412-fa3cb9b7ad6a
 	github.com/gin-contrib/cors v1.7.6

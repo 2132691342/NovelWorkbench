@@ -1,236 +1,159 @@
-# 数据库设计
+# 数据存储设计
 
-存储分四类：PostgreSQL（业务数据 + pgvector 向量）、MinIO（文档原文）、Manticore（切片全文索引）、Redis（令牌黑名单）。本文只描述 PostgreSQL 侧表结构；表由 gorm AutoMigrate 建立，主键均为带业务前缀的 ULID 字符串（`varchar(40)`）。
+## 1. 存储分工
 
-公共字段：所有表含 `created_at`、`updated_at`（gorm 自动维护）。
+NovelWorkbench 使用五种存储，各自承担明确职责：
 
-## 1. 表总览
+| 存储 | 职责 | 权威级别 |
+| --- | --- | --- |
+| PostgreSQL 16 | 业务主数据、权限、统计、任务状态 | 权威源 |
+| MinIO | 知识库文档原文、导出文件 | 权威源（文件） |
+| Manticore | 知识切片全文索引 | 可重建投影 |
+| Redis | JWT 黑名单、短时状态 | 易失缓存 |
+| RabbitMQ | 知识库索引任务 | 传输通道 |
 
-| 表名 | 实体 | 前缀 | 说明 |
-| --- | --- | --- | --- |
-| users | 用户 | USR_ | 账号与凭据 |
-| roles | 角色 | ROL_ | RBAC 角色（权限码 JSON） |
-| user_roles | 用户-角色 | URO_ | 关联表 |
-| audit_logs | 审计日志 | AUD_ | 变更操作留痕 |
-| projects | 小说项目 | PRJ_ | 创作主线根聚合 |
-| volumes | 卷 | VOL_ | 项目下的分卷 |
-| chapters | 章节 | CHP_ | 正文载体 |
-| chapter_snapshots | 章节快照 | SNP_ | 修改前留档/回滚 |
-| characters | 角色卡 | CHR_ | 人物设定 |
-| character_relations | 角色关系 | RLT_ | 关系图谱边 |
-| lore_settings | 世界观设定 | LOR_ | 规则/地点/物品/事件 |
-| knowledge_documents | 知识库文档 | DOC_ | 上传文档元数据 |
-| knowledge_chunks | 知识库切片 | CHK_ | 向量 + 文本 |
-| chat_sessions | AI 会话 | SES_ | 对话容器 |
-| chat_messages | 聊天消息 | MSG_ | 消息与引用记录 |
-| slash_commands | 斜杠命令 | SKL_ | 技能（提示词资产） |
-| jobs | 异步任务 | JOB_ | 队列任务落库凭据 |
-| app_settings | 应用配置 | SET_ | 运行时 KV 配置 |
-| word_count_stats | 字数统计 | WCS_ | 每日字数增量 |
-| model_providers | 模型供应商 | MPR_ | 协议/网关/密钥密文/模型名 |
-| model_usage_stats | 模型用量 | MUS_ | 日 × 供应商 × 模型 × 调用类型聚合 |
+系统不接入向量模型，不使用 pgvector 存储业务向量。PostgreSQL 只存关系数据与文本；检索语义由关键词切词、查询构造、融合排序与 chat 模型重排承担。
 
-## 2. 核心表结构
+## 2. 命名约定
 
-### users
+| 对象 | 约定 | 示例 |
+| --- | --- | --- |
+| 表名 | 复数 snake_case | `projects`、`knowledge_chunks` |
+| 主键 | 业务前缀 + 26 位 ULID | `PRJ_01HZX...`、`CHP_01HZX...` |
+| 外键 | 以 `_ulid` 结尾 | `project_ulid`、`chapter_ulid` |
+| 状态字段 | 以 `_code` 结尾 | `chapter_status_code` |
+| 数量字段 | 以 `_count` 结尾 | `word_count` |
+| 时间字段 | GORM `CreatedAt`/`UpdatedAt` 或毫秒时间戳 VO | `created_at_ms` |
+| 布尔字段 | 以 `_flag` 结尾 | `is_default_flag` |
 
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| user_ulid | varchar(40) | PK | 用户 ULID |
-| user_name | varchar(64) | UNIQUE | 登录名 |
-| user_email | varchar(128) | UNIQUE | 邮箱 |
-| password_hash | varchar(128) | | bcrypt 哈希，JSON 不输出 |
-| avatar_url | varchar(256) | | 头像 |
-| remark_text | varchar(256) | | 备注 |
-| user_status_code | varchar(16) | INDEX | active/disabled，DB 默认 active |
+所有主键前缀集中在 `domain/common.go`：`USR_`、`PRJ_`、`VOL_`、`CHP_`、`SNP_`、`CHR_`、`LOR_`、`DOC_`、`CHK_`、`SES_`、`MSG_`、`SKL_`、`JOB_`、`ROL_`、`AUD_`、`MPR_`、`MUS_` 等。
 
-### projects
+## 3. 核心表
 
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| project_ulid | varchar(40) | PK | 项目 ULID |
-| user_ulid | varchar(40) | INDEX | 归属用户 |
-| project_name | varchar(128) | | 书名 |
-| genre_code | varchar(32) | | 题材编码 |
-| style_text | varchar(1024) | | 文风设定（注入 AI 系统提示） |
-| synopsis_text | varchar(4096) | | 简介 |
-| project_status | varchar(16) | INDEX | draft/serial/completed |
-| total_word_count | bigint | | 累计字数（章节增删改联动维护） |
-
-### volumes
-
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| volume_ulid | varchar(40) | PK | 卷 ULID |
-| project_ulid | varchar(40) | INDEX | 归属项目 |
-| volume_name | varchar(128) | | 卷名 |
-| volume_order | int | | 排序号 |
-| summary_text | varchar(2048) | | 卷概要 |
-
-### chapters
-
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| chapter_ulid | varchar(40) | PK | 章节 ULID |
-| project_ulid | varchar(40) | INDEX | 归属项目 |
-| volume_ulid | varchar(40) | INDEX | 归属卷 |
-| chapter_name | varchar(128) | | 章节名 |
-| chapter_order | int | INDEX | 排序号（项目内升序） |
-| content_text | text | | 正文 |
-| summary_text | varchar(2048) | | 梗概 |
-| word_count | bigint | | 字数（CJK 逐字 + 拉丁按词） |
-| chapter_status | varchar(16) | | draft/revised/locked |
-
-### chapter_snapshots
-
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| snapshot_ulid | varchar(40) | PK | 快照 ULID |
-| chapter_ulid | varchar(40) | INDEX | 所属章节 |
-| content_text | text | | 快照正文 |
-| snapshot_type | varchar(16) | | manual/auto_restore |
-| change_note | varchar(256) | | 变更说明 |
-
-### characters / character_relations
+### 3.1 用户与权限
 
 | 表 | 关键字段 | 说明 |
 | --- | --- | --- |
-| characters | character_ulid(PK)、project_ulid(INDEX)、character_name、alias_text、role_type_code、personality_text、background_text、appearance_text、goal_text | 角色卡 |
-| character_relations | relation_ulid(PK)、project_ulid、from_character_ulid(INDEX)、to_character_ulid(INDEX)、relation_type_code、relation_note | 有向关系边，供 AntV X6 渲染 |
+| `users` | `user_ulid`、`user_name`、`user_email`、`password_hash`、`user_status_code` | 用户账号 |
+| `roles` | `role_ulid`、`role_code`、`permission_codes` | 角色与权限码集合 |
+| `user_roles` | `user_ulid`、`role_ulid` | 用户角色关联 |
+| `audit_logs` | `audit_ulid`、`operator_ulid`、`action_code`、`resource_text`、`created_at` | 写操作审计 |
 
-### lore_settings
+管理员引导：用户表为空时用配置中的初始密码创建 admin 用户，之后不再覆盖。密码使用 bcrypt，API 永不返回哈希。
 
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| lore_ulid | varchar(40) | PK | 设定 ULID |
-| project_ulid | varchar(40) | INDEX | 归属项目 |
-| lore_name | varchar(128) | | 设定名 |
-| lore_type_code | varchar(16) | INDEX | world/rule/item/place/event/note（note=创作笔记，不注入 AI 上下文） |
-| content_text | text | | 设定内容 |
-| sort_order | int | | 排序号 |
-
-### knowledge_documents / knowledge_chunks
+### 3.2 创作主数据
 
 | 表 | 关键字段 | 说明 |
 | --- | --- | --- |
-| knowledge_documents | doc_ulid(PK)、project_ulid(INDEX)、doc_name、doc_type_code、object_key（MinIO 键）、doc_status_code(INDEX)、chunk_count、total_token_count、error_message | 文档元数据与索引状态机 |
-| knowledge_chunks | chunk_ulid(PK)、doc_ulid(INDEX)、project_ulid(INDEX)、chunk_index、chunk_text、token_count、embedding_vec vector(1024) | 切片；向量列由 pgvector 提供 |
+| `projects` | `project_ulid`、`owner_user_ulid`、`project_name`、`genre_code`、`style_text`、`synopsis_text`、`project_status_code` | 小说项目 |
+| `volumes` | `volume_ulid`、`project_ulid`、`volume_name`、`volume_order_no`、`synopsis_text` | 卷 |
+| `chapters` | `chapter_ulid`、`volume_ulid`、`project_ulid`、`chapter_name`、`chapter_order_no`、`content_text`、`word_count`、`chapter_status_code` | 章节 |
+| `chapter_snapshots` | `snapshot_ulid`、`chapter_ulid`、`content_text`、`word_count`、`snapshot_reason` | 章节快照 |
+| `characters` | `character_ulid`、`project_ulid`、`character_name`、`role_code`、`personality_text`、`goal_text`、`secret_text`、`voice_text`、`current_state_text` | 角色卡 |
+| `character_relations` | `relation_ulid`、`project_ulid`、`from_character_ulid`、`to_character_ulid`、`relation_text` | 角色关系边 |
+| `lore_entries` | `lore_ulid`、`project_ulid`、`lore_type_code`、`lore_name`、`content_text`、`sort_no` | 世界观设定 |
+| `notes` | `note_ulid`、`project_ulid`、`note_title`、`content_html` | 创作笔记（不进 AI 上下文） |
 
-依赖：建表前置 `CREATE EXTENSION IF NOT EXISTS vector`。
+项目是隔离边界：所有创作表都有 `project_ulid`，查询必须带项目条件。章节同时冗余 `project_ulid`，避免多表 join 才能鉴权。
 
-### chat_sessions / chat_messages
+字数统计：`chapters.word_count` 存放当前字数；`word_count_stats` 按项目与日期记录人工/AI 净增，支撑趋势图。
 
-| 表 | 关键字段 | 说明 |
-| --- | --- | --- |
-| chat_sessions | session_ulid(PK)、project_ulid(INDEX)、user_ulid(INDEX)、session_name | 会话 |
-| chat_messages | message_ulid(PK)、session_ulid(INDEX)、role_code、content_text、skill_code、ref_doc_json、ref_chapter_json、ref_message_json、token_used_count | 消息；三列 JSON 记录 @引用 与历史引用，供追溯 |
-
-### slash_commands
-
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| command_ulid | varchar(40) | PK | 命令 ULID |
-| command_code | varchar(32) | UNIQUE | 触发编码（`/code`） |
-| command_name | varchar(64) | | 展示名 |
-| category_code | varchar(16) | | write/revise/outline/setting/other |
-| description_text | varchar(256) | | 一句话说明 |
-| prompt_template | text | | 提示词模板（`{{占位符}}`） |
-| enabled_flag | bool | | 启用开关 |
-| builtin_flag | bool | | 内置（内置不可删） |
-| sort_order | int | | 排序号 |
-
-### roles / user_roles / audit_logs
-
-| 表 | 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- | --- |
-| roles | role_ulid | varchar(40) | PK | 角色 ULID |
-| roles | role_code | varchar(64) | UNIQUE | 角色编码（admin/user 或自定义） |
-| roles | role_name | varchar(64) | | 角色名称 |
-| roles | remark_text | varchar(256) | | 备注 |
-| roles | perm_codes_json | text | | 权限码 JSON 数组（`["*"]` 通配全部） |
-| roles | builtin_flag | boolean | | 内置角色不可删、编码不可改 |
-| user_roles | user_role_ulid | varchar(40) | PK | 关联 ULID |
-| user_roles | user_ulid | varchar(40) | INDEX | 用户 ULID |
-| user_roles | role_ulid | varchar(40) | INDEX | 角色 ULID |
-| audit_logs | audit_ulid | varchar(40) | PK | 审计 ULID |
-| audit_logs | user_ulid | varchar(40) | INDEX | 操作用户（未登录为空） |
-| audit_logs | user_name | varchar(64) | INDEX | 操作用户登录名（写入时回填） |
-| audit_logs | action_code | varchar(128) | INDEX | 动作码（去前缀接口路径） |
-| audit_logs | target_type | varchar(32) | | 目标类型（user/role/... 白名单） |
-| audit_logs | target_ulid | varchar(40) | INDEX | 目标 ULID |
-| audit_logs | detail_text | varchar(512) | | 补充信息（响应状态） |
-| audit_logs | ip_addr | varchar(64) | | 客户端 IP |
-
-角色授权以 `user_roles` 整体覆盖方式维护（先删后插，事务内）；权限判定按用户角色的权限码并集，`*` 通配。审计由中间件在请求出口同步落库，失败仅告警不阻断业务。
-
-### jobs / app_settings / word_count_stats
+### 3.2.1 创作规划与连续性
 
 | 表 | 关键字段 | 说明 |
 | --- | --- | --- |
-| jobs | job_ulid(PK)、job_type_code(INDEX)、payload_json、job_status_code(INDEX)、retry_count、error_message | 队列任务留痕（queued/running/success/failed） |
-| app_settings | setting_ulid(PK)、setting_key(UNIQUE)、setting_value、setting_desc | 运行时配置（如历史注入条数） |
-| word_count_stats | word_stat_ulid(PK)、project_ulid(INDEX)、stat_date(INDEX)、word_delta、ai_word_delta | 每日字数增量，ECharts 数据源 |
+| `outline_nodes` | `outline_ulid`、`project_ulid`、`parent_outline_ulid`、`node_type_code`、`node_title`、`summary_text`、`sort_order` | 大纲树节点 |
+| `detailed_scenes` | `scene_ulid`、`outline_ulid`、`project_ulid`、`character_ulid_list`、`location_text`、`conflict_text`、`pace_code`、`entry_state_text`、`goal_text`、`key_choice_text`、`outcome_text`、`exit_state_text` | 场景卡 |
+| `temporal_facts` | `fact_ulid`、`project_ulid`、`subject_text`、`predicate_code`、`object_text`、`fact_status_code`、`valid_from_chapter_ulid`、`source_chapter_ulid`、`source_quote_text` | 时序事实账本 |
+| `foreshadow_hooks` | `hook_ulid`、`project_ulid`、`hook_type_code`、`description_text`、`expected_payoff_text`、`setup_chapter_ulid`、`payoff_chapter_ulid`、`importance_no` | 伏笔跟踪 |
+| `chapter_summaries` | `summary_ulid`、`project_ulid`、`chapter_ulid`、`summary_text`、`source_hash`、`summary_status_code` | 章节摘要与失效标记 |
 
-### model_providers
+以上表全部带 `project_ulid`，查询与写入都由 service 做项目归属校验。事实与伏笔状态采用显式审计字段，AI 产出默认只生成候选，不直接覆盖正式账本。
 
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| provider_ulid | varchar(40) | PK | 供应商 ULID（MPR_） |
-| provider_name | varchar(64) | | 供应商名称（展示） |
-| protocol_code | varchar(16) | INDEX | openai / anthropic |
-| base_url | varchar(256) | | OpenAI 兼容含 `/v1`；Anthropic 为根地址 |
-| api_key_cipher | varchar(512) | | AES-256-GCM 密文（`json:"-"`，永不输出） |
-| chat_model_name | varchar(128) | | 对话模型名 |
-| embedding_model_name | varchar(128) | | 向量模型名（空 = 不提供向量） |
-| embedding_dim | int | | 向量维度（默认 1024，与 `knowledge_chunks.embedding_vec` 一致） |
-| temperature / max_tokens | float8 / int | | 采样温度、输出上限 |
-| enabled_flag | boolean | | 是否启用 |
-| default_flag | boolean | INDEX | 默认供应商（服务层保证全局唯一） |
-| sort_order | int | | 排序号 |
-| remark_text | varchar(256) | | 备注 |
-| last_test_status_code | varchar(16) | | untested/success/failed |
-| last_test_message | varchar(512) | | 最近测试结论（含向量通道结论） |
-| last_test_at_ms | bigint | | 最近测试时间（毫秒） |
+### 3.3 AI 与技能
 
-启动期若供应商表为空，按 `ai.*` 配置播种一条默认供应商（"出厂默认"，之后全在页面上管理）。
-
-### model_usage_stats
-
-| 字段 | 类型 | 约束 | 说明 |
-| --- | --- | --- | --- |
-| usage_stat_ulid | varchar(40) | PK | 统计 ULID（MUS_） |
-| stat_date | varchar(10) | 联合唯一 | 统计日期 YYYY-MM-DD |
-| provider_ulid | varchar(40) | 联合唯一 | 供应商 ULID |
-| provider_name | varchar(64) | | 供应商名称快照（防改名丢历史） |
-| model_name | varchar(128) | 联合唯一 | 模型名 |
-| call_type_code | varchar(16) | 联合唯一 | chat / embedding |
-| call_count / success_count / fail_count | bigint | | 调用、成功、失败计数 |
-| prompt_tokens / completion_tokens / total_tokens | bigint | | token 累计（流式结束后补记真实 usage，缺省按字数估算） |
-| latency_ms_sum | bigint | | 耗时累计（查询时除以 call_count 得均值） |
-
-唯一索引 `uk_mus_dim(stat_date, provider_ulid, model_name, call_type_code)`；写入为内存缓冲 5 秒聚合后 `ON CONFLICT DO UPDATE` 累加，避免高频小请求写放大。
-
-## 3. 非关系存储
-
-| 存储 | 内容 | 键/表设计 |
+| 表 | 关键字段 | 说明 |
 | --- | --- | --- |
-| MinIO | 文档原文 | 桶 `novelworkbench`，对象键 = `doc_ulid`（`GET /knowledge/content` 按需取回） |
-| Manticore | 切片全文索引 | 表 `nw_chunks`（chunk_ulid string 主键、doc_ulid/project_ulid string 属性、chunk_text text）；`charset_table=non_cjk,...` + `ngram_len=1` + `ngram_chars=cjk` 支持中文子串检索；旧结构启动时自动重建并从 PG 切片回灌 |
-| Redis | 令牌黑名单 | `nw:token:blacklist:<sha256(token)>` = "1"，TTL = 令牌剩余寿命 |
+| `model_providers` | `provider_ulid`、`provider_name`、`protocol_code`、`base_url`、`api_key_cipher`、`chat_model_name`、`is_default_flag`、`enabled_flag` | 模型供应商 |
+| `model_usage_stats` | `usage_ulid`、`provider_ulid`、`model_name`、`call_type_code`、`call_count`、`token_count`、`success_count`、`avg_latency_ms`、`stat_date` | 用量日聚合 |
+| `chat_sessions` | `session_ulid`、`project_ulid`、`user_ulid`、`session_name` | AI 会话 |
+| `chat_messages` | `message_ulid`、`session_ulid`、`role_code`、`content_text`、`reference_json`、`token_estimate` | 会话消息 |
+| `slash_commands` | `command_ulid`、`command_code`、`prompt_template`、`builtin_flag`、`enabled_flag` | 斜杠技能 |
 
-列命名约定：所有 `XxxULID` 字段显式 `column:xxx_ulid`（并由 `infra.ULIDNamingStrategy` 兜底归一），与手写 SQL、JSON 命名严格一致。
+密钥使用 AES-256-GCM 加密，主密钥来自环境变量；API 只返回掩码。供应商按 `protocol_code` 分为 `openai` 与 `anthropic`，支持任意兼容网关。
 
-## 4. 一致性与并发
+### 3.4 知识库与任务
 
-- 章节字数变更（创建/更新/删除/快照回滚）与 `projects.total_word_count`、`word_count_stats` 同事务写入（`repo.WithTx`），杜绝字数漂移。
-- 归属校验在 service 层统一做：用户 → 项目（user_ulid）→ 卷/章/角色/设定/文档（project_ulid），违规返回 `ERR_FORBIDDEN`，不存在返回 `ERR_NOT_FOUND`。
-- 文档索引状态机单向流转：`pending → indexing → indexed/failed`；`reindex` 仅对 `indexed/failed` 开放，重复投递幂等（切片按 doc_ulid 先清后写）。
-- 级联删除矩阵（`repo.WithTx` 单事务；外部存储在事务提交后 best-effort 清理并告警）：
-
-| 触发 | 同事务删除 | 外部清理 |
+| 表 | 关键字段 | 说明 |
 | --- | --- | --- |
-| 删除项目 | 快照 → 章节 → 卷 → 角色关系 → 角色 → 设定 → 聊天消息 → 会话 → 切片 → 文档 → 每日统计 → 项目 | MinIO 原文 + Manticore 切片 |
-| 删除卷 | 快照 → 章节 → 卷，并按章节字数合计回补项目字数 | 无 |
-| 删除章节 | 快照 → 章节，并回补项目字数 | 无 |
-| 删除文档 | 切片 → 文档 | MinIO 原文 + Manticore 切片 |
-| 删除会话 | 消息 → 会话 | 无 |
+| `knowledge_documents` | `doc_ulid`、`project_ulid`、`doc_name`、`object_key`、`file_size`、`index_status_code`、`chunk_count`、`error_message` | 文档与索引状态 |
+| `knowledge_chunks` | `chunk_ulid`、`doc_ulid`、`project_ulid`、`chunk_index`、`chunk_text`、`token_count`、`content_hash` | 文档切片 |
+| `jobs` | `job_ulid`、`job_type_code`、`payload_json`、`job_status_code`、`retry_count`、`error_message` | 异步任务留痕 |
+
+索引状态机：`pending → indexing → indexed`；失败为 `failed`，可通过 `reindex` 重新投递。切片内容哈希用于判断是否需要重建 Manticore 索引。
+
+## 4. 非关系存储
+
+### 4.1 MinIO
+
+桶由配置 `minio.bucket` 指定，对象键使用 `doc_ulid` 作为前缀，避免文件名冲突：
+
+```
+knowledge/<doc_ulid>/<original_file_name>
+```
+
+上传接口先写对象存储，再落库；删除接口同时清理对象与索引。原文预览支持 txt/md 直接渲染，docx/pdf 通过前端组件渲染。
+
+### 4.2 Manticore
+
+检索表由 `manticore.table_chunks` 指定，HTTP JSON API 写索引与查询。核心字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `chunk_ulid` | string | 切片 ULID |
+| `doc_ulid` | string | 文档 ULID |
+| `project_ulid` | string | 项目 ULID |
+| `chunk_text` | text | 切片文本（CJK ngram） |
+| `keyword_text` | string | 抽取关键词 |
+| `content_hash` | string | 内容哈希 |
+
+中文检索使用 ngram（`ngram_len=1`、`ngram_chars=cjk`），使单字与二字词都能召回。检索结果只作为候选，权威文本从 PostgreSQL 读取。
+
+### 4.3 Redis
+
+- `nw:token:blacklist:<sha256(token)>`：登出令牌黑名单，TTL 为令牌剩余有效期。
+- 其他短时状态只在确有收益时使用；不做持久化业务数据。
+
+### 4.4 RabbitMQ
+
+队列 `nw_doc_index` 承载知识库索引任务。消息体是 `KnowledgeIndexJobDTO`，包含文档 ULID、项目 ULID、操作类型与重试次数。消费者失败时更新 `jobs` 与文档状态，最多重试 3 次；毒消息记录原因后确认，避免无限阻塞。
+
+## 5. 事务与一致性
+
+| 场景 | 策略 |
+| --- | --- |
+| 项目删除 | 软删除或级联删除由 service 明确控制，避免误删其他项目 |
+| 章节更新 | 先写正文与字数，再按需写统计；统计失败只告警 |
+| 文档上传 | MinIO 写成功再落库；落库失败删除已写对象 |
+| 索引任务 | 先写 jobs，再投递 MQ；投递失败标记任务失败 |
+| AI 消息 | 流式结束或取消后落库，避免半成品消息污染历史 |
+| 用量统计 | 内存缓冲 5 秒批量落库，进程退出前 flush |
+
+## 6. 索引与查询约束
+
+- 所有业务查询必须携带 `project_ulid` 或可推导的项目上下文。
+- 列表查询统一分页：`page_num` 从 1 开始，`page_size` 默认 20，最大 100。
+- 模糊查询不做全表扫描优先：角色、设定、知识库都有项目范围与关键词条件。
+- 时间排序使用 ULID 的时间有序性或 `created_at` 索引。
+- Manticore 索引可以整体删除重建；重建期间检索降级为数据库文本匹配（数据量小），不阻塞写作。
+
+## 7. 数据迁移
+
+启动时通过 GORM `AutoMigrate` 创建/更新表结构；生产变更按顺序追加，不静默删列。新增字段必须可空或有默认值，保证旧数据可用。结构变化涉及检索字段时，必须提供 reindex 入口重建 Manticore 投影。
+
+## 8. 备份与恢复
+
+- PostgreSQL：定期逻辑备份（`pg_dump`），保留项目主数据与任务状态。
+- MinIO：桶版本控制或定期同步；文档原文是业务资产，必须与数据库一起备份。
+- Manticore、Redis：视为可重建/易失数据，不纳入主备份。
+- 恢复顺序：PostgreSQL → MinIO → 触发知识库 reindex → 校验运行状态页。

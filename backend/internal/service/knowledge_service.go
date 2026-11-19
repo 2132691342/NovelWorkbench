@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -16,15 +17,6 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
 	"github.com/2132691342/NovelWorkbench/backend/internal/repo"
 )
-
-// searchModeVector 语义检索通道。
-const searchModeVector = "vector"
-
-// searchModeKeyword 全文检索通道。
-const searchModeKeyword = "keyword"
-
-// searchModeHybrid 混合检索通道（默认，RRF 融合）。
-const searchModeHybrid = "hybrid"
 
 // rrfRankConstant RRF 融合常数（score = Σ 1/(60+rank)）。
 const rrfRankConstant = 60.0
@@ -102,7 +94,6 @@ func (s *KnowledgeService) Upload(ctx context.Context, userULID string, req *dom
 		return domain.KnowledgeDocumentVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "文档记录创建失败", err)
 	}
 	if err := s.enqueueIndexJob(ctx, "doc_index", docULID); err != nil {
-		// 投递失败文档留库可重投，状态置 failed 供前端提示
 		_ = s.knowledgeRepo.UpdateDocument(ctx, docULID, map[string]any{"doc_status_code": "failed", "error_message": "索引任务投递失败"})
 		return domain.KnowledgeDocumentVO{}, err
 	}
@@ -162,49 +153,104 @@ func (s *KnowledgeService) Reindex(ctx context.Context, userULID string, req *do
 	return s.enqueueIndexJob(ctx, "doc_reindex", doc.DocULID)
 }
 
-// Search 检索知识库（vector/keyword/hybrid；hybrid 默认 RRF 融合，单通道失败自动降级）。
+// Search 检索知识库（keyword/hybrid），供 RAG 与前端共用。
 func (s *KnowledgeService) Search(ctx context.Context, userULID string, req *domain.KnowledgeSearchREQ) ([]domain.KnowledgeChunkVO, error) {
-	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID); err != nil {
+	dto, err := s.SearchWithTrace(ctx, userULID, req)
+	if err != nil {
 		return nil, err
 	}
-	mode := req.SearchMode
-	if mode == "" {
-		mode = searchModeHybrid
+	return dto.ResultList, nil
+}
+
+// SearchWithTrace 检索并返回可解释的检索过程（query 构造、候选规模、入选 ID 与通道）。
+func (s *KnowledgeService) SearchWithTrace(ctx context.Context, userULID string, req *domain.KnowledgeSearchREQ) (domain.KnowledgeSearchDTO, error) {
+	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID); err != nil {
+		return domain.KnowledgeSearchDTO{}, err
+	}
+	mode := normalizeSearchMode(req.SearchMode)
+	query := strings.TrimSpace(req.KeywordText)
+	if query == "" {
+		return domain.KnowledgeSearchDTO{}, pkg.NewBizError(domain.RespCodeInvalidParam, "keyword_text 不能为空")
 	}
 	topK := req.TopKCount
 	if topK <= 0 {
 		topK = s.config.RAGTopK
 	}
-	if err := validateSearchREQ(mode, req); err != nil {
-		return nil, err
+	terms := extractQueryTerms(query)
+	if len(terms) == 0 {
+		terms = []string{query}
 	}
-	switch mode {
-	case searchModeVector:
-		hits, err := s.searchVectorChannel(ctx, req, topK)
-		if err != nil {
-			return nil, err
-		}
-		return fuseSearchResults(hits, nil, topK), nil
-	case searchModeKeyword:
-		hits, err := s.searchKeywordChannel(ctx, req, topK)
-		if err != nil {
-			return nil, err
-		}
-		return fuseSearchResults(nil, hits, topK), nil
-	default:
-		vectorHits, vectorErr := s.searchVectorChannel(ctx, req, topK)
-		keywordHits, keywordErr := s.searchKeywordChannel(ctx, req, topK)
-		if vectorErr != nil && keywordErr != nil {
-			return nil, vectorErr
-		}
-		if vectorErr != nil {
-			pkg.SLogger().Warnw("向量通道失败，降级 keyword", "error", vectorErr)
-		}
-		if keywordErr != nil {
-			pkg.SLogger().Warnw("关键词通道失败，降级 vector", "error", keywordErr)
-		}
-		return fuseSearchResults(vectorHits, keywordHits, topK), nil
+	trace := domain.KnowledgeSearchTrace{
+		QueryTerms:  terms,
+		SourceMode:  mode,
+		SelectedIDs: []string{},
 	}
+	candidateReq := &domain.KnowledgeSearchREQ{
+		ProjectULID: req.ProjectULID,
+		KeywordText: query,
+		DocULIDList: req.DocULIDList,
+	}
+	termHits, termErr := s.searchKeywordChannel(ctx, candidateReq, topK, "term")
+	if mode == domain.SearchModeKeyword {
+		if termErr != nil {
+			return domain.KnowledgeSearchDTO{}, termErr
+		}
+		results := s.maybeRerank(ctx, terms[0], termHits, topK, &trace)
+		trace.QueryExpr = strings.Join(terms, " | ")
+		trace.CandidateCount = len(termHits)
+		trace.SelectedIDs = selectedIDs(results)
+		return domain.KnowledgeSearchDTO{ResultList: results, Trace: trace}, nil
+	}
+	phraseHits, phraseErr := s.searchKeywordChannel(ctx, candidateReq, topK, "phrase")
+	if termErr != nil && phraseErr != nil {
+		return domain.KnowledgeSearchDTO{}, termErr
+	}
+	if termErr != nil {
+		pkg.SLogger().Warnw("词条通道失败，降级短语通道", "error", termErr)
+	}
+	if phraseErr != nil {
+		pkg.SLogger().Warnw("短语通道失败，降级词条通道", "error", phraseErr)
+	}
+	trace.QueryExpr = strings.Join(terms, " | ")
+	trace.CandidateCount = len(termHits) + len(phraseHits)
+	hits := fuseSearchResults(termHits, phraseHits, topK+8)
+	results := s.maybeRerank(ctx, terms[0], hits, topK, &trace)
+	trace.SelectedIDs = selectedIDs(results)
+	return domain.KnowledgeSearchDTO{ResultList: results, Trace: trace}, nil
+}
+
+// maybeRerank 用默认对话模型对候选 ID 重排（失败时 fail-open 保留原顺序）。
+func (s *KnowledgeService) maybeRerank(ctx context.Context, query string, hits []domain.KnowledgeChunkVO, topK int, trace *domain.KnowledgeSearchTrace) []domain.KnowledgeChunkVO {
+	if len(hits) == 0 || s.aiClient == nil || s.providerSvc == nil {
+		trace.RerankNote = "未配置重排模型，按检索得分排序"
+		return trimHits(hits, topK)
+	}
+	spec, err := s.providerSvc.ChatSpec(ctx)
+	if err != nil {
+		trace.RerankNote = "重排跳过：" + err.Error()
+		return trimHits(hits, topK)
+	}
+	candidates := make([]ai.RerankCandidate, 0, len(hits))
+	for _, hit := range hits {
+		candidates = append(candidates, ai.RerankCandidate{ID: hit.ChunkULID, Text: truncateRunes(hit.ChunkText, 160)})
+	}
+	rerankCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	ids, note := s.aiClient.Rerank(rerankCtx, spec, query, candidates)
+	trace.Reranked = note == "reranked by chat model"
+	trace.RerankNote = note
+	byID := make(map[string]domain.KnowledgeChunkVO, len(hits))
+	for _, hit := range hits {
+		byID[hit.ChunkULID] = hit
+	}
+	ordered := make([]domain.KnowledgeChunkVO, 0, len(hits))
+	for _, id := range ids {
+		if hit, ok := byID[id]; ok {
+			hit.SourceMode = domain.SearchModeHybrid
+			ordered = append(ordered, hit)
+		}
+	}
+	return trimHits(ordered, topK)
 }
 
 // ChunkList 分页查询文档切片。
@@ -250,45 +296,9 @@ func (s *KnowledgeService) GetContent(ctx context.Context, userULID string, req 
 	return domain.KnowledgeContentDTO{DocName: doc.DocName, DocTypeCode: doc.DocTypeCode, ContentBytes: contentBytes}, nil
 }
 
-// searchVectorChannel 向量通道：按可用向量供应商把查询文本向量化后，用 pgvector 余弦距离召回。
-// 未配置向量模型时返回明确错误，由上层按模式降级（hybrid 自动退回关键词通道）。
-func (s *KnowledgeService) searchVectorChannel(ctx context.Context, req *domain.KnowledgeSearchREQ, topK int) ([]domain.KnowledgeChunkVO, error) {
-	spec, available, err := s.providerSvc.EmbeddingSpec(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !available {
-		return nil, pkg.NewBizError(domain.RespCodeAIProviderError, "未配置可用的向量模型，暂时无法使用语义检索")
-	}
-	vectors, err := s.aiClient.Embed(ctx, spec, []string{req.QueryText})
-	if err != nil {
-		return nil, pkg.WrapBizError(domain.RespCodeAIProviderError, "查询向量化失败", err)
-	}
-	if len(vectors) == 0 {
-		return nil, pkg.NewBizError(domain.RespCodeAIProviderError, "查询向量化失败")
-	}
-	hits, err := s.knowledgeRepo.SearchByVector(ctx, req.ProjectULID, vectors[0], topK, req.DocULIDList)
-	if err != nil {
-		return nil, pkg.WrapBizError(domain.RespCodeStorageError, "向量检索失败", err)
-	}
-	if hits == nil {
-		hits = []domain.KnowledgeChunkVO{}
-	}
-	return hits, nil
-}
-
-// searchKeywordChannel 关键词通道：Manticore 全文命中后回表取切片原文。
-// hybrid/vector 请求可能只给 query_text，此时关键词通道回退用 query_text 建 MATCH。
-func (s *KnowledgeService) searchKeywordChannel(ctx context.Context, req *domain.KnowledgeSearchREQ, topK int) ([]domain.KnowledgeChunkVO, error) {
-	keywordReq := req
-	if strings.TrimSpace(keywordReq.KeywordText) == "" {
-		keywordReq = &domain.KnowledgeSearchREQ{
-			ProjectULID: req.ProjectULID,
-			KeywordText: req.QueryText,
-			DocULIDList: req.DocULIDList,
-		}
-	}
-	chunkULIDs, err := queryManticoreChunkIDs(ctx, s.manticore, s.config.ManticoreTable, keywordReq, topK)
+// searchKeywordChannel 单个 Manticore 词条/短语通道：返回带 BM25 相关度的切片。
+func (s *KnowledgeService) searchKeywordChannel(ctx context.Context, req *domain.KnowledgeSearchREQ, topK int, channel string) ([]domain.KnowledgeChunkVO, error) {
+	chunkULIDs, scoreMap, err := queryManticoreHits(ctx, s.manticore, s.config.ManticoreTable, req, topK, channel)
 	if err != nil {
 		return nil, pkg.WrapBizError(domain.RespCodeStorageError, "全文检索失败", err)
 	}
@@ -306,21 +316,119 @@ func (s *KnowledgeService) searchKeywordChannel(ctx context.Context, req *domain
 	ordered := make([]domain.KnowledgeChunkVO, 0, len(chunkULIDs))
 	for _, chunkULID := range chunkULIDs {
 		if hit, ok := byULID[chunkULID]; ok {
+			hit.ScoreValue = scoreMap[chunkULID]
+			hit.SourceMode = channel
 			ordered = append(ordered, hit)
 		}
 	}
 	return ordered, nil
 }
 
-// validateSearchREQ 校验检索模式与入参的必填关系。
-func validateSearchREQ(mode string, req *domain.KnowledgeSearchREQ) error {
-	if mode == searchModeKeyword && strings.TrimSpace(req.KeywordText) == "" {
-		return pkg.NewBizError(domain.RespCodeInvalidParam, "keyword 模式必须提供 keyword_text")
+// normalizeSearchMode 归一化检索模式：仅 hybrid 走双通道，其他模式按 keyword 处理。
+func normalizeSearchMode(mode string) string {
+	if mode == domain.SearchModeHybrid {
+		return domain.SearchModeHybrid
 	}
-	if (mode == searchModeVector || mode == searchModeHybrid) && strings.TrimSpace(req.QueryText) == "" {
-		return pkg.NewBizError(domain.RespCodeInvalidParam, mode+" 模式必须提供 query_text")
+	return domain.SearchModeKeyword
+}
+
+// extractQueryTerms 从查询文本抽取检索词：CJK 连续串按 2-gram 切分，拉丁词按字母数字切分并去重。
+func extractQueryTerms(query string) []string {
+	seen := make(map[string]bool)
+	terms := make([]string, 0, 8)
+	add := func(term string) {
+		term = strings.ToLower(strings.TrimSpace(term))
+		if term == "" || seen[term] {
+			return
+		}
+		seen[term] = true
+		terms = append(terms, term)
 	}
-	return nil
+	var latin strings.Builder
+	var cjk strings.Builder
+	flushLatin := func() {
+		if latin.Len() > 0 {
+			add(latin.String())
+			latin.Reset()
+		}
+	}
+	flushCJK := func() {
+		runes := []rune(cjk.String())
+		for i := 0; i+1 < len(runes); i++ {
+			add(string(runes[i : i+2]))
+		}
+		cjk.Reset()
+	}
+	for _, r := range query {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			flushCJK()
+			latin.WriteRune(r)
+		case r >= 0x4e00 && r <= 0x9fff:
+			flushLatin()
+			cjk.WriteRune(r)
+		default:
+			flushLatin()
+			flushCJK()
+		}
+	}
+	flushLatin()
+	flushCJK()
+	return terms
+}
+
+// fuseSearchResults 以 RRF 融合两个 lexical 通道命中：score=Σ 1/(60+rank)，得分降序取 topK。
+func fuseSearchResults(termHits, phraseHits []domain.KnowledgeChunkVO, topK int) []domain.KnowledgeChunkVO {
+	order := make([]string, 0, len(termHits)+len(phraseHits))
+	fused := make(map[string]*domain.KnowledgeChunkVO, len(termHits)+len(phraseHits))
+	add := func(hit domain.KnowledgeChunkVO, rank int, channel string) {
+		item, ok := fused[hit.ChunkULID]
+		if !ok {
+			hit.ScoreValue = 0
+			hit.SourceMode = channel
+			fused[hit.ChunkULID] = &hit
+			order = append(order, hit.ChunkULID)
+			item = fused[hit.ChunkULID]
+		} else if item.SourceMode != channel {
+			item.SourceMode = domain.SearchModeHybrid
+		}
+		item.ScoreValue += 1.0 / (rrfRankConstant + float64(rank))
+	}
+	for i := range termHits {
+		add(termHits[i], i+1, "term")
+	}
+	for i := range phraseHits {
+		add(phraseHits[i], i+1, "phrase")
+	}
+	results := make([]domain.KnowledgeChunkVO, 0, len(order))
+	for _, chunkULID := range order {
+		results = append(results, *fused[chunkULID])
+	}
+	sort.SliceStable(results, func(i, j int) bool { return results[i].ScoreValue > results[j].ScoreValue })
+	if topK > 0 && len(results) > topK {
+		results = results[:topK]
+	}
+	return results
+}
+
+// trimHits 截断命中列表并保证非 nil（前端直接遍历）。
+func trimHits(hits []domain.KnowledgeChunkVO, topK int) []domain.KnowledgeChunkVO {
+	if topK > 0 && len(hits) > topK {
+		hits = hits[:topK]
+	}
+	if hits == nil {
+		return []domain.KnowledgeChunkVO{}
+	}
+	return hits
+}
+
+// selectedIDs 抽取最终入选切片 ID（有序）。
+func selectedIDs(hits []domain.KnowledgeChunkVO) []string {
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.ChunkULID)
+	}
+	return ids
 }
 
 // enqueueIndexJob 创建任务留痕（queued）并投递 RabbitMQ 索引队列。
@@ -370,50 +478,6 @@ func docTypeOfFileName(fileName string) string {
 		return docTypeCode
 	}
 	return ""
-}
-
-// fuseSearchResults 以 RRF 融合双通道命中：score=Σ 1/(60+rank)，得分降序取 topK，
-// 同分保持稳定顺序（向量通道命中在前），source_mode 标注命中通道。
-func fuseSearchResults(vectorHits, keywordHits []domain.KnowledgeChunkVO, topK int) []domain.KnowledgeChunkVO {
-	order := make([]string, 0, len(vectorHits)+len(keywordHits))
-	fused := make(map[string]*domain.KnowledgeChunkVO, len(vectorHits)+len(keywordHits))
-	add := func(hit domain.KnowledgeChunkVO, rank int, sourceMode string) {
-		item, ok := fused[hit.ChunkULID]
-		if !ok {
-			hit.ScoreValue = 0
-			hit.SourceMode = sourceMode
-			fused[hit.ChunkULID] = &hit
-			order = append(order, hit.ChunkULID)
-			item = fused[hit.ChunkULID]
-		} else if item.SourceMode != sourceMode {
-			item.SourceMode = searchModeHybrid
-		}
-		item.ScoreValue += 1.0 / (rrfRankConstant + float64(rank))
-	}
-	for i := range vectorHits {
-		add(vectorHits[i], i+1, searchModeVector)
-	}
-	for i := range keywordHits {
-		add(keywordHits[i], i+1, searchModeKeyword)
-	}
-	results := make([]domain.KnowledgeChunkVO, 0, len(order))
-	for _, chunkULID := range order {
-		results = append(results, *fused[chunkULID])
-	}
-	sortByRRFScore(results)
-	if topK > 0 && len(results) > topK {
-		results = results[:topK]
-	}
-	return results
-}
-
-// sortByRRFScore 按融合得分降序排序（稳定排序，同分保持入选顺序）。
-func sortByRRFScore(results []domain.KnowledgeChunkVO) {
-	for i := 1; i < len(results); i++ {
-		for j := i; j > 0 && results[j].ScoreValue > results[j-1].ScoreValue; j-- {
-			results[j], results[j-1] = results[j-1], results[j]
-		}
-	}
 }
 
 // toDocumentVO 组装文档视图对象。

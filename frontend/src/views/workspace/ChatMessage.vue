@@ -64,8 +64,9 @@ function chunkPreview(chunkText: string): string {
       </div>
 
       <div v-if="showAssistantActions()" class="chat-message__actions">
-        <button
-          type="button"
+        <NWButton
+          type="text"
+          size="small"
           class="chat-message__toggle"
           @click="referenceExpanded = !referenceExpanded"
         >
@@ -74,7 +75,7 @@ function chunkPreview(chunkText: string): string {
           <template v-if="message.reference_list.length > 0">
             ({{ message.reference_list.length }})
           </template>
-        </button>
+        </NWButton>
         <NWButton size="small" @click="emit('insert-to-chapter', message.content_text)">
           {{ t('workspace.ai.insertToChapter') }}
         </NWButton>
@@ -200,19 +201,14 @@ function chunkPreview(chunkText: string): string {
   margin-top: 8px;
 }
 
-.chat-message__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  border: none;
-  background: transparent;
+.chat-message__toggle.nw-button {
+  height: 24px;
+  padding: 0 4px;
   font-size: 13px;
   color: var(--text-secondary);
-  cursor: pointer;
 }
 
-.chat-message__toggle:hover {
+.chat-message__toggle.nw-button:hover {
   color: var(--primary);
 }
 

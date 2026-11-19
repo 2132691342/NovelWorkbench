@@ -100,22 +100,20 @@ async function handleSubmit(): Promise<void> {
       </header>
 
       <div class="login-page__tabs">
-        <button
-          type="button"
+        <NWButton
           class="login-page__tab"
           :class="{ 'is-active': activeTab === 'login' }"
           @click="activeTab = 'login'"
         >
           {{ t('login.tabLogin') }}
-        </button>
-        <button
-          type="button"
+        </NWButton>
+        <NWButton
           class="login-page__tab"
           :class="{ 'is-active': activeTab === 'register' }"
           @click="activeTab = 'register'"
         >
           {{ t('login.tabRegister') }}
-        </button>
+        </NWButton>
       </div>
 
       <el-form
@@ -220,27 +218,24 @@ async function handleSubmit(): Promise<void> {
   border-radius: var(--radius-base);
 }
 
-.login-page__tab {
+.login-page__tab.nw-button {
   flex: 1;
   height: 34px;
   border: none;
-  border-radius: var(--radius-base);
   background-color: transparent;
   color: var(--text-secondary);
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
 }
 
-.login-page__tab:hover {
+.login-page__tab.nw-button:hover {
   color: var(--primary);
 }
 
-.login-page__tab.is-active {
+.login-page__tab.nw-button.is-active {
   background-color: var(--primary);
   color: var(--text-inverse);
   box-shadow: var(--shadow-button-hover);
 }
+
 
 .login-page__submit {
   width: 100%;

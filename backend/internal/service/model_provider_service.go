@@ -13,16 +13,14 @@ import (
 
 // ProviderSeed 启动期供应商播种参数（来自配置文件，仅供应商表为空时生效）。
 type ProviderSeed struct {
-	ProviderName       string  // 供应商名称
-	ProtocolCode       string  // 协议
-	BaseURL            string  // 网关地址
-	APIKey             string  // 明文密钥
-	ChatModelName      string  // 对话模型名
-	EmbeddingModelName string  // 向量模型名
-	EmbeddingDim       int     // 向量维度
-	Temperature        float64 // 采样温度
-	MaxTokens          int     // 输出上限
-	TimeoutSec         int     // 调用超时（秒）
+	ProviderName  string  // 供应商名称
+	ProtocolCode  string  // 协议
+	BaseURL       string  // 网关地址
+	APIKey        string  // 明文密钥
+	ChatModelName string  // 对话模型名
+	Temperature   float64 // 采样温度
+	MaxTokens     int     // 输出上限
+	TimeoutSec    int     // 调用超时（秒）
 }
 
 // ModelProviderService 模型供应商业务：CRUD、默认切换、连通性测试与调用规格解析。
@@ -49,21 +47,18 @@ func (s *ModelProviderService) SeedDefault(ctx context.Context, seed ProviderSee
 		return pkg.WrapBizError(domain.RespCodeInternalError, "供应商密钥封存失败", err)
 	}
 	do := &domain.ModelProviderDO{
-		ProviderULID:        pkg.NewULID(domain.IDPrefixModelProvider),
-		ProviderName:        seed.ProviderName,
-		ProtocolCode:        seed.ProtocolCode,
-		BaseURL:             strings.TrimRight(seed.BaseURL, "/"),
-		APIKeyCipher:        cipherText,
-		ChatModelName:       seed.ChatModelName,
-		EmbeddingModelName:  seed.EmbeddingModelName,
-		EmbeddingDim:        seed.EmbeddingDim,
-		Temperature:         seed.Temperature,
-		MaxTokens:           seed.MaxTokens,
-		EnabledFlag:         true,
-		DefaultFlag:         true,
-		LastTestStatusCode:  domain.ProviderTestStatusUntested,
-		LastEmbedStatusCode: "untested",
-		RemarkText:          "配置文件引导创建，可在模型供应商页修改",
+		ProviderULID:       pkg.NewULID(domain.IDPrefixModelProvider),
+		ProviderName:       seed.ProviderName,
+		ProtocolCode:       seed.ProtocolCode,
+		BaseURL:            strings.TrimRight(seed.BaseURL, "/"),
+		APIKeyCipher:       cipherText,
+		ChatModelName:      seed.ChatModelName,
+		Temperature:        seed.Temperature,
+		MaxTokens:          seed.MaxTokens,
+		EnabledFlag:        true,
+		DefaultFlag:        true,
+		LastTestStatusCode: domain.ProviderTestStatusUntested,
+		RemarkText:         "配置文件引导创建，可在模型供应商页修改",
 	}
 	if err := s.providerRepo.Create(ctx, do); err != nil {
 		return pkg.WrapBizError(domain.RespCodeStorageError, "供应商播种失败", err)
@@ -105,8 +100,6 @@ func (s *ModelProviderService) Save(ctx context.Context, req *domain.ModelProvid
 			BaseURL:            baseURL,
 			APIKeyCipher:       cipherText,
 			ChatModelName:      req.ChatModelName,
-			EmbeddingModelName: req.EmbeddingModelName,
-			EmbeddingDim:       req.EmbeddingDim,
 			Temperature:        temperatureOf(req.Temperature),
 			MaxTokens:          req.MaxTokens,
 			EnabledFlag:        boolValueOf(req.EnabledFlag, true),
@@ -133,16 +126,14 @@ func (s *ModelProviderService) Save(ctx context.Context, req *domain.ModelProvid
 		return domain.ModelProviderVO{}, pkg.NewBizError(domain.RespCodeNotFound, "供应商不存在")
 	}
 	fields := map[string]any{
-		"provider_name":        req.ProviderName,
-		"protocol_code":        req.ProtocolCode,
-		"base_url":             baseURL,
-		"chat_model_name":      req.ChatModelName,
-		"embedding_model_name": req.EmbeddingModelName,
-		"embedding_dim":        req.EmbeddingDim,
-		"temperature":          temperatureOf(req.Temperature),
-		"max_tokens":           req.MaxTokens,
-		"sort_order":           req.SortOrder,
-		"remark_text":          req.RemarkText,
+		"provider_name":   req.ProviderName,
+		"protocol_code":   req.ProtocolCode,
+		"base_url":        baseURL,
+		"chat_model_name": req.ChatModelName,
+		"temperature":     temperatureOf(req.Temperature),
+		"max_tokens":      req.MaxTokens,
+		"sort_order":      req.SortOrder,
+		"remark_text":     req.RemarkText,
 	}
 	if req.APIKeyText != "" {
 		cipherText, sealErr := s.sealKey(req.APIKeyText)
@@ -183,7 +174,7 @@ func (s *ModelProviderService) Delete(ctx context.Context, req *domain.ModelProv
 	return s.providerRepo.Delete(ctx, req.ProviderULID)
 }
 
-// Test 连通性测试（结果回写供应商记录，供列表展示）。
+// Test 连通性测试（只验证对话通道，结果回写供应商记录）。
 func (s *ModelProviderService) Test(ctx context.Context, req *domain.ModelProviderTestREQ) (domain.ModelProviderTestDTO, error) {
 	current, err := s.providerRepo.GetByULID(ctx, req.ProviderULID)
 	if err != nil {
@@ -200,24 +191,19 @@ func (s *ModelProviderService) Test(ctx context.Context, req *domain.ModelProvid
 	probe, probeErr := s.gateway.Probe(ctx, spec)
 	latencyMs := time.Since(startedAt).Milliseconds()
 	dto := domain.ModelProviderTestDTO{
-		StatusCode:      domain.ProviderTestStatusSuccess,
-		LatencyMs:       latencyMs,
-		ReplyText:       probe.ReplyText,
-		EmbeddingStatus: probe.EmbeddingStatus,
-		MessageText:     "对话通道连通",
+		StatusCode:  domain.ProviderTestStatusSuccess,
+		LatencyMs:   latencyMs,
+		ReplyText:   probe.ReplyText,
+		MessageText: "对话通道连通",
 	}
 	if probeErr != nil {
 		dto.StatusCode = domain.ProviderTestStatusFailed
 		dto.MessageText = "对话通道失败：" + probeErr.Error()
 	}
-	if probe.EmbeddingNote != "" {
-		dto.MessageText += "；" + probe.EmbeddingNote
-	}
 	fields := map[string]any{
-		"last_test_status_code":  dto.StatusCode,
-		"last_test_message":      truncateRunes(dto.MessageText, 480),
-		"last_test_at_ms":        time.Now().UnixMilli(),
-		"last_embed_status_code": dto.EmbeddingStatus,
+		"last_test_status_code": dto.StatusCode,
+		"last_test_message":     truncateRunes(dto.MessageText, 480),
+		"last_test_at_ms":       time.Now().UnixMilli(),
 	}
 	if err := s.providerRepo.Update(ctx, current.ProviderULID, fields); err != nil {
 		pkg.SLogger().Warnw("供应商测试结果回写失败", "provider_ulid", current.ProviderULID, "error", err)
@@ -252,26 +238,7 @@ func (s *ModelProviderService) ChatSpecOf(ctx context.Context, providerULID stri
 	return s.specOf(current)
 }
 
-// EmbeddingSpec 返回首个可用向量供应商的规格；无可用时返回 (零值, false, nil)。
-func (s *ModelProviderService) EmbeddingSpec(ctx context.Context) (ai.ProviderSpec, bool, error) {
-	current, err := s.providerRepo.FindEmbeddingProvider(ctx)
-	if err != nil {
-		return ai.ProviderSpec{}, false, pkg.WrapBizError(domain.RespCodeStorageError, "向量供应商读取失败", err)
-	}
-	if current == nil {
-		return ai.ProviderSpec{}, false, nil
-	}
-	spec, specErr := s.specOf(current)
-	if specErr != nil {
-		return ai.ProviderSpec{}, false, nil
-	}
-	if !spec.SupportsEmbedding() {
-		return ai.ProviderSpec{}, false, nil
-	}
-	return spec, true, nil
-}
-
-// Capability 返回当前 AI 能力探测结果（前端据此提示可用性）。
+// Capability 返回当前 AI 能力探测结果（仅对话能力）。
 func (s *ModelProviderService) Capability(ctx context.Context) (domain.ModelCapabilityVO, error) {
 	vo := domain.ModelCapabilityVO{}
 	defaultProvider, err := s.providerRepo.FindDefault(ctx)
@@ -284,24 +251,10 @@ func (s *ModelProviderService) Capability(ctx context.Context) (domain.ModelCapa
 		vo.DefaultProviderName = defaultProvider.ProviderName
 		vo.DefaultChatModelName = defaultProvider.ChatModelName
 	}
-	embeddingProvider, err := s.providerRepo.FindEmbeddingProvider(ctx)
-	if err != nil {
-		return vo, pkg.WrapBizError(domain.RespCodeStorageError, "向量供应商读取失败", err)
-	}
-	if embeddingProvider != nil && embeddingProvider.EmbeddingModelName != "" && embeddingProvider.ProtocolCode == domain.ProtocolCodeOpenAI {
-		// 探测失败过的供应商不宣称向量可用：能力提示必须与实测一致
-		vo.EmbeddingReady = embeddingProvider.LastEmbedStatusCode != "failed"
-		vo.EmbeddingProviderName = embeddingProvider.ProviderName
-	}
-	switch {
-	case !vo.ChatReady:
-		vo.HintText = "尚未配置模型供应商，AI 生成不可用"
-	case !vo.EmbeddingReady && embeddingProvider != nil && embeddingProvider.LastEmbedStatusCode == "failed":
-		vo.HintText = "对话模型可用；向量通道实测失败，知识库将仅使用关键词检索"
-	case !vo.EmbeddingReady:
-		vo.HintText = "对话模型可用；未配置向量模型，知识库将仅使用关键词检索"
-	default:
-		vo.HintText = "对话与知识库检索均可用"
+	if !vo.ChatReady {
+		vo.HintText = "尚未配置模型供应商，AI 生成与检索重排不可用；知识库仍可进行关键词检索"
+	} else {
+		vo.HintText = "对话模型可用；知识库使用关键词检索，必要时由对话模型重排"
 	}
 	return vo, nil
 }
@@ -313,17 +266,15 @@ func (s *ModelProviderService) specOf(do *domain.ModelProviderDO) (ai.ProviderSp
 		return ai.ProviderSpec{}, pkg.NewBizError(domain.RespCodeBizFailed, "供应商密钥无法解密，请重新填写 API Key")
 	}
 	return ai.ProviderSpec{
-		ProviderULID:       do.ProviderULID,
-		ProviderName:       do.ProviderName,
-		ProtocolCode:       do.ProtocolCode,
-		BaseURL:            do.BaseURL,
-		APIKey:             apiKey,
-		ChatModelName:      do.ChatModelName,
-		EmbeddingModelName: do.EmbeddingModelName,
-		EmbeddingDim:       do.EmbeddingDim,
-		Temperature:        do.Temperature,
-		MaxTokens:          do.MaxTokens,
-		Timeout:            s.timeout,
+		ProviderULID:  do.ProviderULID,
+		ProviderName:  do.ProviderName,
+		ProtocolCode:  do.ProtocolCode,
+		BaseURL:       do.BaseURL,
+		APIKey:        apiKey,
+		ChatModelName: do.ChatModelName,
+		Temperature:   do.Temperature,
+		MaxTokens:     do.MaxTokens,
+		Timeout:       s.timeout,
 	}, nil
 }
 
@@ -363,26 +314,23 @@ func (s *ModelProviderService) toVO(do *domain.ModelProviderDO) domain.ModelProv
 		}
 	}
 	return domain.ModelProviderVO{
-		ProviderULID:        do.ProviderULID,
-		ProviderName:        do.ProviderName,
-		ProtocolCode:        do.ProtocolCode,
-		BaseURL:             do.BaseURL,
-		APIKeyMasked:        masked,
-		APIKeyConfigured:    configured,
-		ChatModelName:       do.ChatModelName,
-		EmbeddingModelName:  do.EmbeddingModelName,
-		EmbeddingDim:        do.EmbeddingDim,
-		Temperature:         do.Temperature,
-		MaxTokens:           do.MaxTokens,
-		EnabledFlag:         do.EnabledFlag,
-		DefaultFlag:         do.DefaultFlag,
-		SortOrder:           do.SortOrder,
-		RemarkText:          do.RemarkText,
-		LastTestStatusCode:  do.LastTestStatusCode,
-		LastTestMessage:     do.LastTestMessage,
-		LastTestAtMs:        do.LastTestAtMs,
-		LastEmbedStatusCode: do.LastEmbedStatusCode,
-		UpdatedAtMs:         do.UpdatedAt.UnixMilli(),
+		ProviderULID:       do.ProviderULID,
+		ProviderName:       do.ProviderName,
+		ProtocolCode:       do.ProtocolCode,
+		BaseURL:            do.BaseURL,
+		APIKeyMasked:       masked,
+		APIKeyConfigured:   configured,
+		ChatModelName:      do.ChatModelName,
+		Temperature:        do.Temperature,
+		MaxTokens:          do.MaxTokens,
+		EnabledFlag:        do.EnabledFlag,
+		DefaultFlag:        do.DefaultFlag,
+		SortOrder:          do.SortOrder,
+		RemarkText:         do.RemarkText,
+		LastTestStatusCode: do.LastTestStatusCode,
+		LastTestMessage:    do.LastTestMessage,
+		LastTestAtMs:       do.LastTestAtMs,
+		UpdatedAtMs:        do.UpdatedAt.UnixMilli(),
 	}
 }
 

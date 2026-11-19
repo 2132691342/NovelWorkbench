@@ -1,4 +1,4 @@
-# 前端构建镜像：多阶段，node 构建 + nginx 托管
+# 前端构建镜像：多阶段，node 22 构建 + nginx 托管（与 CI 的 node 版本保持一致）
 FROM node:22-slim AS builder
 WORKDIR /src
 COPY package.json package-lock.json ./

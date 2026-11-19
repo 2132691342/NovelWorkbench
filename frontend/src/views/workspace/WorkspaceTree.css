@@ -60,22 +60,14 @@
   color: var(--text-secondary);
 }
 
-.tree-icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.tree-icon-button.nw-button {
   width: 22px;
   height: 22px;
   padding: 0;
-  border: none;
-  border-radius: var(--radius-base);
-  background: transparent;
   color: var(--text-secondary);
-  cursor: pointer;
-  transition: background-color var(--transition-base), color var(--transition-base);
 }
 
-.tree-icon-button:hover {
+.tree-icon-button.nw-button:hover {
   background-color: var(--border-light);
   color: var(--text-main);
 }

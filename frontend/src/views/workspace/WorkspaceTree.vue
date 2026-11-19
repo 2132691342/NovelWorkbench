@@ -343,13 +343,13 @@ function handleChapterCommand(
             trigger="click"
             @command="handleVolumeCommand($event, volumeNode.volume_vo)"
           >
-            <button type="button" class="tree-icon-button" :aria-label="t('common.action')">
+            <NWButton type="text" class="tree-icon-button" :aria-label="t('common.action')">
               <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                 <circle cx="3" cy="8" r="1.5" />
                 <circle cx="8" cy="8" r="1.5" />
                 <circle cx="13" cy="8" r="1.5" />
               </svg>
-            </button>
+            </NWButton>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="add-chapter">
@@ -391,8 +391,8 @@ function handleChapterCommand(
                   handleChapterCommand($event, chapter, volumeNode.volume_vo.volume_ulid)
                 "
               >
-                <button
-                  type="button"
+                <NWButton
+                  type="text"
                   class="tree-icon-button"
                   :aria-label="t('common.action')"
                   @click.stop
@@ -402,7 +402,7 @@ function handleChapterCommand(
                     <circle cx="8" cy="8" r="1.5" />
                     <circle cx="13" cy="8" r="1.5" />
                   </svg>
-                </button>
+                </NWButton>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="rename-chapter">
