@@ -411,8 +411,9 @@ bash deploy.sh
    前端同理使用 `${BASE_PREFIX}/nginx:1.27-alpine`；镜像名取 `NW_BACKEND_IMAGE` /
    `NW_FRONTEND_IMAGE`，缺省 `localhost/novel-workbench-{backend,frontend}:latest`。
 4. **清理陈旧 DNAT**：rootless podman 重建容器后残留的 `CNI-HOSTPORT-DNAT` 规则会导致
-   宿主端口不可达，`drop_stale_dnat()` 循环删除 `-d 127.0.0.1/32 -j DNAT --to-destination 127.0.0.1` 规则；
-   无 `iptables` 命令时跳过。
+   宿主端口不可达。`drop_stale_dnat()` 删除指向 `127.0.0.1` 的空规则；
+   `cleanup_port_dnat()` 在重建前删除 `NW_PUBLIC_PORT`（默认 14399）与 8080 的全部
+   `CNI-DN-*` 跳转规则，容器启动时 podman 只为新容器写入一条规则。无 `iptables` 命令时跳过。
 5. **重建容器**：`podman-compose -f docker-compose.yml up -d --force-recreate`，
    输出重定向到服务器本地日志（默认 `/var/log/novelworkbench-compose.log`）。
    之所以重定向：podman-compose 会把含明文口令的 `podman run` 命令打到 stdout；
