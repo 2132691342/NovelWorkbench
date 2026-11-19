@@ -108,13 +108,13 @@ func (s *LoreService) List(ctx context.Context, userULID string, req *domain.Lor
 // toLoreVO 组装设定视图对象。
 func toLoreVO(do *domain.LoreDO) domain.LoreVO {
 	return domain.LoreVO{
-		LoreULID:     do.LoreULID,
-		ProjectULID:  do.ProjectULID,
-		LoreName:     do.LoreName,
-		LoreTypeCode: do.LoreTypeCode,
+		LoreULID:        do.LoreULID,
+		ProjectULID:     do.ProjectULID,
+		LoreName:        do.LoreName,
+		LoreTypeCode:    do.LoreTypeCode,
 		ContentText:     do.ContentText,
 		ContentModeCode: do.ContentModeCode,
 		SortOrder:       do.SortOrder,
-		UpdatedAtMs:  do.UpdatedAt.UnixMilli(),
+		UpdatedAtMs:     do.UpdatedAt.UnixMilli(),
 	}
 }

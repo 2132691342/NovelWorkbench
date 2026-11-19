@@ -49,12 +49,12 @@ type LoreDeleteREQ struct {
 
 // LoreVO 设定视图对象。
 type LoreVO struct {
-	LoreULID     string `json:"lore_ulid"`      // 设定 ULID
-	ProjectULID  string `json:"project_ulid"`   // 所属项目
-	LoreName     string `json:"lore_name"`      // 设定名
-	LoreTypeCode string `json:"lore_type_code"` // 类型
-	ContentText  string `json:"content_text"`   // 内容
+	LoreULID        string `json:"lore_ulid"`         // 设定 ULID
+	ProjectULID     string `json:"project_ulid"`      // 所属项目
+	LoreName        string `json:"lore_name"`         // 设定名
+	LoreTypeCode    string `json:"lore_type_code"`    // 类型
+	ContentText     string `json:"content_text"`      // 内容
 	ContentModeCode string `json:"content_mode_code"` // 内容格式：rich/markdown
-	SortOrder    int    `json:"sort_order"`     // 排序号
-	UpdatedAtMs  int64  `json:"updated_at_ms"`  // 更新时间（毫秒时间戳）
+	SortOrder       int    `json:"sort_order"`        // 排序号
+	UpdatedAtMs     int64  `json:"updated_at_ms"`     // 更新时间（毫秒时间戳）
 }
