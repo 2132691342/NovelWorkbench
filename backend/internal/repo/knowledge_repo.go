@@ -82,6 +82,18 @@ func (r *KnowledgeRepo) ListDocuments(ctx context.Context, projectULID, docStatu
 	return dos, total, nil
 }
 
+// GetDocumentsByULIDs 批量查询文档（任务中心回填文档名，避免 N+1）。
+func (r *KnowledgeRepo) GetDocumentsByULIDs(ctx context.Context, docULIDList []string) ([]domain.KnowledgeDocumentDO, error) {
+	if len(docULIDList) == 0 {
+		return []domain.KnowledgeDocumentDO{}, nil
+	}
+	var dos []domain.KnowledgeDocumentDO
+	if err := r.db.WithContext(ctx).Where("doc_ulid IN ?", docULIDList).Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("get documents by ulids: %w", err)
+	}
+	return dos, nil
+}
+
 // ListDocumentsByProject 查询项目下全部文档（项目删除前收集对象键与文档 ULID，供外部存储清理）。
 func (r *KnowledgeRepo) ListDocumentsByProject(ctx context.Context, projectULID string) ([]domain.KnowledgeDocumentDO, error) {
 	var dos []domain.KnowledgeDocumentDO

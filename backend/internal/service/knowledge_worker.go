@@ -35,21 +35,27 @@ type KnowledgeWorker struct {
 	objectRepo    *repo.ObjectRepo       // 对象存储仓储
 	mqRepo        *repo.MQRepo           // 队列仓储
 	jobRepo       *repo.JobRepo          // 任务仓储
+	projectRepo   *repo.ProjectRepo      // 项目仓储（回查任务归属人）
 	manticore     *infra.ManticoreClient // 全文检索客户端
 	db            *gorm.DB               // 事务入口
 	config        KnowledgeIndexConfig   // 索引链路参数
+	notifySvc     *NotificationService   // 站内通知（索引结果提醒）
 }
 
-// NewKnowledgeWorker 构造知识库索引 worker。
-func NewKnowledgeWorker(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo, jobRepo *repo.JobRepo, manticore *infra.ManticoreClient, db *gorm.DB, config KnowledgeIndexConfig) *KnowledgeWorker {
+// NewKnowledgeWorker 构造知识库索引 worker（通知服务可空，便于测试）。
+func NewKnowledgeWorker(knowledgeRepo *repo.KnowledgeRepo, objectRepo *repo.ObjectRepo, mqRepo *repo.MQRepo,
+	jobRepo *repo.JobRepo, projectRepo *repo.ProjectRepo, manticore *infra.ManticoreClient, db *gorm.DB,
+	config KnowledgeIndexConfig, notifySvc *NotificationService) *KnowledgeWorker {
 	return &KnowledgeWorker{
 		knowledgeRepo: knowledgeRepo,
 		objectRepo:    objectRepo,
 		mqRepo:        mqRepo,
 		jobRepo:       jobRepo,
+		projectRepo:   projectRepo,
 		manticore:     manticore,
 		db:            db,
 		config:        config,
+		notifySvc:     notifySvc,
 	}
 }
 
@@ -118,6 +124,7 @@ func (w *KnowledgeWorker) handleIndexJob(ctx context.Context, job domain.Knowled
 		lastErr = w.indexDocument(ctx, doc)
 		if lastErr == nil {
 			markJob("success", "", attempt)
+			w.notifyOwner(ctx, doc, "知识库索引完成", "文档《"+doc.DocName+"》已完成索引，可以参与检索与 AI 召回。", "/knowledge")
 			return nil
 		}
 		if ctx.Err() != nil {
@@ -128,7 +135,30 @@ func (w *KnowledgeWorker) handleIndexJob(ctx context.Context, job domain.Knowled
 	errorMessage := truncateErrorMessage(lastErr)
 	markJob("failed", errorMessage, maxIndexRetryCount)
 	_ = w.knowledgeRepo.UpdateDocument(ctx, doc.DocULID, map[string]any{"doc_status_code": "failed", "error_message": errorMessage})
+	w.notifyOwner(ctx, doc, "知识库索引失败", "文档《"+doc.DocName+"》索引失败："+errorMessage+"。可在知识库页重新索引。", "/knowledge")
 	return nil
+}
+
+// notifyOwner 向文档所属项目的主人发送索引结果通知（失败只告警）。
+func (w *KnowledgeWorker) notifyOwner(ctx context.Context, doc *domain.KnowledgeDocumentDO, titleText string, bodyText string, linkURL string) {
+	if w.notifySvc == nil || w.projectRepo == nil || doc.ProjectULID == "" || doc.ProjectULID == "0" {
+		return
+	}
+	projectDO, err := w.projectRepo.GetByULID(ctx, doc.ProjectULID)
+	if err != nil || projectDO == nil {
+		return
+	}
+	if err := w.notifySvc.Notify(ctx, domain.NotificationCreateDTO{
+		UserULID:              projectDO.UserULID,
+		NotificationTypeCode:  domain.NotificationTypeTask,
+		NotificationTitleText: titleText,
+		NotificationBodyText:  bodyText,
+		LinkURL:               linkURL,
+		RefTypeCode:           "knowledge_document",
+		RefULID:               doc.DocULID,
+	}); err != nil {
+		pkg.SLogger().Warnw("索引结果通知写入失败", "doc_ulid", doc.DocULID, "error", err)
+	}
 }
 
 // indexDocument 单次索引：提取文本 → 切片 → 内容哈希去重 → 事务写切片 → Manticore 同步 → 置 indexed。

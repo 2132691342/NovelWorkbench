@@ -67,6 +67,8 @@ func main() {
 		&domain.AuditLogDO{},
 		&domain.ModelProviderDO{},
 		&domain.ModelUsageStatDO{},
+		&domain.NotificationDO{},
+		&domain.LoginLogDO{},
 	); err != nil {
 		pkg.SLogger().Errorw("数据库迁移失败", "error", err)
 		os.Exit(1)
@@ -123,11 +125,16 @@ func main() {
 	chatRepo := repo.NewChatRepo(db)
 	objectRepo := repo.NewObjectRepo(minioClient, cfg.MinIO.Bucket)
 	mqRepo := repo.NewMQRepo(mqConn, cfg.RabbitMQ.QueueDocIndex)
+	notificationRepo := repo.NewNotificationRepo(db)
+	loginLogRepo := repo.NewLoginLogRepo(db)
 
-	authService := service.NewAuthService(userRepo, roleRepo, signer, tokenRepo)
+	notificationService := service.NewNotificationService(notificationRepo)
+	loginLogService := service.NewLoginLogService(loginLogRepo)
+	jobService := service.NewJobService(jobRepo, knowledgeRepo, mqRepo)
+	authService := service.NewAuthService(userRepo, roleRepo, signer, tokenRepo, loginLogService, notificationService)
 	roleService := service.NewRoleService(roleRepo, userRepo)
 	menuService := service.NewMenuService(menuRepo, roleService)
-	userAdminService := service.NewUserAdminService(userRepo, roleRepo)
+	userAdminService := service.NewUserAdminService(userRepo, roleRepo, notificationService)
 	auditService := service.NewAuditService(auditRepo, userRepo)
 	outlineService := service.NewOutlineService(outlineRepo, projectRepo)
 	continuityService := service.NewContinuityService(continuityRepo, projectRepo)
@@ -211,7 +218,8 @@ func main() {
 	}
 
 	// 知识库索引 worker：消费 RabbitMQ 完成文档索引，随 ctx 取消优雅退出。
-	knowledgeWorker := service.NewKnowledgeWorker(knowledgeRepo, objectRepo, mqRepo, jobRepo, manticoreClient, db, knowledgeConfig)
+	knowledgeWorker := service.NewKnowledgeWorker(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
+		manticoreClient, db, knowledgeConfig, notificationService)
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
@@ -301,6 +309,9 @@ func main() {
 		ProviderAPI:   api.NewModelProviderAPI(providerService),
 		UsageAPI:      api.NewModelUsageAPI(usageService),
 		StatusAPI:     api.NewSystemStatusAPI(statusService),
+		NotifyAPI:     api.NewNotificationAPI(notificationService),
+		LoginLogAPI:   api.NewLoginLogAPI(loginLogService),
+		JobAPI:        api.NewJobAPI(jobService),
 	})
 
 	server := &http.Server{

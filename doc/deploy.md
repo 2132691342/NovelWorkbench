@@ -360,8 +360,10 @@ Podman 编排的其余要点：
 
 - `NW_SERVER_MODE: "release"`；backend 只 `expose: 8080`（不映射宿主端口），
   frontend 映射 `${NW_PUBLIC_PORT:-14399}:80`；`mem_limit: 384m`；`restart: always`。
-- backend 健康检查 `wget -qO- http://127.0.0.1:8080/health`；frontend 健康检查
+- backend 容器内健康检查 `wget -qO- http://127.0.0.1:8080/health`；frontend 健康检查
   `wget -qO- http://127.0.0.1:80/healthz`；两者均为 `interval 30s / timeout 5s / retries 3`。
+- Podman 编排不映射后端宿主端口；发布脚本用 `podman exec nw-backend wget ...` 探活，
+  避免 rootless podman 重建后的陈旧 DNAT 规则导致宿主 8080 不可达。
 - Podman 编排中 `NW_POSTGRES_HOST/PORT`、`NW_REDIS_ADDR`、`NW_MINIO_ENDPOINT`、
   `NW_MANTICORE_BASE_URL` 全部固定为中间件网络内的服务名，
   不需要配置公网主机地址。
@@ -390,7 +392,8 @@ npm run build
 ```bash
 cd /opt/novelworkbench/deploy/podman
 cp .env.example .env
-# 编辑 .env：填入密钥、模型网关信息；按实际网络名设置 NW_INFRA_NETWORK
+# 编辑 .env：填入密钥、模型网关信息；按实际网络名设置 NW_INFRA_NETWORK；
+# 确认 NW_PUBLIC_PORT=14399（唯一对外入口，云安全组需放行该端口）
 bash deploy.sh
 ```
 
@@ -416,8 +419,10 @@ bash deploy.sh
    之所以加 `--force-recreate`：podman-compose 1.x 不会因镜像 ID 变化自动重建容器。
    失败时打印日志尾部 40 行并退出；成功后再次清理 DNAT。
 6. **健康自检**：最多 `30` 次、间隔 `2` 秒轮询
-   `http://127.0.0.1:8080/health`、`http://127.0.0.1:8080/ready`、
-   `http://127.0.0.1/healthz`（`curl -fsS -m 3`），三者全部有响应且 `/healthz` 内容为 `ok` 即判定成功，
+   `podman exec nw-backend wget -qO- http://127.0.0.1:8080/health`、
+   `podman exec nw-backend wget -qO- http://127.0.0.1:8080/ready`、
+   `curl -fsS http://127.0.0.1:${NW_PUBLIC_PORT:-14399}/healthz`，
+   三者全部有响应且 `/healthz` 内容为 `ok` 即判定成功，
    打印 `podman ps` 列表并退出 0；超时则打印容器状态与后端日志尾部（过滤 `password` 行）后退出非 0。
 
 ### 6.4 DNS 差异（关键）
@@ -505,7 +510,7 @@ Podman 主机不拉 GHCR，由 `deploy.sh` 从预构建产物本地构建运行�
 | 事项 | 做法 |
 | --- | --- |
 | 健康检查 | 后端 `/health` 只回存活（`{"status":"up"}`）；后端 `/ready` Ping PostgreSQL（2s 超时），失败返回「依赖未就绪」；前端 `/healthz` 恒回 `ok`，不依赖后端；nginx 上游不可达时 `/api/` 返回 502 |
-| 容器健康探针 | Docker/Podman 编排中 backend 用 `wget -qO- http://127.0.0.1:8080/health`，frontend 用 `wget -qO- http://127.0.0.1/healthz`（Podman 为 `:80/healthz`），均为 30s 间隔 / 5s 超时 / 3 次重试 |
+| 容器健康探针 | 编排中 backend 用容器内 `wget -qO- http://127.0.0.1:8080/health`，frontend 用 `wget -qO- http://127.0.0.1/healthz`（Podman 为 `:80/healthz`），均为 30s 间隔 / 5s 超时 / 3 次重试；发布脚本同样用 `podman exec` 探后端 |
 | 日志 | 后端输出 zap 生产级 JSON 到 stdout；`docker compose logs -f backend` / `podman logs -f nw-backend` 查看；`podman-compose` 的编排输出落在服务器本地日志 `/var/log/novelworkbench-compose.log`（含明文口令，不要外传） |
 | 优雅关闭 | 收到 SIGTERM/SIGINT 后：HTTP Server `Shutdown`（5s 超时）→ 等待知识库索引 worker 退出（5s 超时）→ 依次关闭 Postgres、Redis、RabbitMQ 连接 |
 | 配置变更 | 修改 `NW_*` 环境变量后重建容器（`docker compose up -d` 或 `bash deploy.sh`）；凭据只放 `.env`，不要写回 `backend/configs/config.yaml`；YAML 中敏感项保持空值 |

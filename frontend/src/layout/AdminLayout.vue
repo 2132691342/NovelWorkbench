@@ -15,6 +15,7 @@ import { NW_LOCALE_OPTIONS } from '@/i18n'
 import type { NWMenuItemVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
 import NWIcon from '@/components/NWIcon.vue'
+import NotificationBell from './NotificationBell.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -111,7 +112,8 @@ const activeMenuItem = computed(() => {
   let matchedLength = 0
   for (const menuItem of flatPageMenuList.value) {
     const basePath = menuItem.route_path.replace(':project_ulid', '')
-    if (!basePath || !basePath.endsWith('/') || !currentPath.startsWith(basePath)) {
+    // 根路径 `/` 是仪表盘本身，不能当作其他页面的前缀
+    if (!basePath || basePath === '/' || !basePath.endsWith('/') || !currentPath.startsWith(basePath)) {
       continue
     }
     if (basePath.length > matchedLength) {
@@ -125,7 +127,8 @@ const activeMenuItem = computed(() => {
 /** 面包屑：分组名 / 页面名 */
 const breadcrumbText = computed(() => {
   if (!activeMenuItem.value) {
-    return ''
+    // 个人中心不在侧边栏菜单中，但顶栏需要可读的页面定位
+    return route.name === 'ProfileView' ? t('layout.profile') : ''
   }
   for (const menuItem of sidebarMenuList.value) {
     if (menuItem.menu_type_code === 'page' && menuItem.menu_code === activeMenuItem.value.menu_code) {
@@ -177,7 +180,16 @@ function handleLocaleCommand(command: string | number | object): void {
 }
 
 async function handleUserCommand(command: string | number | object): Promise<void> {
-  if (command !== 'logout') {
+  const commandCode = String(command)
+  if (commandCode === 'profile') {
+    void router.push('/profile')
+    return
+  }
+  if (commandCode === 'notifications') {
+    void router.push('/notifications')
+    return
+  }
+  if (commandCode !== 'logout') {
     return
   }
   await authStore.logout()
@@ -341,6 +353,8 @@ onMounted(() => {
             </button>
           </el-tooltip>
 
+          <NotificationBell />
+
           <el-dropdown @command="handleLocaleCommand">
             <span class="admin-layout__header-link">{{ currentLocaleLabel }}</span>
             <template #dropdown>
@@ -367,7 +381,9 @@ onMounted(() => {
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="logout">{{ t('common.logout') }}</el-dropdown-item>
+                <el-dropdown-item command="profile">{{ t('layout.profile') }}</el-dropdown-item>
+                <el-dropdown-item command="notifications">{{ t('notifications.title') }}</el-dropdown-item>
+                <el-dropdown-item divided command="logout">{{ t('common.logout') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>

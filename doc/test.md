@@ -47,7 +47,7 @@ CI 使用同一命令（见 `.github/workflows/ci.yml` 的 backend job），job 
 同一 job 在测试之前还执行 `go vet ./...` 与
 `CGO_ENABLED=0 go build -tags "netgo osusergo" ./...`。
 
-### 2.2 当前用例清单（共 9 条）
+### 2.2 当前用例清单（共 11 条）
 
 | 测试文件 | 用例函数 | 覆盖链路 | 断言要点 |
 | --- | --- | --- | --- |
@@ -60,6 +60,7 @@ CI 使用同一命令（见 `.github/workflows/ci.yml` 的 backend job），job 
 | `backend/internal/service/knowledge_service_test.go` | `TestKnowledgeRetrievalChain` | 知识库检索链路（环节一~七）：文本切片 → 查询词抽取 → 检索模式归一 → RRF 双通道融合 → RRF 单通道排序与 TopK 截断 → 重排结果解析与 fail-open → 默认召回条数解析 | 短文本产单切片、空白文本不产切片、相邻切片共享重叠区、窗口内边界优先于硬切、非法参数收敛；CJK 切 2-gram、拉丁词去重去标点；未知模式按 `keyword`；跨通道命中切片排首位且得分等于 `1/62 + 1/61`、来源标 `hybrid`；单通道按 `1/(60+rank)` 降序且截断到 topK；重排解析重排并补齐尾部，重复 ID / 越界 ID / 非 JSON / 带围栏均解析失败；无应用配置时 `resolveRAGTopK` 回退全局配置 |
 | `backend/internal/service/knowledge_service_test.go` | `TestManticoreSchemaMigrationChain` | Manticore 中文 ngram 表结构迁移链路：旧表结构识别 → 重建 → 仅迁移一次 | 旧表返回 `rebuilt=true`，且语句序列为 `SHOW CREATE TABLE` → `DROP TABLE` → 含 `ngram_len='1'` 的建表；再次调用返回 `rebuilt=false`（新结构启动不重建） |
 | `backend/internal/service/model_usage_service_test.go` | `TestUsageAggregationChain` | 用量分析链路（环节一~三）：查询区间解析 → 缺日补零 → 按调用数加权的平均延迟 | 缺省区间为合法日期且起点早于终点；起止倒置自动纠正；非法起点回退为合法日期且起点不大于终点；缺日补零且已有数据不被改写、尾部日期补齐；加权平均延迟等于 175，空数据为 0 |
+| `backend/internal/pkg/text_test.go` | `TestTruncateText` / `TestCountWords` | 文本工具：多字节安全截断 → 零长度 → CJK 逐字计数 → 拉丁词计数 | 中文截断按字符不破字；短文本原样返回；零长度返回空串；中文 4 字计 4；英文 4 词计 4；中英混排 3 个词元 |
 
 用例组织方式：链路子节以 `// ---- 环节N：… ----` 注释分隔；
 仅当同一行为有多个输入时才用表驱动（`TestAccessControlChain` 的拒绝路径）。

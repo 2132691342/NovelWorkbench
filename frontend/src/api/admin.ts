@@ -1,5 +1,5 @@
 // 系统管理接口封装（用户 / 角色 / 审计，字段与路径对齐后端 admin 契约）
-import { post } from '@/api/http'
+import { get, post } from '@/api/http'
 import type { NWPageDto } from './contracts'
 
 // ============================================================
@@ -161,4 +161,84 @@ export async function deleteAdminRole(roleUlid: string): Promise<void> {
 /** 审计日志分页列表 */
 export function listAdminAudits(req: NWAuditListReqVo): Promise<NWPageDto<NWAuditVo>> {
   return post<NWPageDto<NWAuditVo>>('/admin/audit/list', req)
+}
+
+// ============================================================
+// 登录日志
+// ============================================================
+
+/** 登录日志视图对象（字段对齐后端 LoginLogVO） */
+export interface NWLoginLogVo {
+  login_log_ulid: string
+  user_ulid: string
+  login_account_text: string
+  login_result_code: string
+  fail_reason_text: string
+  ip_addr: string
+  user_agent_text: string
+  created_at_ms: number
+}
+
+/** 登录日志分页查询请求（字段对齐后端 LoginLogListREQ） */
+export interface NWLoginLogListReqVo {
+  page_num: number
+  page_size: number
+  keyword_text?: string
+  login_result_code?: string
+  date_from?: string
+  date_to?: string
+}
+
+/** 登录日志分页列表 */
+export function listAdminLoginLogs(req: NWLoginLogListReqVo): Promise<NWPageDto<NWLoginLogVo>> {
+  return post<NWPageDto<NWLoginLogVo>>('/admin/login_log/list', req)
+}
+
+// ============================================================
+// 异步任务中心
+// ============================================================
+
+/** 异步任务视图对象（字段对齐后端 JobVO） */
+export interface NWJobVo {
+  job_ulid: string
+  job_type_code: string
+  job_status_code: string
+  doc_ulid: string
+  doc_name: string
+  retry_count: number
+  error_message: string
+  created_at_ms: number
+  updated_at_ms: number
+}
+
+/** 异步任务分页查询请求（字段对齐后端 JobListREQ） */
+export interface NWJobListReqVo {
+  page_num: number
+  page_size: number
+  job_type_code?: string
+  job_status_code?: string
+  keyword_text?: string
+}
+
+/** 任务状态概览（字段对齐后端 JobStatsVO） */
+export interface NWJobStatsVo {
+  queued_count: number
+  running_count: number
+  success_count: number
+  failed_count: number
+}
+
+/** 异步任务分页列表 */
+export function listAdminJobs(req: NWJobListReqVo): Promise<NWPageDto<NWJobVo>> {
+  return post<NWPageDto<NWJobVo>>('/admin/job/list', req)
+}
+
+/** 任务状态概览 */
+export function fetchAdminJobStats(): Promise<NWJobStatsVo> {
+  return get<NWJobStatsVo>('/admin/job/stats')
+}
+
+/** 重试失败任务 */
+export function retryAdminJob(jobUlid: string): Promise<NWJobVo> {
+  return post<NWJobVo>('/admin/job/retry', { job_ulid: jobUlid })
 }

@@ -38,11 +38,28 @@ drop_stale_dnat() {
   done
 }
 
+# cleanup_port_dnat 删除某宿主端口的全部 CNI DNAT 跳转规则（容器重建前调用）；
+# 容器启动时 podman 会为新容器重新写入唯一规则，避免旧容器 IP 抢占端口。
+cleanup_port_dnat() {
+  local port="$1"
+  command -v iptables >/dev/null 2>&1 || return 0
+  local chain_list chain line_no
+  chain_list="$(iptables -t nat -S CNI-HOSTPORT-DNAT 2>/dev/null | grep -- "--dports ${port} " \
+    | sed -n 's/.*-j \(CNI-DN-[^ ]*\).*/\1/p' | sort -u || true)"
+  for chain in $chain_list; do
+    while line_no="$(iptables -t nat -L CNI-HOSTPORT-DNAT --line-numbers -n 2>/dev/null \
+      | awk -v chain="$chain" '$2 == chain {print $1; exit}')"; [ -n "$line_no" ]; do
+      iptables -t nat -D CNI-HOSTPORT-DNAT "$line_no" || break
+    done
+  done
+}
+
 # ---- 组装构建上下文 ----
 BUILD_DIR="$SCRIPT_DIR/build"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/backend" "$BUILD_DIR/frontend"
 cp "$BACKEND_BIN" "$BUILD_DIR/backend/nw-server"
+chmod +x "$BUILD_DIR/backend/nw-server"
 cp "$BACKEND_CONF" "$BUILD_DIR/backend/config.yaml"
 cp /etc/ssl/certs/ca-certificates.crt "$BUILD_DIR/backend/ca-certificates.crt" \
   || die "缺少宿主机 CA bundle（/etc/ssl/certs/ca-certificates.crt）"
@@ -63,6 +80,8 @@ podman build -f "$SCRIPT_DIR/Dockerfile.frontend" \
 
 # ---- 重建容器 ----
 drop_stale_dnat
+cleanup_port_dnat "${NW_PUBLIC_PORT:-14399}"
+cleanup_port_dnat 8080
 export NW_BACKEND_IMAGE="$BACKEND_IMAGE" NW_FRONTEND_IMAGE="$FRONTEND_IMAGE"
 COMPOSE_LOG="${COMPOSE_LOG:-/var/log/novelworkbench-compose.log}"
 mkdir -p "$(dirname "$COMPOSE_LOG")"
@@ -75,10 +94,12 @@ fi
 drop_stale_dnat
 
 # ---- 健康自检：/health（存活）+ /ready（依赖就绪）+ 首页 ----
+PUBLIC_PORT="${NW_PUBLIC_PORT:-14399}"
 for i in $(seq 1 "$READY_TRIES"); do
-  health="$(curl -fsS -m 3 http://127.0.0.1:8080/health 2>/dev/null || true)"
-  ready="$(curl -fsS -m 3 http://127.0.0.1:8080/ready 2>/dev/null || true)"
-  index="$(curl -fsS -m 3 http://127.0.0.1/healthz 2>/dev/null || true)"
+  # 后端不映射宿主端口：直接进容器探活，避免 rootless podman 的陈旧 DNAT 干扰。
+  health="$(podman exec nw-backend wget -qO- http://127.0.0.1:8080/health 2>/dev/null || true)"
+  ready="$(podman exec nw-backend wget -qO- http://127.0.0.1:8080/ready 2>/dev/null || true)"
+  index="$(curl -fsS -m 3 "http://127.0.0.1:${PUBLIC_PORT}/healthz" 2>/dev/null || true)"
   if [ -n "$health" ] && [ -n "$ready" ] && [ "$index" = "ok" ]; then
     log "部署完成：/health /ready /healthz 全部通过"
     podman ps --format '{{.Names}} | {{.Status}} | {{.Ports}}'

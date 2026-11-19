@@ -4,7 +4,7 @@
 所有表名、列名、类型均取自 `backend/internal/domain/*.go` 的 GORM 标签，经 GORM 命名策略
 （`backend/internal/infra/postgres.go` 的 `ULIDNamingStrategy`）归一后与实际 DDL 一致。
 
-数据库结构由 `cmd/server/main.go` 的 `db.AutoMigrate(...)` 一次性声明 28 张表，
+数据库结构由 `cmd/server/main.go` 的 `db.AutoMigrate(...)` 一次性声明 30 张表，
 **没有 SQL 迁移文件**，也没有外键、软删除与数据库级级联。
 
 ## 1. 存储分工
@@ -68,6 +68,8 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`ULIDNamingStrategy.ColumnName`
 | `AUD_` | 审计日志 | `IDPrefixAudit` |
 | `MPR_` | 模型供应商 | `IDPrefixModelProvider` |
 | `MUS_` | 模型用量统计 | `IDPrefixModelUsage` |
+| `NTF_` | 站内通知 | `IDPrefixNotification` |
+| `LGL_` | 登录日志 | `IDPrefixLoginLog` |
 | `OUT_` | 大纲节点 | `IDPrefixOutline` |
 | `SCN_` | 详细场景卡片 | `IDPrefixScene` |
 | `FCT_` | 时间事实 | `IDPrefixTemporalFact` |
@@ -165,6 +167,42 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`ULIDNamingStrategy.ColumnName`
 
 索引：`idx_audit_logs_user_ul_id`、`idx_audit_logs_user_name`、`idx_audit_logs_action_code`、
 `idx_audit_logs_target_ul_id`。审计表**只增不删**，没有清理路径。
+
+#### notifications
+
+站内通知（账号安全、异步任务、系统消息）。
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `notification_ulid` | `varchar(40)` | PK |
+| `user_ulid` | `varchar(40)` | 索引，接收人 |
+| `notification_type_code` | `varchar(16)` | 索引，`system` / `task` / `account` |
+| `notification_title_text` | `varchar(128)` | |
+| `notification_body_text` | `varchar(512)` | |
+| `read_flag` | `boolean` | 索引，默认 false |
+| `link_url` | `varchar(256)` | 前端路由 |
+| `ref_type_code` | `varchar(32)` | 关联业务类型 |
+| `ref_ulid` | `varchar(40)` | 关联业务 ULID |
+
+索引：`idx_notifications_user_ul_id`、`idx_notifications_notification_type_code`、
+`idx_notifications_read_flag`。查询始终带 `user_ulid`，用户只能操作本人通知。
+
+#### login_logs
+
+登录尝试日志（成功 / 失败 / 禁用）。
+
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `login_log_ulid` | `varchar(40)` | PK |
+| `user_ulid` | `varchar(40)` | 索引，失败时可为空 |
+| `login_account_text` | `varchar(128)` | 索引，登录名或邮箱 |
+| `login_result_code` | `varchar(16)` | 索引，`success` / `failed` / `disabled` |
+| `fail_reason_text` | `varchar(256)` | |
+| `ip_addr` | `varchar(64)` | 客户端 IP |
+| `user_agent_text` | `varchar(512)` | 客户端 UA |
+
+索引：`idx_login_logs_user_ul_id`、`idx_login_logs_login_account_text`、
+`idx_login_logs_login_result_code`。日志只增不删，按时间倒序分页。
 
 ### 3.2 创作主数据
 
@@ -601,9 +639,14 @@ RabbitMQ 消费的落库凭据。
 | | `system:user:manage` | `PermUserManage` |
 | | `system:role:manage` | `PermRoleManage` |
 | | `system:audit:read` | `PermAuditRead` |
+| | `system:loginlog:read` | `PermLoginLogRead` |
+| | `system:job:manage` | `PermJobManage` |
 | | `system:model:manage` | `PermModelManage` |
 | | `system:usage:read` | `PermUsageRead` |
 | | `system:status:read` | `PermSystemRead` |
+| | `system:setting:manage` | `PermSettingManage` |
+| | `skill:manage` | `PermSkillManage` |
+| | `project:delete` | `PermProjectDelete` |
 
 ### 4.2 创作
 
@@ -650,6 +693,9 @@ RabbitMQ 消费的落库凭据。
 | `model_providers.protocol_code` | `openai` / `anthropic` |
 | `model_providers.last_test_status_code` | `untested` / `success` / `failed` |
 | `model_usage_stats.call_type_code` | `chat` |
+| `notifications.notification_type_code` | `system` / `task` / `account` |
+| `notifications.read_flag` | `true` / `false` |
+| `login_logs.login_result_code` | `success` / `failed` / `disabled` |
 
 ## 5. 非关系存储
 

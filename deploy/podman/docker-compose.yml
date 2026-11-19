@@ -38,6 +38,8 @@ services:
       NW_APP_RAG_TOP_K: ${NW_APP_RAG_TOP_K:-6}
       NW_APP_ADMIN_PASSWORD: ${NW_APP_ADMIN_PASSWORD:?未设置引导管理员密码}
       NW_APP_BUILD_VERSION: ${NW_APP_BUILD_VERSION:-dev}
+    # 后端只加入中间件网络，由前端 nginx 反向代理；健康检查走 podman exec，
+    # 不映射宿主端口，避免 rootless podman 重建后的陈旧 DNAT 规则。
     expose:
       - "8080"
     healthcheck:

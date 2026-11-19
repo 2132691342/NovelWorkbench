@@ -14,13 +14,14 @@ import (
 
 // UserAdminService 用户管理业务：列表、创建、更新、删除、重置密码、角色挂载、启动期管理员引导。
 type UserAdminService struct {
-	userRepo *repo.UserRepo // 用户仓储
-	roleRepo *repo.RoleRepo // 角色仓储
+	userRepo        *repo.UserRepo       // 用户仓储
+	roleRepo        *repo.RoleRepo       // 角色仓储
+	notificationSvc *NotificationService // 站内通知（账号事件提醒）
 }
 
-// NewUserAdminService 构造用户管理服务。
-func NewUserAdminService(userRepo *repo.UserRepo, roleRepo *repo.RoleRepo) *UserAdminService {
-	return &UserAdminService{userRepo: userRepo, roleRepo: roleRepo}
+// NewUserAdminService 构造用户管理服务（通知服务可空，便于测试）。
+func NewUserAdminService(userRepo *repo.UserRepo, roleRepo *repo.RoleRepo, notificationSvc *NotificationService) *UserAdminService {
+	return &UserAdminService{userRepo: userRepo, roleRepo: roleRepo, notificationSvc: notificationSvc}
 }
 
 // ListPage 分页查询用户（含角色编码）。
@@ -79,6 +80,15 @@ func (s *UserAdminService) Create(ctx context.Context, req *domain.UserAdminCrea
 	if err := s.roleRepo.ReplaceUserRoles(ctx, do.UserULID, roleULIDs); err != nil {
 		return domain.UserAdminVO{}, err
 	}
+	s.notify(ctx, domain.NotificationCreateDTO{
+		UserULID:              do.UserULID,
+		NotificationTypeCode:  domain.NotificationTypeAccount,
+		NotificationTitleText: "账号已开通",
+		NotificationBodyText:  "管理员已为你开通 NovelWorkbench 账号，可在个人中心修改密码与头像。",
+		LinkURL:               "/profile",
+		RefTypeCode:           "user",
+		RefULID:               do.UserULID,
+	})
 	return toUserAdminVO(do, roleCodes), nil
 }
 
@@ -144,6 +154,11 @@ func (s *UserAdminService) Delete(ctx context.Context, req *domain.UserAdminDele
 	if err := s.roleRepo.DeleteUserRoles(ctx, req.UserULID); err != nil {
 		return err
 	}
+	if s.notificationSvc != nil {
+		if err := s.notificationSvc.DeleteByUser(ctx, req.UserULID); err != nil {
+			pkg.SLogger().Warnw("清理用户通知失败", "user_ulid", req.UserULID, "error", err)
+		}
+	}
 	return s.userRepo.Delete(ctx, req.UserULID)
 }
 
@@ -156,7 +171,29 @@ func (s *UserAdminService) ResetPassword(ctx context.Context, req *domain.UserRe
 	if err != nil {
 		return pkg.WrapBizError(domain.RespCodeInternalError, "加密密码失败", err)
 	}
-	return s.userRepo.Update(ctx, req.UserULID, map[string]any{"password_hash": string(hashBytes)})
+	if err := s.userRepo.Update(ctx, req.UserULID, map[string]any{"password_hash": string(hashBytes)}); err != nil {
+		return err
+	}
+	s.notify(ctx, domain.NotificationCreateDTO{
+		UserULID:              req.UserULID,
+		NotificationTypeCode:  domain.NotificationTypeAccount,
+		NotificationTitleText: "登录密码已被管理员重置",
+		NotificationBodyText:  "管理员重置了你的登录密码，请使用新密码登录后尽快在个人中心修改。",
+		LinkURL:               "/profile",
+		RefTypeCode:           "user",
+		RefULID:               req.UserULID,
+	})
+	return nil
+}
+
+// notify 发送账号事件通知（失败只告警，不影响主流程）。
+func (s *UserAdminService) notify(ctx context.Context, createDTO domain.NotificationCreateDTO) {
+	if s.notificationSvc == nil {
+		return
+	}
+	if err := s.notificationSvc.Notify(ctx, createDTO); err != nil {
+		pkg.SLogger().Warnw("账号通知写入失败", "user_ulid", createDTO.UserULID, "error", err)
+	}
 }
 
 // BootstrapAdmin 启动期引导管理员（仅当用户表为空时创建并挂载 admin 角色）。

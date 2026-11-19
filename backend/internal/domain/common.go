@@ -30,6 +30,8 @@ const (
 	IDPrefixAudit           = "AUD_" // 审计日志
 	IDPrefixModelProvider   = "MPR_" // 模型供应商
 	IDPrefixModelUsage      = "MUS_" // 模型用量统计
+	IDPrefixNotification    = "NTF_" // 站内通知
+	IDPrefixLoginLog        = "LGL_" // 登录日志
 )
 
 // 业务响应码（字符串，与 HTTP 状态码 int 区分）：SUCCESS 与 ERR_ 前缀族。

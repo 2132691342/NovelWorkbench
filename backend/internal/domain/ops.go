@@ -16,6 +16,51 @@ type JobDO struct {
 // TableName 指定表名。
 func (JobDO) TableName() string { return "jobs" }
 
+// 异步任务类型与状态编码常量。
+const (
+	JobTypeDocIndex   = "doc_index"   // 知识库文档首次索引
+	JobTypeDocReindex = "doc_reindex" // 知识库文档重建索引
+
+	JobStatusQueued  = "queued"  // 已入队
+	JobStatusRunning = "running" // 执行中
+	JobStatusSuccess = "success" // 成功
+	JobStatusFailed  = "failed"  // 失败
+)
+
+// JobListREQ 异步任务分页查询请求（管理端）。
+type JobListREQ struct {
+	PageREQ
+	JobTypeCode   string `json:"job_type_code" binding:"omitempty,max=32"`   // 类型过滤
+	JobStatusCode string `json:"job_status_code" binding:"omitempty,max=16"` // 状态过滤
+	KeywordText   string `json:"keyword_text" binding:"omitempty,max=64"`    // 任务 ULID/文档 ULID 模糊
+}
+
+// JobRetryREQ 重试异步任务请求（仅失败任务可重试）。
+type JobRetryREQ struct {
+	JobULID string `json:"job_ulid" binding:"required,max=40"` // 任务 ULID
+}
+
+// JobStatsVO 任务状态概览（任务中心顶部卡片）。
+type JobStatsVO struct {
+	QueuedCount  int64 `json:"queued_count"`  // 排队中
+	RunningCount int64 `json:"running_count"` // 执行中
+	SuccessCount int64 `json:"success_count"` // 成功
+	FailedCount  int64 `json:"failed_count"`  // 失败
+}
+
+// JobVO 异步任务视图对象（管理端任务中心）。
+type JobVO struct {
+	JobULID       string `json:"job_ulid"`        // 任务 ULID
+	JobTypeCode   string `json:"job_type_code"`   // 类型
+	JobStatusCode string `json:"job_status_code"` // 状态
+	DocULID       string `json:"doc_ulid"`        // 关联文档 ULID（解析自载荷）
+	DocName       string `json:"doc_name"`        // 关联文档名
+	RetryCount    int    `json:"retry_count"`     // 已重试次数
+	ErrorMessage  string `json:"error_message"`   // 失败原因
+	CreatedAtMs   int64  `json:"created_at_ms"`   // 创建时间（毫秒）
+	UpdatedAtMs   int64  `json:"updated_at_ms"`   // 更新时间（毫秒）
+}
+
 // AppSettingDO 应用配置持久化对象（key-value，运行时可改）。
 type AppSettingDO struct {
 	BaseDO

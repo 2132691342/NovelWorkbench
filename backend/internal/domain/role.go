@@ -14,6 +14,8 @@ const (
 	PermUsageRead      = "system:usage:read"     // 用量分析查看
 	PermSystemRead     = "system:status:read"    // 运行状态查看
 	PermSettingManage  = "system:setting:manage" // 运行时配置维护
+	PermLoginLogRead   = "system:loginlog:read"  // 登录日志查看
+	PermJobManage      = "system:job:manage"     // 异步任务查看与重试
 	PermProjectDelete  = "project:delete"        // 删除项目
 	PermSkillManage    = "skill:manage"          // 技能资产管理
 	PermSkillApply     = "skill:apply"           // 技能使用

@@ -224,6 +224,112 @@
 - 修改 `rag_top_k` 后，下一次知识库检索的默认召回条数随之变化。
 - 配置项说明（`setting_desc`）随查询返回。
 
+### 1.6 个人中心
+
+**用户能力**
+
+- 查看本人资料：登录名、邮箱、头像、角色、状态、创建与更新时间。
+- 修改邮箱、头像地址与个人备注。
+- 修改登录密码（需验证当前密码）。
+- 从顶栏头像菜单进入，不占用主导航。
+
+**实现**
+
+- `api/auth_api.go` 的 `ProfileDetail` / `UpdateProfile` / `ChangePassword`。
+- 路由：`GET /profile/detail`、`POST /profile/update`、`POST /profile/password/change`。
+- `service/auth_service.go` 的 `ProfileDetail`：用户 + 角色编码组装 `UserProfileVO`。
+- `service/auth_service.go` 的 `UpdateProfile`：邮箱变更查重；头像与备注允许清空。
+- `service/auth_service.go` 的 `ChangePassword`：bcrypt 校验旧密码 → 重哈希 → 写安全通知。
+- `frontend/src/views/profile/index.vue`：资料卡 + 三个 Tab（基本资料 / 账号安全 / 账号信息）。
+- 保存成功后调用 `authStore.fetchProfile()`，顶栏头像与姓名立即刷新。
+
+**验收点**
+
+- 邮箱被他人占用返回 `ERR_CONFLICT`。
+- 旧密码错误返回 `ERR_UNAUTHORIZED`，密码不变。
+- 修改成功后通知中心出现「登录密码已修改」。
+- 响应不包含 `password_hash`。
+
+### 1.7 通知中心
+
+**用户能力**
+
+- 顶栏铃铛显示未读数（超过 99 显示 99+），点击查看最近 5 条。
+- 通知中心按全部 / 未读 / 已读、类型与关键词筛选。
+- 单条已读、全部已读、删除；带跳转地址的通知可直接打开业务页。
+
+**实现**
+
+- `domain/notification.go`：类型 `system/task/account`，字段含标题、正文、已读、跳转与关联业务。
+- `repo/notification_repo.go`：按用户隔离的分页、未读计数、批量已读、全部已读、删除。
+- `service/notification_service.go` 的 `Notify`：业务侧统一入口，标题/正文按字符截断。
+- `api/notification_api.go` 与路由：`/notification/list`、`/notification/unread_count`、
+  `/notification/read`、`/notification/read_all`、`/notification/delete`。
+- 触发点：
+  - 管理员创建账号 → 新用户收到「账号已开通」。
+  - 管理员重置密码 → 目标用户收到安全提醒。
+  - 本人修改密码 → 收到「登录密码已修改」。
+  - 知识库索引成功 / 失败 → 项目主人收到任务结果。
+- 前端 `stores/notification.ts`：未读数、最近通知、标记已读；`layout/NotificationBell.vue`
+  每 60 秒轮询一次。
+- 顶栏浮层与 `/notifications` 页共用同一 store。
+
+**验收点**
+
+- 未读数与铃铛徽标一致；标记已读后立即减少。
+- 用户只能看到并操作自己的通知。
+- 索引失败通知包含失败原因，可跳转知识库。
+- 通知轮询失败不弹出错误提示，不打断写作。
+
+### 1.8 登录日志
+
+**用户能力**
+
+- 管理端按账号 / IP、结果与日期查看登录记录。
+- 区分成功、密码错误与禁用账号尝试。
+
+**实现**
+
+- `domain/login_log.go`：结果为 `success/failed/disabled`，记录账号、用户、IP、UA、失败原因。
+- `repo/login_log_repo.go` 的 `ListPage`：账号/IP 模糊 + 结果 + 日期区间。
+- `service/login_log_service.go` 的 `Record`：失败只告警，不阻断登录。
+- `service/auth_service.go` 的 `Login`：三个分支分别记录；成功记录用户 ULID。
+- `api/login_log_api.go` 与路由：`POST /admin/login_log/list`，收口 `system:loginlog:read`。
+- 前端 `views/admin/login-logs.vue`：结果标签 + 日期范围 + 客户端 UA 展示。
+
+**验收点**
+
+- 账号不存在与密码错误都记录 `failed`，但对外文案一致。
+- 禁用账号记录 `disabled` 且不签发令牌。
+- 日志查询需要 `system:loginlog:read`；普通用户 403。
+- 登录日志写入失败不影响登录结果。
+
+### 1.9 任务中心
+
+**用户能力**
+
+- 查看异步任务状态概览：排队、执行、成功、失败。
+- 按类型、状态与关键词筛选任务，查看关联文档与失败原因。
+- 对失败任务执行重试，重新投递索引消息。
+
+**实现**
+
+- `domain/ops.go`：`JobListREQ`、`JobRetryREQ`、`JobVO`、`JobStatsVO` 与状态常量。
+- `repo/job_repo.go`：新增 `GetByULID`、`ListPage`、`CountByStatus`。
+- `service/job_service.go` 的 `ListPage`：解析载荷中的 `doc_ulid`，批量回填文档名。
+- `service/job_service.go` 的 `Retry`：仅 `failed` 可重试；重置任务为 `queued`、文档为 `pending`，
+  重新 `PublishIndexJob`；投递失败回写 `failed`。
+- `api/job_api.go` 与路由：`POST /admin/job/list`、`GET /admin/job/stats`、`POST /admin/job/retry`，
+  收口 `system:job:manage`。
+- 前端 `views/admin/jobs.vue`：四张状态卡 + 筛选表格 + 失败重试。
+
+**验收点**
+
+- 只有失败任务显示「重试」；非失败任务重试返回 `ERR_BIZ_FAILED`。
+- 重试后任务变 `queued`，文档变 `pending`，worker 可再次消费。
+- 任务列表不产生 N+1 文档查询。
+- 队列不可用时重试返回 `ERR_STORAGE`，任务保持 `failed`。
+
 ---
 
 ## 2. 创作主线

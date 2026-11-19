@@ -130,6 +130,8 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 | `system:menu:manage` | `/menu/list`、`/menu/detail/{MenuULID}`、`/menu/save`、`/menu/delete` |
 | `system:perm:read` | `/menu/permission/catalog` |
 | `system:audit:read` | `/admin/audit/list` |
+| `system:loginlog:read` | `/admin/login_log/list` |
+| `system:job:manage` | `/admin/job/list`、`/admin/job/stats`、`/admin/job/retry` |
 | `system:setting:manage` | `/setting/update` |
 | `skill:manage` | `/skill/save`、`/skill/delete`、`/skill/reference/save`、`/skill/reference/delete` |
 | `*` | 内置 `admin` 角色拥有全部权限 |
@@ -431,6 +433,71 @@ body 采样上限 64 KiB）；审计落库失败只记日志，不阻断业务�
 `SystemStatusVO.dependency_list` 的 `dependency_code` 取
 `postgres` / `redis` / `rabbitmq` / `minio` / `manticore` / `model`，
 `status_code` 取 `up` / `down` / `degraded`。
+
+### 6.18 个人中心
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/profile/detail` | 登录 | 本人资料（含角色、备注、更新时间） |
+| POST | `/profile/update` | 登录 | 更新邮箱 / 头像 / 备注 |
+| POST | `/profile/password/change` | 登录 | 旧密码校验后修改 |
+
+请求字段：
+
+```json
+{ "user_email": "a@b.com", "avatar_url": "https://...", "remark_text": "..." }
+{ "old_password_text": "******", "new_password_text": "******" }
+```
+
+错误：邮箱冲突 `ERR_CONFLICT`；旧密码错误 `ERR_UNAUTHORIZED`。
+
+### 6.19 站内通知
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| POST | `/notification/list` | 登录 | 本人通知分页 |
+| GET | `/notification/unread_count` | 登录 | 未读数 |
+| POST | `/notification/read` | 登录 | 批量标记已读 |
+| POST | `/notification/read_all` | 登录 | 全部标记已读 |
+| POST | `/notification/delete` | 登录 | 删除单条 |
+
+列表请求：
+
+```json
+{
+  "page_num": 1,
+  "page_size": 10,
+  "read_status_code": "unread",
+  "notification_type_code": "task",
+  "keyword_text": "索引"
+}
+```
+
+通知类型：`system` / `task` / `account`。响应项含 `notification_ulid`、标题、正文、
+`read_flag`、`link_url`、`ref_type_code`、`ref_ulid`、`created_at_ms`。
+
+### 6.20 登录日志（管理端）
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| POST | `/admin/login_log/list` | `system:loginlog:read` | 登录记录分页 |
+
+请求：`keyword_text`（账号/IP）、`login_result_code`（success/failed/disabled）、
+`date_from` / `date_to`（YYYY-MM-DD）。
+
+响应项含 `login_log_ulid`、`login_account_text`、`login_result_code`、`fail_reason_text`、
+`ip_addr`、`user_agent_text`、`user_ulid`、`created_at_ms`。
+
+### 6.21 任务中心（管理端）
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| POST | `/admin/job/list` | `system:job:manage` | 任务分页 |
+| GET | `/admin/job/stats` | `system:job:manage` | 状态概览 |
+| POST | `/admin/job/retry` | `system:job:manage` | 重试失败任务 |
+
+任务状态：`queued` / `running` / `success` / `failed`。类型：`doc_index` / `doc_reindex`。
+重试仅接受 `failed`，成功后任务回到 `queued`、文档回到 `pending`。
 
 ## 7. 特殊端点
 

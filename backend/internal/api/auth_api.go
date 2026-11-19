@@ -40,12 +40,54 @@ func (a *AuthAPI) Login(c *gin.Context) {
 		respondErr(c, "auth.login", bindErr(err))
 		return
 	}
-	dto, err := a.svc.Login(c.Request.Context(), &req)
+	dto, err := a.svc.Login(c.Request.Context(), &req, domain.LoginMetaDTO{
+		IPAddr:        c.ClientIP(),
+		UserAgentText: c.Request.UserAgent(),
+	})
 	if err != nil {
 		respondErr(c, "auth.login", err)
 		return
 	}
 	pkg.Ok(c, dto)
+}
+
+// ProfileDetail 返回个人中心资料（GET /profile/detail）。
+func (a *AuthAPI) ProfileDetail(c *gin.Context) {
+	vo, err := a.svc.ProfileDetail(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID))
+	if err != nil {
+		respondErr(c, "profile.detail", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}
+
+// UpdateProfile 更新本人资料（POST /profile/update）。
+func (a *AuthAPI) UpdateProfile(c *gin.Context) {
+	var req domain.UserProfileUpdateREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "profile.update", bindErr(err))
+		return
+	}
+	vo, err := a.svc.UpdateProfile(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), &req)
+	if err != nil {
+		respondErr(c, "profile.update", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}
+
+// ChangePassword 修改本人密码（POST /profile/password/change）。
+func (a *AuthAPI) ChangePassword(c *gin.Context) {
+	var req domain.UserPasswordChangeREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "profile.password.change", bindErr(err))
+		return
+	}
+	if err := a.svc.ChangePassword(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), &req); err != nil {
+		respondErr(c, "profile.password.change", err)
+		return
+	}
+	pkg.Ok(c, nil)
 }
 
 // Profile 返回当前登录用户信息（GET /auth/profile）。

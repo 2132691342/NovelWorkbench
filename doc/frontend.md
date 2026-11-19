@@ -165,10 +165,11 @@ frontend/
 | `components/NWEmpty.vue` | `description_text: string`（默认空） | 无描述时回落 `t('common.empty')`；内联 SVG 占位图标 |
 | `components/NWLoading.vue` | 无 | 旋转圈 + `t('common.loading')` 文案，`role="status"` |
 | `components/ProjectPageHeader.vue` | `projectUlid: string` | 显示返回工作台按钮（跳 `/workspace/{projectUlid}`）与项目名；项目名由 `getProjectDetail` 拉取，`projectUlid` 变化时 watch 重载；项目不在 store 列表且列表已加载完时不再发请求（视为已删除/无权），交由布局守卫跳转 |
+| `layout/NotificationBell.vue` | 无 | 顶栏铃铛与最近通知浮层；未读数来自 `useNotificationStore`，每 60 秒轮询；单条点击标记已读并跳转 `link_url`，支持全部已读 |
 
 ## 5. 状态与数据流
 
-### 5.1 四个 Store
+### 5.1 五个 Store
 
 | Store | State | Getters | Actions | 持久化键 |
 | --- | --- | --- | --- | --- |
@@ -176,6 +177,7 @@ frontend/
 | `stores/auth.ts`（`useAuthStore`） | `access_token`、`user_vo`、`perm_code_list` | `is_logged_in`、`hasPerm(permCode)`（含 `*` 通配）、`is_admin_user` | `login()`、`fetchProfile()`、`setPermCodes(list)`、`logout()`、`resetSession()` | token：`nw_access_token`；用户信息：`nw_user_vo`（JSON，读取时结构校验） |
 | `stores/menu.ts`（`useMenuStore`） | `menu_tree_list`、`perm_code_list`、`nav_loading`、`nav_loaded` | `hasPerm(permCode)` | `loadNav()`（`GET /menu/nav`，并发只发一次）、`resetNav()` | 不持久化：每次会话由后端下发 |
 | `stores/project.ts`（`useProjectStore`） | `project_list`、`current_project_ulid`、`list_loading` | `current_project_vo`、`hasProject(projectUlid)` | `loadProjectList()`（`POST /project/list`，page 1/size 100）、`setCurrentProject(projectUlid)` | `nw_current_project_ulid` |
+| `stores/notification.ts`（`useNotificationStore`） | `unread_count`、`latest_list`、`loading_flag` | — | `refreshUnread()`、`refreshLatest()`、`refreshAll()`、`markRead(ulid)`、`markAllRead()`、`reset()` | 不持久化：每次会话从后端拉取 |
 
 `menu.perm_code_list` 会同步写入 `auth.perm_code_list`，两处 getter 结果一致；
 权限判定的唯一数据来源是后端 `GET /menu/nav`，前端不再从 `role_codes` 推断权限。
@@ -215,11 +217,15 @@ frontend/
 | `/settings` | `SettingsView` | `views/settings/index.vue` | `settings` | `system:setting:manage` | 否 |
 | `/skills` | `SkillAdminView` | `views/skills/index.vue` | `skills` | `skill:manage` | 否 |
 | `/models` | `ModelProviderView` | `views/models/index.vue` | `models` | — | 否 |
+| `/profile` | `ProfileView` | `views/profile/index.vue` | `profile` | — | 否 |
+| `/notifications` | `NotificationCenterView` | `views/notification/index.vue` | `notifications` | — | 否 |
 | `/admin/users` | `AdminUsersView` | `views/admin/users.vue` | `admin_users` | `system:user:manage` | 否 |
 | `/admin/roles` | `AdminRolesView` | `views/admin/roles.vue` | `admin_roles` | `system:role:manage` | 否 |
 | `/admin/menus` | `AdminMenusView` | `views/admin/menus.vue` | `admin_menus` | `system:menu:manage` | 否 |
 | `/admin/permissions` | `AdminPermissionsView` | `views/admin/permissions.vue` | `admin_perms` | `system:perm:read` | 否 |
 | `/admin/audit` | `AdminAuditView` | `views/admin/audit.vue` | `admin_audit` | `system:audit:read` | 否 |
+| `/admin/login-logs` | `AdminLoginLogView` | `views/admin/login-logs.vue` | `admin_login_log` | `system:loginlog:read` | 否 |
+| `/admin/jobs` | `AdminJobView` | `views/admin/jobs.vue` | `admin_jobs` | `system:job:manage` | 否 |
 | `/admin/usage` | `AdminUsageView` | `views/admin/usage.vue` | `admin_usage` | `system:usage:read` | 否 |
 | `/admin/status` | `AdminStatusView` | `views/admin/status.vue` | `admin_status` | `system:status:read` | 否 |
 | `/workspace/:project_ulid` | `WorkspaceView` | `views/workspace/index.vue` | `workspace` | — | 是 |
@@ -314,6 +320,10 @@ i18n 不再为菜单文案提供 `layout.menu.*` 键（新增语言只需翻译�
 | `/admin/menus` | `views/admin/menus.vue` | 菜单树管理 + 编辑抽屉 | `listMenus/saveMenu/deleteMenu`；图标下拉与侧边栏 `NWIcon` 同一份编码 |
 | `/admin/permissions` | `views/admin/permissions.vue` | 权限目录分组浏览 | `fetchPermCatalog`；左侧分组、右侧表格 |
 | `/models` | `views/models/index.vue` | 模型供应商卡片列表、新建编辑抽屉、连通性测试 | `listModelProviders/saveModelProvider/deleteModelProvider/testModelProvider/getModelCapability`；协议仅 `openai`/`anthropic`；系统只用对话协议，不接向量模型 |
+| `/profile` | `views/profile/index.vue` | 个人中心：品牌资料卡 + 基本资料 / 账号安全 / 账号信息三 Tab | `fetchProfileDetail/updateProfile/changePassword`；改密需旧密码与二次确认；保存后 `authStore.fetchProfile()` 刷新顶栏 |
+| `/notifications` | `views/notification/index.vue` | 通知中心：全部/未读/已读、类型、关键词、单条已读、全部已读、删除 | `api/notification.ts` + `useNotificationStore`；顶栏铃铛与页面共用未读数；带 `link_url` 的通知可直接跳转 |
+| `/admin/login-logs` | `views/admin/login-logs.vue` | 登录日志：账号/IP、结果、日期区间筛选 + 只读表格 | `listAdminLoginLogs`；结果标签 success/failed/disabled；展示 IP 与 UA |
+| `/admin/jobs` | `views/admin/jobs.vue` | 任务中心：四张状态卡 + 类型/状态/关键词筛选 + 失败重试 | `fetchAdminJobStats/listAdminJobs/retryAdminJob`；重试前二次确认；成功后同时刷新列表与统计 |
 | `/admin/users` | `views/admin/users.vue` | 用户分页表格、状态与角色标签、新建弹窗、编辑抽屉、重置密码、删除 | `api/admin.ts` 用户接口 + `listAdminRoles` 供角色多选；子组件 `UserFormDialogs.vue` |
 | `/admin/roles` | `views/admin/roles.vue` | 角色分页表格、权限单选或多选保存、删除 | `listAdminRoles/saveAdminRole/deleteAdminRole` + `fetchPermCatalog`（权限选项唯一来源）；内置角色（`builtin_flag`）删除按钮禁用并以 tooltip 说明；表格内权限标签展示权限名称而非原始码 |
 | `/admin/audit` | `views/admin/audit.vue` | 审计日志筛选与只读分页表 | `listAdminAudits`，按 `action_code` / `user_ulid` 过滤 |

@@ -39,6 +39,9 @@ type RouterDeps struct {
 	ProviderAPI   *ModelProviderAPI // 模型供应商模块处理器
 	UsageAPI      *ModelUsageAPI    // 模型用量模块处理器
 	StatusAPI     *SystemStatusAPI  // 系统运行状态模块处理器
+	NotifyAPI     *NotificationAPI  // 站内通知模块处理器
+	LoginLogAPI   *LoginLogAPI      // 登录日志模块处理器
+	JobAPI        *JobAPI           // 异步任务中心处理器
 }
 
 // NewRouter 装配 HTTP 路由；中间件顺序：Recovery → 请求ID → 日志 → CORS（先处理预检）→ 方法白名单 → 鉴权 → 审计。
@@ -63,6 +66,8 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	v1.Use(deps.AuthMW)
 	v1.Use(deps.AuditMW)
 	registerAuthRoutes(v1, deps.AuthAPI)
+	registerProfileRoutes(v1, deps.AuthAPI)
+	registerNotificationRoutes(v1, deps.NotifyAPI)
 	registerProjectRoutes(v1, deps.ProjectAPI)
 	registerVolumeRoutes(v1, deps.VolumeAPI)
 	registerChapterRoutes(v1, deps.ChapterAPI)
@@ -147,6 +152,18 @@ func registerAdminRoutes(rg *gin.RouterGroup, deps RouterDeps) {
 	{
 		auditGroup.POST("/list", deps.AuditAPI.List)
 	}
+	loginLogGroup := rg.Group("/admin/login_log")
+	loginLogGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermLoginLogRead))
+	{
+		loginLogGroup.POST("/list", deps.LoginLogAPI.List)
+	}
+	jobGroup := rg.Group("/admin/job")
+	jobGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermJobManage))
+	{
+		jobGroup.POST("/list", deps.JobAPI.List)
+		jobGroup.GET("/stats", deps.JobAPI.Stats)
+		jobGroup.POST("/retry", deps.JobAPI.Retry)
+	}
 }
 
 // registerAuthRoutes 注册认证路由（login 免鉴权，由中间件白名单放行；系统不开放注册）。
@@ -154,6 +171,22 @@ func registerAuthRoutes(rg *gin.RouterGroup, handler *AuthAPI) {
 	rg.POST("/auth/login", handler.Login)
 	rg.GET("/auth/profile", handler.Profile)
 	rg.POST("/auth/logout", handler.Logout)
+}
+
+// registerProfileRoutes 注册个人中心路由（本人资料与密码，登录即可访问）。
+func registerProfileRoutes(rg *gin.RouterGroup, handler *AuthAPI) {
+	rg.GET("/profile/detail", handler.ProfileDetail)
+	rg.POST("/profile/update", handler.UpdateProfile)
+	rg.POST("/profile/password/change", handler.ChangePassword)
+}
+
+// registerNotificationRoutes 注册站内通知路由（按当前用户隔离）。
+func registerNotificationRoutes(rg *gin.RouterGroup, handler *NotificationAPI) {
+	rg.POST("/notification/list", handler.List)
+	rg.GET("/notification/unread_count", handler.UnreadCount)
+	rg.POST("/notification/read", handler.Read)
+	rg.POST("/notification/read_all", handler.ReadAll)
+	rg.POST("/notification/delete", handler.Delete)
 }
 
 // registerProjectRoutes 注册项目路由。

@@ -43,6 +43,18 @@ const routes: RouteRecordRaw[] = [
         meta: { menu_code: 'models' },
       },
       {
+        path: 'profile',
+        name: 'ProfileView',
+        component: () => import('@/views/profile/index.vue'),
+        meta: { menu_code: 'profile' },
+      },
+      {
+        path: 'notifications',
+        name: 'NotificationCenterView',
+        component: () => import('@/views/notification/index.vue'),
+        meta: { menu_code: 'notifications' },
+      },
+      {
         path: 'admin/users',
         name: 'AdminUsersView',
         component: () => import('@/views/admin/users.vue'),
@@ -71,6 +83,18 @@ const routes: RouteRecordRaw[] = [
         name: 'AdminAuditView',
         component: () => import('@/views/admin/audit.vue'),
         meta: { menu_code: 'admin_audit', perm_code: 'system:audit:read' },
+      },
+      {
+        path: 'admin/login-logs',
+        name: 'AdminLoginLogView',
+        component: () => import('@/views/admin/login-logs.vue'),
+        meta: { menu_code: 'admin_login_log', perm_code: 'system:loginlog:read' },
+      },
+      {
+        path: 'admin/jobs',
+        name: 'AdminJobView',
+        component: () => import('@/views/admin/jobs.vue'),
+        meta: { menu_code: 'admin_jobs', perm_code: 'system:job:manage' },
       },
       {
         path: 'admin/usage',

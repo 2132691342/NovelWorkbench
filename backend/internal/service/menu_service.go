@@ -41,6 +41,7 @@ var menuSeedList = []menuSeed{
 	{MenuCode: "group_platform", MenuName: "平台", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "layers", SortOrder: 30},
 	{MenuCode: "models", ParentCode: "group_platform", MenuName: "模型供应商", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/models", IconCode: "model", SortOrder: 10},
 	{MenuCode: "skills", ParentCode: "group_platform", MenuName: "技能管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/skills", IconCode: "wand", PermCode: domain.PermSkillManage, SortOrder: 20},
+	{MenuCode: "notifications", ParentCode: "group_platform", MenuName: "通知中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/notifications", IconCode: "bell", SortOrder: 30},
 
 	{MenuCode: "group_system", MenuName: "系统", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "settings", SortOrder: 40},
 	{MenuCode: "admin_users", ParentCode: "group_system", MenuName: "用户管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/users", IconCode: "users", PermCode: domain.PermUserManage, SortOrder: 10},
@@ -48,7 +49,9 @@ var menuSeedList = []menuSeed{
 	{MenuCode: "admin_menus", ParentCode: "group_system", MenuName: "菜单管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/menus", IconCode: "menu", PermCode: domain.PermMenuManage, SortOrder: 30},
 	{MenuCode: "admin_perms", ParentCode: "group_system", MenuName: "权限目录", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/permissions", IconCode: "lock", PermCode: domain.PermPermissionRead, SortOrder: 40},
 	{MenuCode: "admin_audit", ParentCode: "group_system", MenuName: "审计日志", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/audit", IconCode: "history", PermCode: domain.PermAuditRead, SortOrder: 50},
+	{MenuCode: "admin_login_log", ParentCode: "group_system", MenuName: "登录日志", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/login-logs", IconCode: "lock", PermCode: domain.PermLoginLogRead, SortOrder: 55},
 	{MenuCode: "admin_usage", ParentCode: "group_system", MenuName: "用量分析", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/usage", IconCode: "chart", PermCode: domain.PermUsageRead, SortOrder: 60},
+	{MenuCode: "admin_jobs", ParentCode: "group_system", MenuName: "任务中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/jobs", IconCode: "pulse", PermCode: domain.PermJobManage, SortOrder: 65},
 	{MenuCode: "admin_status", ParentCode: "group_system", MenuName: "运行状态", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/status", IconCode: "pulse", PermCode: domain.PermSystemRead, SortOrder: 70},
 	{MenuCode: "settings", MenuName: "系统设置", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/settings", IconCode: "sliders", PermCode: domain.PermSettingManage, SortOrder: 50},
 
