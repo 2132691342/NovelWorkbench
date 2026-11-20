@@ -1,7 +1,6 @@
 # 接口契约
 
 本文描述 NovelWorkbench 对外暴露的全部 HTTP 接口：通用约定、响应包络、业务码映射、中间件链、权限码、按模块分组的接口总表与特殊端点。
-事实来源为 `backend/internal/api/router.go` 的路由注册、`backend/internal/api/*_api.go` 的处理器、`backend/internal/domain/*.go` 的请求/视图结构，以及 `backend/internal/pkg` 的包络与中间件实现。
 
 ## 1. 通用约定
 
@@ -9,7 +8,7 @@
 | --- | --- | --- |
 | 业务基础路径 | `/api/v1` | `router.go` 的 `v1 := router.Group("/api/v1")` |
 | 探针路径 | `/health`、`/ready`，注册在 `/api/v1` 之外 | `router.go` 的 `NewRouter` |
-| 接口总数 | `/api/v1` 下 105 条，另有 2 条探针，共 107 条 | `router.go` |
+| 接口总数 | `/api/v1` 下 109 条，另有 2 条探针，共 111 条 | `router.go` |
 | 允许方法 | 仅 `GET` / `POST`；`OPTIONS` 只用于 CORS 预检 | `pkg.MethodWhitelistMiddleware` |
 | 请求编码 | `POST` 默认 `application/json`（`ShouldBindJSON`）；`/knowledge/upload` 为 `multipart/form-data` | 各 `*_api.go` |
 | 查询参数 | `GET` 用 query（`ShouldBindQuery`），路径变量用 `c.Param` | 各 `*_api.go` |
@@ -120,7 +119,7 @@ flowchart LR
 
 ## 5. 权限码
 
-权限码定义在 `backend/internal/domain/role.go`，共 13 个常量。`RequirePermMiddleware` 通过 `pkg.PermChecker`（由 `service.RoleService` 实现）判定，命中 `*` 视为全部权限。
+权限码定义在 `backend/internal/domain/role.go`，共 14 个常量。`RequirePermMiddleware` 通过 `pkg.PermChecker`（由 `service.RoleService` 实现）判定，命中 `*` 视为全部权限。
 
 | 权限码 | 常量 | 校验路由 |
 | --- | --- | --- |
@@ -137,6 +136,7 @@ flowchart LR
 | `system:setting:manage` | `PermSettingManage` | `/setting/update` |
 | `system:job:manage` | `PermJobManage` | `/admin/job/list`、`/admin/job/stats`、`/admin/job/retry` |
 | `skill:manage` | `PermSkillManage` | `/skill/save`、`/skill/delete`、`/skill/reference/save`、`/skill/reference/delete` |
+| `prompt:manage` | `PermPromptManage` | `/prompt/profile/save`、`/prompt/profile/delete` |
 
 未列入上表的其余 `/api/v1` 路由均为「登录用户即可访问」，数据范围由归属校验收窄。
 
@@ -287,7 +287,7 @@ flowchart LR
 - `KnowledgeReindexREQ.doc_ulid`：仅 `indexed` / `failed` 状态可重投，否则返回 `ERR_BIZ_FAILED`；重投把文档置回 `pending` 并投递 `doc_reindex`。
 - `KnowledgeStatsVO`：`total_count`、`indexed_count`、`pending_count`（含 `indexing`）、`failed_count`、`chunk_count`。
 
-### 7.10 技能（8）
+### 7.10 技能与提示词档案（12）
 
 | 方法 | 路径 | 权限 | 请求 | 响应 data | Handler |
 | --- | --- | --- | --- | --- | --- |
@@ -299,6 +299,10 @@ flowchart LR
 | POST | `/skill/delete` | `skill:manage` | `SkillDeleteREQ` | `null` | `SkillAPI.Delete` |
 | POST | `/skill/reference/save` | `skill:manage` | `SkillReferenceREQ` | `SkillReferenceVO` | `SkillAPI.ReferenceSave` |
 | POST | `/skill/reference/delete` | `skill:manage` | `SkillReferenceDeleteREQ` | `null` | `SkillAPI.ReferenceDelete` |
+| POST | `/prompt/profile/list` | 登录用户 | `PromptProfileListREQ`（`project_ulid`、`enabled_only`） | `[]PromptProfileVO` | `PromptProfileAPI.List` |
+| GET | `/prompt/profile/detail/:PromptProfileULID` | 登录用户 | 路径变量 | `PromptProfileVO` | `PromptProfileAPI.Detail` |
+| POST | `/prompt/profile/save` | `prompt:manage` | `PromptProfileREQ` | `PromptProfileVO` | `PromptProfileAPI.Save` |
+| POST | `/prompt/profile/delete` | `prompt:manage` | `PromptProfileDeleteREQ` | `null` | `PromptProfileAPI.Delete` |
 
 - 作用域：`global` 全局可用，`project` 仅所属项目可用；同编码的项目技能覆盖全局技能（`SkillVO.overridden_flag` 标记被覆盖项）。
 - `SkillVO`：`skill_ulid`、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`（`write` / `revise` / `outline` / `setting` / `review` / `other`）、`description_text`、`prompt_template`、`variable_list`、`ref_count`、`enabled_flag`、`builtin_flag`、`overridden_flag`、`sort_order`、`created_at_ms`、`updated_at_ms`。
@@ -306,6 +310,7 @@ flowchart LR
 - 变量取值优先级：显式传值 > 声明缺省值 > 必填缺失记入 `missing_list`（`resolveSkillVariables`）。
 - 模板占位符只允许内置占位符（`user_input` / `chapter_content` / `context` / `skill_code`）与已声明变量，出现未声明占位符时保存返回 `ERR_INVALID_PARAM`（`validateSkillTemplate`）。
 - 内置技能 `builtin_flag=true`：不可删除（返回 `ERR_BIZ_FAILED`），可停用或改提示词；`scope_code` 与 `skill_code` 不可改。
+- `PromptProfileVO`：`prompt_profile_ulid`、`prompt_profile_code`、`prompt_profile_name`、`scope_code`、`project_ulid`、`description_text`、`system_prompt_text`、`builtin_flag`、`enabled_flag`、`sort_order`、`updated_at_ms`。作用域规则与技能一致；项目档案的归属校验比技能更严（`mustOwnProject`，校验创建者）。内置档案不可删、编码不可改，可改正文与名称。
 
 ### 7.11 菜单与权限目录（6）
 
@@ -373,6 +378,7 @@ flowchart LR
 | `ref_message_ulid_list` | []string | 显式引用的历史消息 |
 | `history_count` | int | 注入历史条数 0–50，0 用应用配置 |
 | `model_ulid` | string | 指定模型，空取「系统默认模型 → 第一个可用模型」 |
+| `prompt_profile_ulid` | string | 指定系统提示词档案，空取「启用的全局默认档案 → 内置兜底人设」 |
 
 - `ChatHistoryREQ`：`session_ulid`（必填）+ 分页字段；结果按 `created_at` 升序。
 - `ChatSessionCreateREQ`：`project_ulid`、`session_name`（空则取首条消息前 20 字）。`ChatSessionVO`：`session_ulid`、`project_ulid`、`session_name`、`message_count`、`updated_at_ms`。
@@ -501,10 +507,11 @@ flowchart LR
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `seq` | int64 | 单调递增事件序号 |
-| `event_type` | string | `chunk` / `done` / `error` |
+| `event_type` | string | `thinking` / `chunk` / `done` / `error` |
 | `session_ulid` | string | 会话 ULID |
 | `message_ulid` | string | 助手消息 ULID |
-| `content_text` | string | 增量文本（`chunk`）或完整文本（`done`） |
+| `content_text` | string | 增量思考（`thinking`）、增量文本（`chunk`）或完整文本（`done`） |
+| `reasoning_text` | string | 完整思考过程（`done` 时给出，模型未返回推理内容时为空串） |
 | `reference_list` | `[]KnowledgeChunkVO` | RAG 召回依据（`done` 时给出） |
 | `error_message` | string | 错误信息（`error` 时给出） |
 
@@ -513,15 +520,19 @@ stateDiagram-v2
   [*] --> 请求校验
   请求校验 --> JSON错误: 绑定/鉴权/模型不可用
   请求校验 --> 流式生成: 通过
-  流式生成 --> chunk: 增量文本
+  流式生成 --> thinking: 推理模型思考增量
+  thinking --> 流式生成
+  流式生成 --> chunk: 正文增量
   chunk --> 流式生成
-  流式生成 --> done: 完整文本 + 引用依据
+  流式生成 --> done: 完整文本 + 完整思考 + 引用依据
   流式生成 --> error: 上游失败
   done --> [*]
   error --> [*]
 ```
 
 客户端断开连接会取消上游模型调用；生成失败不落库助手消息，只保留用户消息。
+
+`thinking` 事件只在模型返回推理内容（OpenAI 兼容协议的 `reasoning_content` / Anthropic 的 thinking block）时出现；非推理模型只会收到 `chunk` 与 `done`，前端据此在「等待首字节」与「思考中」之间自动切换。`ChatMessageVO.reasoning_text` 在拉取历史时一并返回，重开会话仍能看到上次的思考过程。
 
 ### 8.2 `GET /knowledge/content/:DocULID`（原始字节）
 
@@ -559,7 +570,7 @@ stateDiagram-v2
 | `POST /admin/login_log/list` | JSON body |
 | `POST /admin/job/list` | JSON body |
 
-返回普通数组、全量不翻页的端点：`/chapter/snapshot/list/:ChapterULID`、`/character/list`、`/lore/list`、`/skill/list`、`/skill/reference/list`、`/outline/list`、`/outline/scene/list`、`/continuity/fact/list`、`/continuity/hook/list`、`/continuity/summary/list`、`/chat/session/list`、`/model/provider/list`、`/model/catalog/list`、`/menu/list`、`/setting/list`、`/menu/permission/catalog`。
+返回普通数组、全量不翻页的端点：`/chapter/snapshot/list/:ChapterULID`、`/character/list`、`/lore/list`、`/skill/list`、`/skill/reference/list`、`/outline/list`、`/outline/scene/list`、`/continuity/fact/list`、`/continuity/hook/list`、`/continuity/summary/list`、`/chat/session/list`、`/model/provider/list`、`/model/catalog/list`、`/prompt/profile/list`、`/menu/list`、`/setting/list`、`/menu/permission/catalog`。
 
 ## 10. 前端消费规则
 

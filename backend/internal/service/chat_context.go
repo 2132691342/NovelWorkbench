@@ -231,10 +231,10 @@ func selectHistoryMessages(messages []domain.ChatMessageDO, refMessageULIDs []st
 }
 
 // buildChatMessages 构造发往模型的消息序列（纯函数）：
-// system → 【上下文】装配文本（为空省略）→ 历史（role 映射）→ 最终指令。
-func buildChatMessages(styleText, contextText, instructionText string, historyList []domain.ChatMessageDO) []*schema.Message {
+// 系统提示词（档案正文 + 项目文风约束）→ 【上下文】装配文本（为空省略）→ 历史（role 映射）→ 最终指令。
+func buildChatMessages(systemPromptText, styleText, contextText, instructionText string, historyList []domain.ChatMessageDO) []*schema.Message {
 	messages := make([]*schema.Message, 0, len(historyList)+3)
-	messages = append(messages, &schema.Message{Role: schema.System, Content: ai.SystemPrompt(styleText)})
+	messages = append(messages, &schema.Message{Role: schema.System, Content: ai.ComposeSystemPrompt(systemPromptText, styleText)})
 	if contextText != "" {
 		messages = append(messages, &schema.Message{Role: schema.User, Content: "【上下文】\n" + contextText})
 	}
@@ -439,6 +439,7 @@ func toChatMessageVO(do *domain.ChatMessageDO) domain.ChatMessageVO {
 		SessionULID:        do.SessionULID,
 		RoleCode:           do.RoleCode,
 		ContentText:        do.ContentText,
+		ReasoningText:      do.ReasoningText,
 		SkillCode:          do.SkillCode,
 		RefDocULIDList:     decodeULIDList(do.RefDocJSON),
 		RefChapterULIDList: decodeULIDList(do.RefChapterJSON),

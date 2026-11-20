@@ -5,6 +5,7 @@ import * as echarts from 'echarts'
 import { useI18n } from 'vue-i18n'
 import type { NWStatsOverviewVo } from '@/api/contracts'
 import NWIcon from '@/components/NWIcon.vue'
+import { chartSeriesColor, chartToken, tokenWithAlpha } from '@/utils/designToken'
 
 const props = defineProps<{
   overview: NWStatsOverviewVo
@@ -28,9 +29,9 @@ function renderChart(): void {
       color: [t('dashboard.trendWordDelta'), t('dashboard.trendAiWordDelta')],
       tooltip: {
         trigger: 'axis',
-        backgroundColor: '#ffffff',
-        borderColor: '#eef2f7',
-        textStyle: { color: '#1e293b', fontSize: 12 },
+        backgroundColor: chartToken.background(),
+        borderColor: chartToken.border(),
+        textStyle: { color: chartToken.textMain(), fontSize: 12 },
         extraCssText: 'box-shadow: 0 12px 32px rgba(15,23,42,.12); border-radius: 12px;',
       },
       legend: {
@@ -40,27 +41,27 @@ function renderChart(): void {
         icon: 'roundRect',
         itemWidth: 10,
         itemHeight: 10,
-        textStyle: { color: '#64748b', fontSize: 11 },
+        textStyle: { color: chartToken.textSecondary(), fontSize: 11 },
       },
       grid: { left: 44, right: 18, top: 38, bottom: 28 },
       xAxis: {
         type: 'category',
         data: trendList.map((item) => item.stat_date.slice(5)),
-        axisLine: { lineStyle: { color: '#e2e8f0' } },
+        axisLine: { lineStyle: { color: chartToken.axisLine() } },
         axisTick: { show: false },
-        axisLabel: { color: '#94a3b8', fontSize: 10.5, interval: 4 },
+        axisLabel: { color: chartToken.textPlaceholder(), fontSize: 10.5, interval: 4 },
       },
       yAxis: {
         type: 'value',
-        splitLine: { lineStyle: { color: '#eef2f7', type: 'dashed' } },
-        axisLabel: { color: '#94a3b8', fontSize: 10.5 },
+        splitLine: { lineStyle: { color: chartToken.splitLine(), type: 'dashed' } },
+        axisLabel: { color: chartToken.textPlaceholder(), fontSize: 10.5 },
       },
       series: [
         {
           name: t('dashboard.trendWordDelta'),
           type: 'bar',
           data: trendList.map((item) => item.word_delta),
-          itemStyle: { color: '#6366f1', borderRadius: [5, 5, 0, 0] },
+          itemStyle: { color: chartSeriesColor(1), borderRadius: [5, 5, 0, 0] },
           barMaxWidth: 12,
         },
         {
@@ -68,14 +69,14 @@ function renderChart(): void {
           type: 'line',
           smooth: true,
           data: trendList.map((item) => item.ai_word_delta),
-          itemStyle: { color: '#a78bfa' },
+          itemStyle: { color: chartSeriesColor(2) },
           lineStyle: { width: 2.5 },
           symbol: 'circle',
           symbolSize: 5,
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(167,139,250,0.22)' },
-              { offset: 1, color: 'rgba(167,139,250,0)' },
+              { offset: 0, color: tokenWithAlpha('--chart-series-2', 0.22, '#818cf8') },
+              { offset: 1, color: tokenWithAlpha('--chart-series-2', 0, '#818cf8') },
             ]),
           },
         },

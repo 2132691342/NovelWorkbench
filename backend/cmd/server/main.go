@@ -71,6 +71,7 @@ func main() {
 		&domain.ModelUsageStatDO{},
 		&domain.NotificationDO{},
 		&domain.LoginLogDO{},
+		&domain.PromptProfileDO{},
 	); err != nil {
 		pkg.SLogger().Errorw("数据库迁移失败", "error", err)
 		os.Exit(1)
@@ -154,6 +155,8 @@ func main() {
 	characterService := service.NewCharacterService(characterRepo, projectRepo, db)
 	loreService := service.NewLoreService(loreRepo, projectRepo)
 	skillService := service.NewSkillService(skillRepo, projectRepo)
+	promptProfileRepo := repo.NewPromptProfileRepo(db)
+	promptProfileService := service.NewPromptProfileService(promptProfileRepo, projectRepo)
 	settingService := service.NewSettingService(settingRepo)
 	statsService := service.NewStatsService(statsRepo, projectRepo)
 
@@ -197,12 +200,16 @@ func main() {
 	knowledgeService := service.NewKnowledgeService(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
 		settingRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, knowledgeRepo,
-		settingRepo, skillService, knowledgeService, providerService, aiClient, db,
+		settingRepo, skillService, promptProfileService, knowledgeService, providerService, aiClient, db,
 		service.ChatConfig{HistoryCount: cfg.AI.HistoryCount})
 
 	// 内置技能与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
 	if err := skillService.SeedDefaults(ctx); err != nil {
 		pkg.SLogger().Errorw("内置技能播种失败", "error", err)
+		os.Exit(1)
+	}
+	if err := promptProfileService.SeedDefaults(ctx); err != nil {
+		pkg.SLogger().Errorw("内置提示词档案播种失败", "error", err)
 		os.Exit(1)
 	}
 	if err := settingService.SeedDefaults(ctx); err != nil {
@@ -305,6 +312,7 @@ func main() {
 		OutlineAPI:    api.NewOutlineAPI(outlineService),
 		ContinuityAPI: api.NewContinuityAPI(continuityService),
 		SkillAPI:      api.NewSkillAPI(skillService),
+		PromptProfileAPI: api.NewPromptProfileAPI(promptProfileService),
 		MenuAPI:       api.NewMenuAPI(menuService),
 		SettingAPI:    api.NewSettingAPI(settingService),
 		StatsAPI:      api.NewStatsAPI(statsService),

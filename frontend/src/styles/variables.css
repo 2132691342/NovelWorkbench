@@ -20,6 +20,27 @@
   --primary-disabled: #c7d2fe;
   --primary-ring: rgba(99, 102, 241, 0.16);
 
+  /* 按钮（镂空线条感）：底/描边/文字三色全部由主色派生，状态只换明度不换色相 */
+  --btn-primary-bg: transparent;
+  --btn-primary-text: var(--primary-active);
+  --btn-primary-border: var(--primary);
+  --btn-primary-bg-hover: var(--primary-soft);
+  --btn-primary-bg-pressed: var(--primary-light);
+  --btn-default-bg: transparent;
+  --btn-default-text: var(--text-main);
+  --btn-default-border: var(--border-strong);
+  --btn-default-bg-hover: var(--primary-soft);
+  --btn-default-bg-pressed: var(--primary-light);
+  --btn-danger-text: var(--error-text);
+  --btn-danger-border: var(--error);
+  --btn-danger-bg-hover: var(--error-bg);
+  --btn-danger-bg-pressed: var(--error-border);
+  /* 点击感：普通按钮放大 5%，小号文字/图标按钮放大 8%（小尺寸需要更大的相对位移才可感知） */
+  --btn-hover-scale: 1.05;
+  --btn-pressed-scale: 0.95;
+  --btn-tap-hover-scale: 1.08;
+  --btn-tap-pressed-scale: 0.92;
+
   /* 背景 */
   --bg-page: var(--saas_dashboard-color-4);
   --bg-card: #ffffff;
@@ -40,6 +61,22 @@
   --border: #e2e8f0;
   --border-light: #eef2f7;
   --border-strong: #cbd5e1;
+  --border-accent: #dbe3ff;
+
+  /* 中性表面阶梯（相邻两级只差 2%~5%，读起来是一整片连续工作区） */
+  --surface-tint: #f8faff;
+  --surface-stripe: #fbfcff;
+  --surface-raise: #fdfdff;
+  --skeleton-base: #f1f5f9;
+  --skeleton-shine: #e9eef7;
+  --scroll-thumb: #cbd5e1;
+  --scroll-thumb-hover: #94a3b8;
+  --warning-strong: #fde68a;
+
+  /* 渐变（只用于品牌色块与图表面积，不铺整页） */
+  --accent-gradient: linear-gradient(135deg, var(--primary-soft), var(--primary-light));
+  --accent-gradient-soft: linear-gradient(135deg, var(--primary-soft), #f5f3ff);
+  --nav-active-gradient: linear-gradient(90deg, var(--primary), var(--primary-hover));
 
   /* 状态色 */
   --success: #10b981;

@@ -3,7 +3,7 @@
   模型列表来自「当前账号可用模型」（按角色授权），默认选中系统默认或第一个可用模型。
 -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import {
@@ -17,6 +17,7 @@ import { useSSE } from '@/composables/useSSE'
 import type { NWChapterBriefVo, NWChatSendReqVo, NWChatSessionVo } from '@/api/contracts'
 import NWIcon from '@/components/NWIcon.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import AiPanelHeader from './AiPanelHeader.vue'
 import ChatComposer from './ChatComposer.vue'
 import ChatMessage from './ChatMessage.vue'
 import type { NWChatDisplayMessage, NWChatSendPayload } from './chatTypes'
@@ -54,11 +55,6 @@ const attachChapterFlag = ref(true)
 
 /** 当前账号可用模型（按角色授权过滤） */
 const modelOptionList = computed<NWModelOptionVo[]>(() => capabilityVo.value?.option_list ?? [])
-
-/** 当前选中的模型选项 */
-const selectedModelVo = computed(
-  () => modelOptionList.value.find((item) => item.model_ulid === selectedModelUlid.value) ?? null,
-)
 
 /** 当前选中的会话 */
 const currentSessionVo = computed(
@@ -101,6 +97,12 @@ function buildStreamRequest(payload: NWChatSendPayload): NWChatSendReqVo {
   if (refChapterUlidList.length > 0) {
     request.ref_chapter_ulid_list = refChapterUlidList
   }
+  if (payload.ref_message_ulid_list.length > 0) {
+    request.ref_message_ulid_list = payload.ref_message_ulid_list
+  }
+  if (payload.prompt_profile_ulid) {
+    request.prompt_profile_ulid = payload.prompt_profile_ulid
+  }
   if (selectedModelUlid.value) {
     request.model_ulid = selectedModelUlid.value
   }
@@ -127,19 +129,24 @@ async function runStream(
   assistantMessage: NWChatDisplayMessage,
 ): Promise<void> {
   assistantMessage.content_text = ''
+  assistantMessage.reasoning_text = ''
   assistantMessage.error_message = ''
   assistantMessage.reference_list = []
   assistantMessage.streaming_flag = true
+  startWaitTimer(assistantMessage)
   await startStream('/chat/send', request, {
     onEvent: (event) => {
       if (event.session_ulid && !currentSessionUlid.value) {
         currentSessionUlid.value = event.session_ulid
         void loadSessions()
       }
-      if (event.event_type === 'chunk') {
+      if (event.event_type === 'thinking') {
+        assistantMessage.reasoning_text += event.content_text
+      } else if (event.event_type === 'chunk') {
         assistantMessage.content_text += event.content_text
       } else if (event.event_type === 'done') {
         assistantMessage.content_text = event.content_text
+        assistantMessage.reasoning_text = event.reasoning_text || assistantMessage.reasoning_text
         assistantMessage.reference_list = event.reference_list ?? []
       } else if (event.event_type === 'error') {
         assistantMessage.error_message = event.error_message || t('workspace.ai.sendFailed')
@@ -149,12 +156,34 @@ async function runStream(
       assistantMessage.error_message = t('workspace.ai.sendFailed')
     },
   })
+  stopWaitTimer()
   assistantMessage.streaming_flag = false
   if (assistantMessage.error_message) {
     ElMessage.error(assistantMessage.error_message)
   }
   void loadSessions()
   scrollMessagesToBottom()
+}
+
+/** 等待计时器句柄（同一时刻只有一条流在等待） */
+let waitTimerId: number | null = null
+
+/** 启动等待计时：每 200ms 刷新已等待时长，让用户看到界面仍在工作 */
+function startWaitTimer(targetMessage: NWChatDisplayMessage): void {
+  stopWaitTimer()
+  const startedMs = Date.now()
+  targetMessage.waited_ms = 0
+  waitTimerId = window.setInterval(() => {
+    targetMessage.waited_ms = Date.now() - startedMs
+  }, 200)
+}
+
+/** 停止等待计时 */
+function stopWaitTimer(): void {
+  if (waitTimerId !== null) {
+    window.clearInterval(waitTimerId)
+    waitTimerId = null
+  }
 }
 
 /** 滚动消息流到底部 */
@@ -178,22 +207,26 @@ function handleSend(payload: NWChatSendPayload): void {
       message_ulid: '',
       role_code: 'user',
       content_text: payload.content_text,
+      reasoning_text: '',
       skill_code: payload.skill_code,
       created_at_ms: createdMs,
       reference_list: [],
       error_message: '',
       streaming_flag: false,
+      waited_ms: 0,
       retry_payload: null,
     },
     {
       message_ulid: '',
       role_code: 'assistant',
       content_text: '',
+      reasoning_text: '',
       skill_code: '',
       created_at_ms: createdMs,
       reference_list: [],
       error_message: '',
       streaming_flag: true,
+      waited_ms: 0,
       retry_payload: payload,
     },
   )
@@ -297,11 +330,13 @@ async function selectSession(sessionUlid: string): Promise<void> {
       message_ulid: messageVo.message_ulid,
       role_code: messageVo.role_code,
       content_text: messageVo.content_text,
+      reasoning_text: messageVo.reasoning_text ?? '',
       skill_code: messageVo.skill_code,
       created_at_ms: messageVo.created_at_ms,
       reference_list: [],
       error_message: '',
       streaming_flag: false,
+      waited_ms: 0,
       retry_payload: null,
     }))
   } catch {
@@ -348,101 +383,28 @@ watch(
 onMounted(() => {
   void loadModelOptions()
 })
+
+onBeforeUnmount(() => {
+  stopWaitTimer()
+})
 </script>
 
 <template>
   <div class="ai-panel">
-    <header class="ai-panel__header">
-      <div class="ai-panel__title-row">
-        <span class="ai-panel__title-icon"><NWIcon icon_code="sparkles" :size_px="15" /></span>
-        <span class="ai-panel__title">{{ t('workspace.ai.title') }}</span>
-        <span v-if="messageList.length > 0" class="ai-panel__count">
-          {{ t('workspace.ai.messageCount', { count: messageList.length }) }}
-        </span>
-      </div>
-      <div class="ai-panel__header-actions">
-        <el-select
-          v-model="currentSessionUlid"
-          class="ai-panel__session-select"
-          size="small"
-          :placeholder="t('workspace.ai.sessionPlaceholder')"
-          @change="selectSession"
-        >
-          <el-option
-            v-for="sessionItem in sessionList"
-            :key="sessionItem.session_ulid"
-            :value="sessionItem.session_ulid"
-            :label="sessionItem.session_name || sessionItem.session_ulid"
-          />
-        </el-select>
-        <el-tooltip :content="t('workspace.ai.sessionCreate')" placement="bottom">
-          <button type="button" class="ai-panel__icon-btn" @click="handleCreateSession">
-            <NWIcon icon_code="plus" :size_px="15" />
-          </button>
-        </el-tooltip>
-        <el-tooltip :content="t('workspace.ai.sessionDelete')" placement="bottom">
-          <button
-            type="button"
-            class="ai-panel__icon-btn is-danger"
-            :disabled="!currentSessionVo"
-            @click="handleDeleteSession"
-          >
-            <NWIcon icon_code="trash" :size_px="14" />
-          </button>
-        </el-tooltip>
-      </div>
-    </header>
-
-    <div class="ai-panel__controls">
-      <div class="ai-panel__control-row">
-        <span class="ai-panel__control-label">{{ t('workspace.ai.modelLabel') }}</span>
-        <el-select
-          v-if="modelOptionList.length > 0"
-          v-model="selectedModelUlid"
-          size="small"
-          class="ai-panel__model-select"
-          :placeholder="t('workspace.ai.modelPlaceholder')"
-        >
-          <el-option
-            v-for="modelOption in modelOptionList"
-            :key="modelOption.model_ulid"
-            :value="modelOption.model_ulid"
-            :label="`${modelOption.model_label || modelOption.model_name} · ${modelOption.provider_name}`"
-          >
-            <span class="ai-panel__model-option">
-              <span class="ai-panel__model-option-name">{{ modelOption.model_label || modelOption.model_name }}</span>
-              <span class="ai-panel__model-option-meta">{{ modelOption.provider_name }}</span>
-            </span>
-          </el-option>
-        </el-select>
-        <span v-else class="ai-panel__model-empty">{{ t('workspace.ai.modelUnavailable') }}</span>
-        <el-tooltip v-if="selectedModelVo" placement="bottom">
-          <template #content>
-            <div>{{ t('workspace.ai.modelTooltip') }}</div>
-            <div>{{ t('workspace.ai.modelTooltipMeta', {
-              provider: selectedModelVo.provider_name,
-              tokens: selectedModelVo.max_tokens,
-            }) }}</div>
-          </template>
-          <span class="ai-panel__model-badge">{{ selectedModelVo.protocol_code }}</span>
-        </el-tooltip>
-      </div>
-
-      <div class="ai-panel__control-row">
-        <span class="ai-panel__control-label">{{ t('workspace.ai.contextLabel') }}</span>
-        <button
-          type="button"
-          class="ai-panel__context-chip"
-          :class="{ 'is-active': attachChapterFlag }"
-          :disabled="!currentChapterUlid"
-          @click="attachChapterFlag = !attachChapterFlag"
-        >
-          <span class="ai-panel__context-dot" />
-          {{ currentChapterName || t('workspace.ai.noChapter') }}
-        </button>
-        <span class="ai-panel__context-hint">{{ attachChapterFlag ? t('workspace.ai.contextOn') : t('workspace.ai.contextOff') }}</span>
-      </div>
-    </div>
+    <AiPanelHeader
+      v-model:current-session-ulid="currentSessionUlid"
+      v-model:selected-model-ulid="selectedModelUlid"
+      v-model:attach-chapter-flag="attachChapterFlag"
+      :session-list="sessionList"
+      :session-deletable-flag="Boolean(currentSessionVo)"
+      :model-option-list="modelOptionList"
+      :current-chapter-ulid="currentChapterUlid"
+      :current-chapter-name="currentChapterName"
+      :message-count="messageList.length"
+      @select-session="selectSession"
+      @create-session="handleCreateSession"
+      @delete-session="handleDeleteSession"
+    />
 
     <div ref="messagesHost" class="ai-panel__messages">
       <NWLoading v-if="historyLoading" />
@@ -483,6 +445,7 @@ onMounted(() => {
       ref="composerRef"
       :project-ulid="projectUlid"
       :chapter-list="chapterList"
+      :message-list="messageList"
       :disabled-flag="streamingFlag"
       @send="handleSend"
       @stop="handleStop"

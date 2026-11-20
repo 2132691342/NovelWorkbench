@@ -37,13 +37,17 @@
 }
 
 .el-button--primary {
-  --el-button-bg-color: var(--primary);
-  --el-button-border-color: var(--primary);
-  --el-button-hover-bg-color: var(--primary-hover);
+  --el-button-bg-color: var(--btn-primary-bg);
+  --el-button-border-color: var(--btn-primary-border);
+  --el-button-text-color: var(--btn-primary-text);
+  --el-button-hover-bg-color: var(--btn-primary-bg-hover);
   --el-button-hover-border-color: var(--primary-hover);
-  --el-button-active-bg-color: var(--primary-active);
+  --el-button-hover-text-color: var(--primary-active);
+  --el-button-active-bg-color: var(--btn-primary-bg-pressed);
   --el-button-active-border-color: var(--primary-active);
-  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.22);
+  --el-button-active-text-color: var(--primary-active);
+  box-shadow: none;
+  font-weight: 600;
 }
 
 .el-button--primary:hover {
@@ -51,7 +55,14 @@
 }
 
 .el-button--danger {
-  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.18);
+  --el-button-bg-color: transparent;
+  --el-button-border-color: var(--error);
+  --el-button-text-color: var(--error-text);
+  --el-button-hover-bg-color: var(--error-bg);
+  --el-button-hover-border-color: var(--error-hover);
+  --el-button-hover-text-color: var(--error-hover);
+  --el-button-active-bg-color: var(--error-border);
+  box-shadow: none;
 }
 
 /* 输入类控件 */
@@ -152,11 +163,32 @@
   backdrop-filter: blur(2px);
 }
 
+/* 弹层动效：遮罩淡入，抽屉/对话框带轻微位移，避免"啪"地弹出 */
+.el-overlay-dialog,
+.el-overlay {
+  transition: opacity 0.22s ease;
+}
+
+.el-dialog {
+  animation: nw-dialog-in 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes nw-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* 表格 */
 .el-table {
   --el-table-border-color: var(--border-light);
   --el-table-header-bg-color: var(--bg-subtle);
-  --el-table-row-hover-bg-color: #f8faff;
+  --el-table-row-hover-bg-color: var(--surface-tint);
   --el-table-header-text-color: var(--text-secondary);
   --el-table-text-color: var(--text-main);
   font-size: 13.5px;
@@ -173,12 +205,21 @@
   padding: 12px 0;
 }
 
+/* 行悬停：底色 + 左侧主色引导条，指示当前指向哪一行 */
+.el-table tbody tr.el-table__row {
+  transition: background-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.el-table tbody tr.el-table__row:hover td.el-table__cell:first-child {
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
 .el-table__inner-wrapper::before {
   display: none;
 }
 
 .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
-  background: #fbfcff;
+  background: var(--surface-stripe);
 }
 
 .el-table .cell {
@@ -327,7 +368,7 @@
 }
 
 .el-skeleton__item {
-  background: linear-gradient(90deg, #f1f5f9 25%, #e9eef7 37%, #f1f5f9 63%);
+  background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-shine) 37%, var(--skeleton-base) 63%);
   border-radius: var(--radius-base);
 }
 
@@ -351,7 +392,7 @@
 
 /* 滚动条 */
 .el-scrollbar__thumb {
-  background: #cbd5e1;
+  background: var(--scroll-thumb);
   opacity: 0.7;
   border-radius: var(--radius-pill);
 }

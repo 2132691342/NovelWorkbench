@@ -381,7 +381,7 @@ onMounted(() => {
 .settings-page__skeleton-card {
   height: 160px;
   border-radius: var(--radius-lg);
-  background: linear-gradient(90deg, #f1f5f9 25%, #eef2f7 37%, #f1f5f9 63%);
+  background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-shine) 37%, var(--skeleton-base) 63%);
   background-size: 400% 100%;
   animation: settings-shimmer 1.3s ease infinite;
 }

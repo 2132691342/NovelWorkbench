@@ -29,6 +29,7 @@ type RouterDeps struct {
 	OutlineAPI    *OutlineAPI       // 创作规划模块处理器
 	ContinuityAPI *ContinuityAPI    // 连续性看板模块处理器
 	SkillAPI      *SkillAPI         // 技能模块处理器
+	PromptProfileAPI *PromptProfileAPI // 提示词档案模块处理器
 	MenuAPI       *MenuAPI          // 菜单与权限目录模块处理器
 	SettingAPI    *SettingAPI       // 应用配置模块处理器
 	StatsAPI      *StatsAPI         // 数据总览模块处理器
@@ -77,6 +78,7 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	registerOutlineRoutes(v1, deps.OutlineAPI)
 	registerContinuityRoutes(v1, deps.ContinuityAPI)
 	registerSkillRoutes(v1, deps)
+	registerPromptProfileRoutes(v1, deps)
 	registerSettingRoutes(v1, deps)
 	registerStatsRoutes(v1, deps.StatsAPI)
 	registerChatRoutes(v1, deps.ChatAPI)
@@ -265,6 +267,19 @@ func registerSkillRoutes(rg *gin.RouterGroup, deps RouterDeps) {
 		skillWrite.POST("/delete", deps.SkillAPI.Delete)
 		skillWrite.POST("/reference/save", deps.SkillAPI.ReferenceSave)
 		skillWrite.POST("/reference/delete", deps.SkillAPI.ReferenceDelete)
+	}
+}
+
+// registerPromptProfileRoutes 注册提示词档案路由（读对所有登录用户开放，写收口到 prompt:manage）。
+func registerPromptProfileRoutes(rg *gin.RouterGroup, deps RouterDeps) {
+	profileGroup := rg.Group("/prompt/profile")
+	profileGroup.POST("/list", deps.PromptProfileAPI.List)
+	profileGroup.GET("/detail/:PromptProfileULID", deps.PromptProfileAPI.Detail)
+	profileWrite := profileGroup.Group("")
+	profileWrite.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermPromptManage))
+	{
+		profileWrite.POST("/save", deps.PromptProfileAPI.Save)
+		profileWrite.POST("/delete", deps.PromptProfileAPI.Delete)
 	}
 }
 

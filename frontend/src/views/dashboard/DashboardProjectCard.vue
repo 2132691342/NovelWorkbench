@@ -77,7 +77,7 @@ const { t } = useI18n()
 
 .project-card:hover {
   transform: translateY(-4px);
-  border-color: #dbe3ff;
+  border-color: var(--border-accent);
   box-shadow: var(--shadow-card-hover);
 }
 

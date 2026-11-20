@@ -45,6 +45,12 @@ type chatEventWriter struct {
 
 // emit 输出一条流式事件（reference_list 缺省为空数组）。
 func (e *chatEventWriter) emit(eventType, contentText, errorMessage string, referenceList []domain.KnowledgeChunkVO) error {
+	return e.emitWithReasoning(eventType, contentText, "", errorMessage, referenceList)
+}
+
+// emitWithReasoning 输出一条带完整思考过程的流式事件（done 事件携带 reasoning_text）。
+func (e *chatEventWriter) emitWithReasoning(eventType, contentText, reasoningText, errorMessage string,
+	referenceList []domain.KnowledgeChunkVO) error {
 	e.seq++
 	if referenceList == nil {
 		referenceList = []domain.KnowledgeChunkVO{}
@@ -55,6 +61,7 @@ func (e *chatEventWriter) emit(eventType, contentText, errorMessage string, refe
 		SessionULID:   e.sessionULID,
 		MessageULID:   e.messageULID,
 		ContentText:   contentText,
+		ReasoningText: reasoningText,
 		ReferenceList: referenceList,
 		ErrorMessage:  errorMessage,
 	})
@@ -74,6 +81,7 @@ type ChatService struct {
 	knowledgeRepo    *repo.KnowledgeRepo   // 知识库仓储
 	settingRepo      *repo.SettingRepo     // 应用配置仓储
 	skillService     *SkillService         // 技能服务（解析、变量与参考资料）
+	promptProfileSvc *PromptProfileService // 提示词档案服务（系统提示词解析）
 	knowledgeService *KnowledgeService     // 知识库服务（RAG 召回）
 	providerSvc      *ModelProviderService // 供应商服务（模型选择）
 	aiClient         *ai.Client            // 模型网关（流式调用与用量上报）
@@ -84,12 +92,12 @@ type ChatService struct {
 // NewChatService 构造对话服务。
 func NewChatService(chatRepo *repo.ChatRepo, projectRepo *repo.ProjectRepo, chapterRepo *repo.ChapterRepo,
 	characterRepo *repo.CharacterRepo, knowledgeRepo *repo.KnowledgeRepo, settingRepo *repo.SettingRepo,
-	skillService *SkillService, knowledgeService *KnowledgeService, providerSvc *ModelProviderService,
+	skillService *SkillService, promptProfileSvc *PromptProfileService, knowledgeService *KnowledgeService, providerSvc *ModelProviderService,
 	aiClient *ai.Client, db *gorm.DB, config ChatConfig) *ChatService {
 	return &ChatService{
 		chatRepo: chatRepo, projectRepo: projectRepo, chapterRepo: chapterRepo,
 		characterRepo: characterRepo, knowledgeRepo: knowledgeRepo, settingRepo: settingRepo,
-		skillService: skillService, knowledgeService: knowledgeService,
+		skillService: skillService, promptProfileSvc: promptProfileSvc, knowledgeService: knowledgeService,
 		providerSvc: providerSvc, aiClient: aiClient,
 		db: db, config: config,
 	}
@@ -218,7 +226,8 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 			pkg.SLogger().Warnw("会话名回填失败", "session_ulid", session.SessionULID, "error", err)
 		}
 	}
-	messages := buildChatMessages(project.StyleText, assembledText, instructionText, historyList)
+	systemPromptText := s.promptProfileSvc.SystemPromptOf(ctx, req.ProjectULID, req.PromptProfileULID)
+	messages := buildChatMessages(systemPromptText, project.StyleText, assembledText, instructionText, historyList)
 	providerSpec, err := s.providerSvc.ChatSpecOf(ctx, userULID, req.ModelULID)
 	if err != nil {
 		return err // 供应商不可用：流未开始，api 层输出 JSON 包络
@@ -228,7 +237,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		sessionULID: session.SessionULID,
 		messageULID: pkg.NewULID(domain.IDPrefixMessage),
 	}
-	replyText, completed := s.streamChat(ctx, events, messages, providerSpec, countMessagesRunes(messages))
+	replyText, reasoningText, completed := s.streamChat(ctx, events, messages, providerSpec, countMessagesRunes(messages))
 	if !completed {
 		return nil // 客户端断开或生成失败：不落 assistant 消息，用户消息保留对话痕迹
 	}
@@ -237,6 +246,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		SessionULID:    session.SessionULID,
 		RoleCode:       domain.ChatRoleAssistant,
 		ContentText:    replyText,
+		ReasoningText:  reasoningText,
 		SkillCode:      skillCode,
 		RefDocJSON:     encodeULIDList(req.RefDocULIDList),
 		RefChapterJSON: encodeULIDList(req.RefChapterULIDList),
@@ -255,20 +265,20 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		_ = events.emit(domain.StreamEventError, "", "回复保存失败，请重试", nil)
 		return nil
 	}
-	_ = events.emit(domain.StreamEventDone, replyText, "", contextInput.RagList)
+	_ = events.emitWithReasoning(domain.StreamEventDone, replyText, reasoningText, "", contextInput.RagList)
 	return nil
 }
 
-// streamChat 消费模型流并转发 chunk 事件（15s 无输出发心跳，客户端断开即中止）。
+// streamChat 消费模型流并转发 thinking/chunk 事件（15s 无输出发心跳，客户端断开即中止）。
 // completed=false 表示客户端断开或生成失败（生成失败已发 error 事件）。
 func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter,
-	messages []*schema.Message, providerSpec ai.ProviderSpec, promptRunes int) (string, bool) {
+	messages []*schema.Message, providerSpec ai.ProviderSpec, promptRunes int) (string, string, bool) {
 	startedAt := time.Now()
 	stream, err := s.aiClient.Stream(ctx, providerSpec, messages)
 	if err != nil {
 		pkg.SLogger().Errorw("模型流式生成启动失败", "error", err)
 		_ = events.emit(domain.StreamEventError, "", "AI 生成启动失败："+err.Error(), nil)
-		return "", false
+		return "", "", false
 	}
 	defer stream.Close()
 	type streamItem struct {
@@ -291,10 +301,11 @@ func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter,
 		}
 	}()
 	var reply strings.Builder
+	var reasoning strings.Builder
 	var lastChunk *schema.Message
 	pingTimer := time.NewTimer(chatPingInterval)
 	defer pingTimer.Stop()
-	finish := func(completed bool) (string, bool) {
+	finish := func(completed bool) (string, string, bool) {
 		// 流结束补记 token 用量（首包已按成功调用计次）
 		usage := &schema.TokenUsage{
 			PromptTokens:     promptRunes,
@@ -306,9 +317,9 @@ func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter,
 		}
 		s.aiClient.RecordStreamUsage(providerSpec, usage, time.Since(startedAt))
 		if !completed {
-			return "", false
+			return "", "", false
 		}
-		return reply.String(), true
+		return reply.String(), reasoning.String(), true
 	}
 	for {
 		select {
@@ -330,6 +341,14 @@ func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter,
 				continue
 			}
 			lastChunk = item.chunk
+			if item.chunk.ReasoningContent != "" {
+				reasoning.WriteString(item.chunk.ReasoningContent)
+				if err := events.emit(domain.StreamEventThinking, item.chunk.ReasoningContent, "", nil); err != nil {
+					pkg.SLogger().Warnw("SSE 思考事件写入失败，中止生成", "error", err)
+					return finish(false)
+				}
+				resetTimer(pingTimer)
+			}
 			if item.chunk.Content == "" {
 				continue
 			}

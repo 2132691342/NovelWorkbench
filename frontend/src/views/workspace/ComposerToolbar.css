@@ -1,0 +1,147 @@
+/* 输入区工具栏（ComposerToolbar.vue 以 <style scoped src> 引入） */
+/* 工具栏：允许换行但不挤断标签；窄栏时提示文案先隐藏 */
+.chat-composer__toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-height: 30px;
+}
+
+.chat-composer__history {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--text-placeholder);
+  font-size: 11px;
+}
+
+.chat-composer__history-select {
+  width: 68px;
+}
+
+.chat-composer__tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-base);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.chat-composer__tool-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary-active);
+  background: var(--primary-soft);
+  transform: scale(1.06);
+}
+
+.chat-composer__tool-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.chat-composer__tool-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 快捷键提示：空间不足时整体隐藏，而不是被压成两行 */
+.chat-composer__hint {
+  margin-left: auto;
+  color: var(--text-placeholder);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.chat-composer__send-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-base);
+  background: transparent;
+  color: var(--primary-active);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.chat-composer__send-btn:hover:not(:disabled) {
+  background: var(--primary-soft);
+  border-color: var(--primary-hover);
+  transform: scale(1.05);
+  box-shadow: var(--shadow-button-hover);
+}
+
+.chat-composer__send-btn:active:not(:disabled) {
+  background: var(--primary-light);
+  border-color: var(--primary-active);
+  transform: scale(0.95);
+}
+
+/* 不可发送：保持主色描边可辨识，只降文字与底色，不整体灰掉 */
+.chat-composer__send-btn:disabled {
+  border-color: var(--primary-disabled);
+  color: var(--primary-disabled);
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.chat-composer__send-btn.is-stop {
+  border-color: var(--error);
+  background: transparent;
+  color: var(--error-text);
+}
+
+.chat-composer__send-btn.is-stop:hover {
+  background: var(--error-bg);
+  border-color: var(--error-hover);
+}
+
+.chat-composer__stop-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.chat-composer__profile-select {
+  width: 112px;
+  flex-shrink: 0;
+}
+
+/* 窄栏：按面板实际宽度（容器查询）决定收起什么，而不是按视口宽度 */
+@container composer (max-width: 460px) {
+  .chat-composer__hint {
+    display: none;
+  }
+}
+
+@container composer (max-width: 400px) {
+  .chat-composer__profile-select {
+    width: 92px;
+  }
+
+  .chat-composer__tool-btn {
+    padding: 0 6px;
+  }
+
+  .chat-composer__toolbar {
+    gap: 4px 6px;
+  }
+}

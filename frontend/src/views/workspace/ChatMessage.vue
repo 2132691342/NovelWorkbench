@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n'
 import NWButton from '@/components/NWButton.vue'
 import NWIcon from '@/components/NWIcon.vue'
 import type { NWChatDisplayMessage } from './chatTypes'
+import ThinkingPanel from './ThinkingPanel.vue'
 
 const props = defineProps<{
   message: NWChatDisplayMessage
@@ -37,6 +38,21 @@ function showAssistantActions(): boolean {
 function chunkPreview(chunkText: string): string {
   return chunkText.length > 120 ? `${chunkText.slice(0, 120)}...` : chunkText
 }
+
+/** 是否展示等待提示：仍在流式，且正文与思考都还没有内容（此时界面最容易像卡死） */
+function showWaitingHint(): boolean {
+  return (
+    props.message.role_code === 'assistant' &&
+    props.message.streaming_flag &&
+    props.message.content_text.length === 0 &&
+    props.message.reasoning_text.length === 0
+  )
+}
+
+/** 已等待秒数（保留一位小数，前 10 秒用 0.x 让用户看到数字在动） */
+function waitedSeconds(): string {
+  return (props.message.waited_ms / 1000).toFixed(1)
+}
 </script>
 
 <template>
@@ -54,8 +70,22 @@ function chunkPreview(chunkText: string): string {
         </span>
       </div>
 
+      <ThinkingPanel
+        v-if="message.role_code === 'assistant' && message.reasoning_text.length > 0"
+        :reasoning-text="message.reasoning_text"
+        :streaming-flag="message.streaming_flag"
+        :has-content-flag="message.content_text.length > 0"
+      />
+
+      <div v-if="showWaitingHint()" class="chat-message__waiting">
+        <span class="chat-message__waiting-dots"><i /><i /><i /></span>
+        <span class="chat-message__waiting-text">
+          {{ t('workspace.ai.waitingHint', { seconds: waitedSeconds() }) }}
+        </span>
+      </div>
+
       <div class="chat-message__content">
-        {{ message.content_text }}<span v-if="message.streaming_flag" class="chat-message__cursor" />
+        {{ message.content_text }}<span v-if="message.streaming_flag && message.content_text.length > 0" class="chat-message__cursor" />
       </div>
 
       <div v-if="message.error_message" class="chat-message__error">
@@ -146,8 +176,8 @@ function chunkPreview(chunkText: string): string {
 }
 
 .chat-message--user .chat-message__bubble {
-  border-color: #dbe3ff;
-  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+  border-color: var(--border-accent);
+  background: var(--accent-gradient);
 }
 
 .chat-message__head {
@@ -186,6 +216,47 @@ function chunkPreview(chunkText: string): string {
   line-height: 1.72;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.chat-message__waiting {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0 1px;
+  color: var(--text-placeholder);
+  font-size: 11.5px;
+}
+
+.chat-message__waiting-dots {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 10px;
+}
+
+.chat-message__waiting-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: var(--primary);
+  animation: chat-waiting-bounce 1s ease-in-out infinite;
+}
+
+.chat-message__waiting-dots i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.chat-message__waiting-dots i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes chat-waiting-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+.chat-message__waiting-text {
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-message__cursor {

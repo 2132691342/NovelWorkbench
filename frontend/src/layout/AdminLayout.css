@@ -92,7 +92,7 @@
   padding: 0 10px;
   border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, #fbfcff, var(--bg-page));
+  background: linear-gradient(135deg, var(--surface-stripe), var(--bg-page));
   cursor: pointer;
   transition: border-color var(--transition-base), box-shadow var(--transition-base),
     transform var(--transition-base);
@@ -187,6 +187,25 @@
   margin-top: 14px;
 }
 
+/* 折叠态：分组标题隐藏后，用分隔线代替分组边界，避免图标连成一列看不出层次 */
+.is-collapsed .admin-layout__nav-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-light);
+}
+
+.is-collapsed .admin-layout__nav-item {
+  justify-content: center;
+  height: 40px;
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+/* 折叠态：图标按钮居中，悬停只做底色不位移（位移会让一列图标抖动） */
+.is-collapsed .admin-layout__nav-item:hover {
+  transform: none;
+}
+
 .admin-layout__nav-group-title {
   padding: 8px 12px 6px;
   color: var(--text-placeholder);
@@ -228,7 +247,7 @@
 }
 
 .admin-layout__nav-item.is-active {
-  background: linear-gradient(90deg, var(--primary), #7c83f7);
+  background: var(--nav-active-gradient);
   color: var(--text-inverse);
   box-shadow: 0 6px 16px rgba(99, 102, 241, 0.24);
 }
@@ -263,10 +282,7 @@
   background: rgba(255, 255, 255, 0.85);
 }
 
-.is-collapsed .admin-layout__nav-item {
-  justify-content: center;
-  padding: 0;
-}
+
 
 /* 侧栏底部 */
 .admin-layout__aside-footer {

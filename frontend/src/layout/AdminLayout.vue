@@ -321,47 +321,59 @@ onUnmounted(() => {
       <nav class="admin-layout__nav">
         <template v-for="menuItem in sidebarMenuList" :key="menuItem.menu_code">
           <!-- 单页菜单（仪表盘 / 系统设置） -->
-          <button
+          <el-tooltip
             v-if="menuItem.menu_type_code === 'page'"
-            type="button"
-            class="admin-layout__nav-item"
-            :class="{ 'is-active': activeMenuItem?.menu_code === menuItem.menu_code }"
-            :title="appStore.sidebar_collapsed ? menuItem.menu_name : ''"
-            @click="handleMenuClick(menuItem)"
+            :content="menuItem.menu_name"
+            placement="right"
+            :disabled="!appStore.sidebar_collapsed"
+            :show-after="120"
           >
-            <NWIcon :icon_code="menuItem.icon_code" :size_px="18" />
-            <span v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-text">
-              {{ menuItem.menu_name }}
-            </span>
-            <span v-if="!appStore.sidebar_collapsed && activeMenuItem?.menu_code === menuItem.menu_code" class="admin-layout__nav-dot" />
-          </button>
+            <button
+              type="button"
+              class="admin-layout__nav-item"
+              :class="{ 'is-active': activeMenuItem?.menu_code === menuItem.menu_code }"
+              @click="handleMenuClick(menuItem)"
+            >
+              <NWIcon :icon_code="menuItem.icon_code" :size_px="18" />
+              <span v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-text">
+                {{ menuItem.menu_name }}
+              </span>
+              <span v-if="!appStore.sidebar_collapsed && activeMenuItem?.menu_code === menuItem.menu_code" class="admin-layout__nav-dot" />
+            </button>
+          </el-tooltip>
 
           <!-- 分组菜单 -->
           <div v-else class="admin-layout__nav-group">
             <div v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-group-title">
               {{ menuItem.menu_name }}
             </div>
-            <button
+            <el-tooltip
               v-for="childItem in menuItem.child_list"
               :key="childItem.menu_code"
-              type="button"
-              class="admin-layout__nav-item"
-              :class="{
-                'is-active': activeMenuItem?.menu_code === childItem.menu_code,
-                'is-disabled': isMenuDisabled(childItem),
-              }"
-              :title="appStore.sidebar_collapsed ? childItem.menu_name : ''"
-              @click="handleMenuClick(childItem)"
+              :content="childItem.menu_name"
+              placement="right"
+              :disabled="!appStore.sidebar_collapsed"
+              :show-after="120"
             >
-              <NWIcon :icon_code="childItem.icon_code" :size_px="18" />
-              <span v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-text">
-                {{ childItem.menu_name }}
-              </span>
-              <span
-                v-if="!appStore.sidebar_collapsed && activeMenuItem?.menu_code === childItem.menu_code"
-                class="admin-layout__nav-dot"
-              />
-            </button>
+              <button
+                type="button"
+                class="admin-layout__nav-item"
+                :class="{
+                  'is-active': activeMenuItem?.menu_code === childItem.menu_code,
+                  'is-disabled': isMenuDisabled(childItem),
+                }"
+                @click="handleMenuClick(childItem)"
+              >
+                <NWIcon :icon_code="childItem.icon_code" :size_px="18" />
+                <span v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-text">
+                  {{ childItem.menu_name }}
+                </span>
+                <span
+                  v-if="!appStore.sidebar_collapsed && activeMenuItem?.menu_code === childItem.menu_code"
+                  class="admin-layout__nav-dot"
+                />
+              </button>
+            </el-tooltip>
           </div>
         </template>
       </nav>

@@ -1,7 +1,6 @@
 # 数据存储设计
 
-本文描述 NovelWorkbench 的存储分工与降级行为、命名约定、32 张表的列结构、枚举取值、非关系存储、启动播种、事务与一致性边界、索引约束、迁移策略与备份恢复要点。
-事实来源为 `backend/internal/domain/*.go` 的 GORM 标签、`backend/cmd/server/main.go` 的装配与 `AutoMigrate` 列表、`backend/internal/repo/` 与 `backend/internal/service/` 的读写路径、`backend/configs/config.yaml` 的存储参数。
+本文描述 NovelWorkbench 的存储分工与降级行为、命名约定、33 张表的列结构、枚举取值、非关系存储、启动播种、事务与一致性边界、索引约束、迁移策略与备份恢复要点。
 
 ## 1. 存储分工与降级
 
@@ -15,7 +14,7 @@
 
 ```mermaid
 flowchart LR
-  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>32 张表)]
+  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>33 张表)]
   SVC -->|PutObject/GetObject| MINIO[(MinIO<br/>novelworkbench)]
   SVC -->|HTTP SQL| MC[(Manticore<br/>nw_chunks)]
   REPO[repo 层] -->|SET/EXISTS| REDIS[(Redis<br/>nw:token:blacklist:*)]
@@ -84,6 +83,7 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`infra.ULIDNamingStrategy.Colum
 | `URO_` | `IDPrefixUserRole` | `user_roles` |
 | `AUD_` | `IDPrefixAudit` | `audit_logs` |
 | `LGL_` | `IDPrefixLoginLog` | `login_logs` |
+| `PMP_` | `IDPrefixPromptProfile` | `prompt_profiles` |
 | `NTF_` | `IDPrefixNotification` | `notifications` |
 | `MPR_` | `IDPrefixModelProvider` | `model_providers` |
 | `MDL_` | `IDPrefixModelCatalog` | `model_catalogs` |
@@ -108,7 +108,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ## 3. 表结构
 
-`AutoMigrate` 一次性声明 32 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）与 `updated_at timestamptz`（`autoUpdateTime`），来自 `domain.BaseDO`，下表不再重复列出。
+`AutoMigrate` 一次性声明 33 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）与 `updated_at timestamptz`（`autoUpdateTime`），来自 `domain.BaseDO`，下表不再重复列出。
 
 ### 3.1 用户、权限与审计（7 张）
 
@@ -413,7 +413,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 切片由 `KnowledgeWorker.indexDocument` 生成：按 `app.chunk_size` / `app.chunk_overlap` 滑窗切分，命中既有同哈希切片时复用其 `chunk_ulid`，否则新建；同一文档的切片在同一事务内先删后插。
 
-### 3.5 对话与技能（4 张）
+### 3.5 对话、技能与提示词档案（5 张）
 
 #### chat_sessions
 
@@ -432,6 +432,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `session_ulid` | `varchar(40)` | `idx_chat_messages_session_ul_id` | 所属会话 |
 | `role_code` | `varchar(16)` | | `user` / `assistant` / `system` |
 | `content_text` | `text` | | 消息正文 |
+| `reasoning_text` | `text` | | 思考过程（推理模型返回，非推理模型为空串） |
 | `skill_code` | `varchar(32)` | | 命中的斜杠命令编码，空为自由对话 |
 | `ref_doc_json` | `text` | | `@` 引用文档 ULID JSON 数组 |
 | `ref_chapter_json` | `text` | | `@` 引用章节 ULID JSON 数组 |
@@ -469,6 +470,23 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `sort_order` | `bigint` | | 注入顺序 |
 
 技能删除时 `SkillService.Delete` 先调 `SkillRepo.DeleteReferencesBySkill` 再删技能行（非同一事务）。
+
+#### prompt_profiles
+
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `prompt_profile_ulid` | `varchar(40)` | PK | 档案 ULID（`PMP_`） |
+| `prompt_profile_code` | `varchar(32)` | `idx_prompt_profiles_prompt_profile_code` | 档案编码 |
+| `prompt_profile_name` | `varchar(64)` | | 档案名 |
+| `scope_code` | `varchar(16)` | `DEFAULT 'global'`，`idx_prompt_profiles_scope_code` | `global` / `project` |
+| `project_ulid` | `varchar(40)` | `idx_prompt_profiles_project_ul_id` | 所属项目，全局档案为空串 |
+| `description_text` | `varchar(256)` | | 一句话说明 |
+| `system_prompt_text` | `text` | | 系统提示词正文（身份与底线） |
+| `builtin_flag` | `boolean` | `DEFAULT false` | 内置档案不可删除，可停用 |
+| `enabled_flag` | `boolean` | `DEFAULT true` | 是否启用 |
+| `sort_order` | `bigint` | | 排序号；全局默认档案取启用的最小排序号 |
+
+与技能同构：作用域内编码唯一由 `PromptProfileRepo.CountByCode` 查重保证（无唯一索引），内置档案由 `PromptProfileService.SeedDefaults` 幂等播种，写入走 `prompt:manage` 权限。
 
 ### 3.6 模型与用量（4 张）
 
@@ -765,7 +783,8 @@ ORDER BY score DESC LIMIT <topK>
 | --- | --- | --- | --- |
 | 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model` 且 `model_providers` 为空 | 告警，继续启动 |
 | 2 | `ModelProviderService.MigrateLegacyModels` 把 `model_providers.chat_model_name` 非空的行转成 `model_catalogs` 行 | `model_catalogs` 为空 | 告警，继续启动 |
-| 3 | `SkillService.SeedDefaults` 播种 21 个内置全局技能 | 按 `(global, "", skill_code)` 查缺补插 | `os.Exit(1)` |
+| 3 | `SkillService.SeedDefaults` 播种 29 个内置全局技能 | 按 `(global, "", skill_code)` 查缺补插 | `os.Exit(1)` |
+| 3.1 | `PromptProfileService.SeedDefaults` 播种 5 份内置全局提示词档案 | 按 `(global, "", prompt_profile_code)` 查缺补插 | `os.Exit(1)` |
 | 4 | `SettingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插；已存在时仅同步 `setting_desc` | `os.Exit(1)` |
 | 5 | `RoleService.SeedDefaults` 播种内置角色 | 按 `role_code` 查缺补插 | `os.Exit(1)` |
 | 6 | `MenuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插，父级编码先解析 | `os.Exit(1)` |
@@ -777,10 +796,11 @@ ORDER BY score DESC LIMIT <topK>
 | --- | --- |
 | 供应商 | 名称「默认模型网关」，`enabled_flag=true`，`last_test_status_code='untested'`，API Key 用 JWT 密钥派生材料做 AES-256-GCM 封存（`pkg.SealSecret`） |
 | 默认模型 | 取 `ai.chat_model`，`default_flag=true`，`model_label` 回填模型名；播种后 `grantToBuiltinRoles` 授权给全部内置角色 |
-| 内置技能 | 来源 `ai.BuiltinSkills()`，共 21 个：`continue`、`outline`、`polish`、`expand`、`condense`、`summary`、`review`、`name`、`setting`、`deconstruct`、`deai`、`golden3`、`foreshadow`、`arc`、`chaptercheck`、`architect`、`hook`、`dialogue`、`pacing`、`worldrule`、`mainline`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`、`variable_spec_json='[]'`，已存在不覆盖 |
+| 内置技能 | 来源 `ai.BuiltinSkills()`，共 29 个：`continue`、`outline`、`polish`、`expand`、`condense`、`summary`、`review`、`name`、`setting`、`deconstruct`、`deai`、`golden3`、`foreshadow`、`arc`、`chaptercheck`、`architect`、`hook`、`dialogue`、`pacing`、`worldrule`、`mainline`、`pitch`、`sixcheck`、`voice`、`scene`、`hitscan`、`humanness`、`platform`、`ledger`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`、`variable_spec_json='[]'`，已存在不覆盖 |
+| 提示词档案 | 来源 `ai.BuiltinPromptProfiles()`，共 5 份：`novelist`（默认）、`editor`、`architect`、`deai`、`continuity`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`，已存在不覆盖 |
 | 应用配置 | `chat_history_count=5`、`rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
 | 内置角色 | `admin`（`perm_codes_json=["*"]`）、`user`（`perm_codes_json="[]"`），`builtin_flag=true`，已存在不覆盖 |
-| 内置菜单 | 来源 `menuSeedList`，共 25 行：3 个分组（创作 / 平台 / 系统）、21 个页面、1 个动作权限（`action_model_write`） |
+| 内置菜单 | 来源 `menuSeedList`，共 26 行：3 个分组（创作 / 平台 / 系统）、22 个页面、1 个动作权限（`action_model_write`） |
 | 管理员 | 登录名 `admin`，邮箱 `admin@novelworkbench.local`，密码取 `app.admin_password`（缺省 `Admin@123456`），挂载 `admin` 角色 |
 
 内置菜单承载的权限码登记：`skills`（`skill:manage`）、`admin_users`（`system:user:manage`）、`admin_roles`（`system:role:manage`）、`admin_menus`（`system:menu:manage`）、`admin_perms`（`system:perm:read`）、`admin_audit`（`system:audit:read`）、`admin_login_log`（`system:loginlog:read`）、`admin_usage`（`system:usage:read`）、`admin_jobs`（`system:job:manage`）、`admin_status`（`system:status:read`）、`settings`（`system:setting:manage`）、`action_model_write`（`system:model:manage`）。

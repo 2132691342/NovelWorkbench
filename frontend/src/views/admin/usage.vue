@@ -11,12 +11,13 @@ import { getModelUsageOverview, type NWModelUsageOverviewVo } from '@/api/model'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { chartSeriesColor } from '@/utils/designToken'
 
 const { t } = useI18n()
 
-/** 图表配色（对齐设计系统） */
-const NW_CHART_CALL_COLOR = '#6366f1'
-const NW_CHART_TOKEN_COLOR = '#818cf8'
+/** 图表配色：运行时读取设计令牌，避免 Canvas 侧硬编码品牌色 */
+const NW_CHART_CALL_COLOR = chartSeriesColor(1)
+const NW_CHART_TOKEN_COLOR = chartSeriesColor(2)
 
 /** 区间预设天数 */
 const NW_RANGE_OPTION_LIST = [7, 14, 30] as const

@@ -6,9 +6,9 @@
 
 .knowledge-search__hero {
   padding: 18px;
-  border: 1px solid #e0e7ff;
+  border: 1px solid var(--border-accent);
   border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, #f8faff, #f5f3ff 70%, #fdfdff);
+  background: linear-gradient(135deg, var(--surface-tint), var(--accent-gradient-soft) 70%, var(--surface-raise));
 }
 
 .knowledge-search__hero-head {
@@ -27,7 +27,7 @@
   flex-shrink: 0;
   border-radius: 11px;
   background: var(--bg-card);
-  border: 1px solid #e0e7ff;
+  border: 1px solid var(--border-accent);
   color: var(--primary);
 }
 
@@ -193,7 +193,7 @@
 }
 
 .knowledge-search__card:hover {
-  border-color: #dbe3ff;
+  border-color: var(--border-accent);
   box-shadow: var(--shadow-card);
 }
 
@@ -253,7 +253,7 @@
 .knowledge-search__hit {
   padding: 0 2px;
   border-radius: 3px;
-  background: #fde68a;
+  background: var(--warning-strong);
   color: var(--text-strong);
 }
 
@@ -267,7 +267,7 @@
 .knowledge-search__skeleton {
   height: 78px;
   border-radius: var(--radius-md);
-  background: linear-gradient(90deg, #f1f5f9 25%, #eef2f7 37%, #f1f5f9 63%);
+  background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-shine) 37%, var(--skeleton-base) 63%);
   background-size: 400% 100%;
   animation: knowledge-search-shimmer 1.3s ease infinite;
 }
@@ -294,8 +294,8 @@
   width: 56px;
   height: 56px;
   border-radius: 17px;
-  background: linear-gradient(135deg, #eef2ff, #f5f3ff);
-  border: 1px solid #e0e7ff;
+  background: var(--accent-gradient-soft);
+  border: 1px solid var(--border-accent);
   color: var(--primary);
 }
 

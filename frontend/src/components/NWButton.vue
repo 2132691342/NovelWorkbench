@@ -23,9 +23,10 @@ const props = withDefaults(
 
 const emit = defineEmits<{ click: [payload: MouseEvent] }>()
 
+/** 尺寸类只在 large/small 时生成：默认尺寸走基础样式，避免与类型变体 nw-button--default 重名互覆盖 */
 const buttonClassList = computed(() => [
   `nw-button--${props.type}`,
-  `nw-button--${props.size}`,
+  props.size === 'default' ? '' : `nw-button--size-${props.size}`,
   {
     'nw-button--loading': props.loading,
     'nw-button--disabled': props.disabled,

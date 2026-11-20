@@ -154,10 +154,11 @@ var builtinSkillList = []BuiltinSkill{
 
 // BuiltinSkills 返回内置技能定义（写作动作类 + 方法论类 + 进阶方法论类，只读副本）。
 func BuiltinSkills() []BuiltinSkill {
-	total := len(builtinSkillList) + len(novelSkillList) + len(craftSkillList)
+	total := len(builtinSkillList) + len(novelSkillList) + len(craftSkillList) + len(advancedSkillList)
 	skills := make([]BuiltinSkill, 0, total)
 	skills = append(skills, builtinSkillList...)
 	skills = append(skills, novelSkillList...)
 	skills = append(skills, craftSkillList...)
+	skills = append(skills, advancedSkillList...)
 	return skills
 }

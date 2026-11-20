@@ -18,6 +18,7 @@ import {
 import NWButton from '@/components/NWButton.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { readDesignToken } from '@/utils/designToken'
 
 const props = defineProps<{
   projectUlid: string
@@ -29,11 +30,18 @@ const { t } = useI18n()
 const relationTypeOptions = ['friend', 'enemy', 'lover', 'kin', 'teacher', 'rival', 'other']
 
 /** 角色类型 → 节点配色 */
-const roleColorMap: Record<string, string> = {
-  protagonist: '#6366f1',
-  antagonist: '#ef4444',
-  supporting: '#10b981',
-  minor: '#64748b',
+/** 角色类型 → 节点配色（取设计令牌，与全站状态色一致） */
+function roleColorOf(roleTypeCode: string): string {
+  switch (roleTypeCode) {
+    case 'protagonist':
+      return readDesignToken('--primary', '#6366f1')
+    case 'antagonist':
+      return readDesignToken('--error', '#ef4444')
+    case 'supporting':
+      return readDesignToken('--success', '#10b981')
+    default:
+      return readDesignToken('--text-secondary', '#64748b')
+  }
 }
 
 const graphHost = ref<HTMLDivElement | null>(null)
@@ -96,7 +104,7 @@ function unhighlightEdge(edgeVo: NWCharacterEdgeVo | null): void {
   }
   const cell = graphInstance.getCellById(edgeVo.relation_ulid)
   if (cell && cell.isEdge()) {
-    cell.attr('line/stroke', '#94a3b8')
+    cell.attr('line/stroke', readDesignToken('--text-placeholder', '#94a3b8'))
     cell.attr('line/strokeWidth', 1.5)
   }
 }
@@ -108,7 +116,7 @@ function highlightEdge(edgeVo: NWCharacterEdgeVo): void {
   }
   const cell = graphInstance.getCellById(edgeVo.relation_ulid)
   if (cell && cell.isEdge()) {
-    cell.attr('line/stroke', '#6366f1')
+    cell.attr('line/stroke', readDesignToken('--primary', '#6366f1'))
     cell.attr('line/strokeWidth', 2.5)
   }
 }
@@ -151,14 +159,14 @@ function renderGraph(): void {
       shape: 'rect',
       attrs: {
         body: {
-          fill: roleColorMap[nodeVo.role_type_code] ?? '#64748b',
+          fill: roleColorOf(nodeVo.role_type_code),
           stroke: 'transparent',
           rx: 10,
           ry: 10,
         },
         label: {
           text: nodeVo.character_name,
-          fill: '#ffffff',
+          fill: readDesignToken('--text-inverse', '#ffffff'),
           fontSize: 13,
           textWrap: { width: 120, height: 34, ellipsis: true },
         },
@@ -179,7 +187,7 @@ function renderGraph(): void {
       connector: { name: 'rounded', args: { radius: 8 } },
       attrs: {
         line: {
-          stroke: '#94a3b8',
+          stroke: readDesignToken('--text-placeholder', '#94a3b8'),
           strokeWidth: 1.5,
           targetMarker: { name: 'block', width: 10, height: 6 },
         },
@@ -188,7 +196,11 @@ function renderGraph(): void {
         {
           position: 0.5,
           attrs: {
-            label: { text: relationTypeText(edgeVo.relation_type_code), fill: '#475569', fontSize: 11 },
+            label: {
+              text: relationTypeText(edgeVo.relation_type_code),
+              fill: readDesignToken('--text-secondary', '#475569'),
+              fontSize: 11,
+            },
           },
         },
       ],

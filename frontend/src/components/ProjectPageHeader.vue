@@ -260,7 +260,7 @@ defineExpose({ loading })
   padding: 0 12px;
   overflow-x: auto;
   border-top: 1px solid var(--border-light);
-  background: linear-gradient(180deg, var(--bg-card), #fdfdff);
+  background: linear-gradient(180deg, var(--bg-card), var(--surface-raise));
 }
 
 .project-context__nav-item {

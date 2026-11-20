@@ -17,6 +17,7 @@ const (
 	PermLoginLogRead   = "system:loginlog:read"  // 登录日志查看
 	PermJobManage      = "system:job:manage"     // 异步任务查看与重试
 	PermSkillManage    = "skill:manage"          // 技能资产管理
+	PermPromptManage   = "prompt:manage"         // 系统提示词档案管理
 )
 
 // 内置角色编码常量。

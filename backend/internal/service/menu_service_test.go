@@ -139,22 +139,11 @@ func TestMenuAndPermissionChain(t *testing.T) {
 		}
 	}
 
-	// ---- 环节五：权限分组编码与展示名 ----
-	if permGroupCode(domain.PermAdminAll) != "all" {
-		t.Fatalf("通配权限分组 = %q", permGroupCode(domain.PermAdminAll))
+	// ---- 环节五：分组编码决定目录结构（通配单独成组，首段相同归一组） ----
+	if catalog[0].GroupCode != "all" || catalog[0].GroupName != "全部权限" {
+		t.Fatalf("通配权限应独立成组且排首位: %+v", catalog[0])
 	}
-	if permGroupCode("system:user:manage") != "system" {
-		t.Fatalf("系统权限分组 = %q", permGroupCode("system:user:manage"))
-	}
-	if permGroupCode("skill:manage") != "skill" {
-		t.Fatalf("技能权限分组 = %q", permGroupCode("skill:manage"))
-	}
-	if permGroupCode("no_colon") != "other" {
-		t.Fatalf("无分隔符权限分组 = %q", permGroupCode("no_colon"))
-	}
-	if permGroupLabel("all") != "全部权限" || permGroupLabel("system") != "系统管理" ||
-		permGroupLabel("skill") != "技能" || permGroupLabel("project") != "项目" ||
-		permGroupLabel("unknown") != "其他" {
-		t.Fatal("权限分组展示名不匹配")
+	if groupMap["system"].GroupName != "系统管理" {
+		t.Fatalf("system 分组展示名 = %q", groupMap["system"].GroupName)
 	}
 }

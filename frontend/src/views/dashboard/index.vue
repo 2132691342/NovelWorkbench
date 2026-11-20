@@ -11,6 +11,7 @@ import { get } from '@/api/http'
 import { deleteProject, listProjects } from '@/api/project'
 import type { NWProjectVo, NWSettingItemVo, NWStatsOverviewVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
+import { readDesignToken } from '@/utils/designToken'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWIcon from '@/components/NWIcon.vue'
 import NWPageHeader from '@/components/NWPageHeader.vue'
@@ -103,15 +104,15 @@ function statusBadgeClass(statusCode: string): string {
   return 'nw-badge--warning'
 }
 
-/** 封面色（按书名稳定散列，刷新不跳变） */
+/** 封面色（按书名稳定散列，刷新不跳变）：色板取设计令牌，避免页面内硬编码品牌色 */
 function coverGradient(projectName: string): string {
   const paletteList = [
-    ['#6366f1', '#818cf8'],
-    ['#0f172a', '#475569'],
-    ['#0ea5e9', '#38bdf8'],
-    ['#059669', '#34d399'],
-    ['#d97706', '#fbbf24'],
-    ['#7c3aed', '#a78bfa'],
+    [readDesignToken('--primary', '#6366f1'), readDesignToken('--primary-hover', '#818cf8')],
+    [readDesignToken('--text-strong', '#0f172a'), readDesignToken('--text-secondary', '#475569')],
+    [readDesignToken('--info', '#3b82f6'), readDesignToken('--primary-hover', '#38bdf8')],
+    [readDesignToken('--success', '#10b981'), readDesignToken('--success-text', '#34d399')],
+    [readDesignToken('--warning', '#f59e0b'), readDesignToken('--warning-strong', '#fbbf24')],
+    [readDesignToken('--primary-active', '#4f46e5'), readDesignToken('--primary-light', '#a78bfa')],
   ]
   let hashValue = 0
   for (const charText of projectName) {

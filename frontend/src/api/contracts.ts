@@ -66,6 +66,21 @@ export interface NWSkillVariableVo {
 }
 
 /** 技能视图对象（字段对齐后端 SkillVO） */
+/** 系统提示词档案视图（字段对齐后端 PromptProfileVO） */
+export interface NWPromptProfileVo {
+  prompt_profile_ulid: string
+  prompt_profile_code: string
+  prompt_profile_name: string
+  scope_code: string
+  project_ulid: string
+  description_text: string
+  system_prompt_text: string
+  builtin_flag: boolean
+  enabled_flag: boolean
+  sort_order: number
+  updated_at_ms: number
+}
+
 export interface NWSkillVo {
   skill_ulid: string
   skill_code: string
@@ -276,6 +291,7 @@ export interface NWChatMessageVo {
   session_ulid: string
   role_code: string
   content_text: string
+  reasoning_text: string
   skill_code: string
   ref_doc_ulid_list: string[]
   ref_chapter_ulid_list: string[]
@@ -291,6 +307,7 @@ export interface NWChatStreamEventVo {
   session_ulid: string
   message_ulid: string
   content_text: string
+  reasoning_text: string
   reference_list: NWKnowledgeChunkVo[]
   error_message: string
 }
@@ -374,6 +391,7 @@ export interface NWChatSendReqVo {
   ref_message_ulid_list?: string[]
   history_count?: number
   model_ulid?: string
+  prompt_profile_ulid?: string
 }
 
 /** 创建 AI 会话请求 */

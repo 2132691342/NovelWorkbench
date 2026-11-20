@@ -1,6 +1,6 @@
 # 模块设计与实现
 
-本文逐个说明 NovelWorkbench 业务模块的职责、数据结构、实现路径、边界与设计权衡，事实来源为 `backend/internal/{service,api,domain}`、`backend/internal/pkg`、`backend/cmd/server/main.go` 与 `frontend/src`。
+本文逐个说明 NovelWorkbench 业务模块的职责、数据结构、实现路径、边界与设计权衡。
 每个模块固定四段：**职责与数据**（做什么、落在哪些表/对象上）、**实现路径**（文件与符号、关键规则）、**边界**（不做什么、失败如何处理）、**权衡**（为什么这样设计、代价是什么）；接口字段见 `doc/api.md`，表结构见 `doc/database.md`，AI 细节见 `doc/ai.md`。
 
 ## 1. 模块总览
@@ -22,13 +22,14 @@
 | 14 | 知识库 | `knowledge_documents`、`knowledge_chunks` + MinIO + Manticore | `service/knowledge_service.go`、`service/knowledge_worker.go`、`service/knowledge_search_service.go` |
 | 15 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`、`service/chat_context.go` |
 | 16 | 技能资产 | `skills`、`skill_references` | `service/skill_service.go`、`service/skill_reference_service.go` |
+| 16.5 | 提示词档案 | `prompt_profiles` | `service/prompt_profile_service.go`、`api/prompt_profile_api.go` |
 | 17 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants` | `service/model_provider_service.go`、`service/model_catalog_service.go`、`service/model_access_service.go` |
 | 18 | 数据总览 | `word_count_stats`、`projects` | `service/stats_service.go` |
 | 19 | 用量分析 | `model_usage_stats` | `service/model_usage_service.go` |
 | 20 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
 | 21 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/stores`、`frontend/src/views/workspace` |
 
-后端在 `backend/internal/api/router.go` 内注册 107 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、32 张 AutoMigrate 表（`backend/cmd/server/main.go`）、21 个内置技能（`backend/internal/ai` 的 `BuiltinSkills`，分 `builtinSkillList` / `novelSkillList` / `craftSkillList` 三个文件）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
+后端在 `backend/internal/api/router.go` 内注册 111 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、29 个内置技能（`backend/internal/ai` 的 `BuiltinSkills`，分 `builtinSkillList` / `novelSkillList` / `craftSkillList` / `advancedSkillList` 四组）、5 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
 
 ## 2. 认证与会话
 
@@ -103,7 +104,7 @@
 
 ### 4.1 职责与数据
 
-`menus` 表同时承担两件事：前端导航树的唯一数据源，以及权限码的登记处（菜单即权限单一事实源）。表内 25 条内置菜单由 `service/menu_service.go` 的 `menuSeedList` 播种：3 个分组（`group_project` 创作 / `group_platform` 平台 / `group_system` 系统）、21 个页面节点（其中 `dashboard` 与 `settings` 为根级）、1 条动作节点 `action_model_write`。
+`menus` 表同时承担两件事：前端导航树的唯一数据源，以及权限码的登记处（菜单即权限单一事实源）。表内 26 条内置菜单由 `service/menu_service.go` 的 `menuSeedList` 播种：3 个分组（`group_project` 创作 / `group_platform` 平台 / `group_system` 系统）、22 个页面节点（其中 `dashboard` 与 `settings` 为根级）、1 条动作节点 `action_model_write`。
 
 | 列 | 取值 | 作用 |
 | --- | --- | --- |
@@ -458,7 +459,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 `skills` 是可编辑的提示词资产：编码（对话中以 `/code` 触发）、名称、作用域 `global`/`project`、分类 `write/revise/outline/setting/review/other`、模板 `prompt_template`、变量声明 `variable_spec_json`、启停与内置标记。`skill_references` 存参考资料（名称、正文、逗号分隔关键词、排序），在技能命中时按关键词挑选注入。
 
-内置技能 21 个，由 `ai.BuiltinSkills()` 提供、`SkillService.SeedDefaults` 幂等播种为全局作用域 `builtin_flag=true`。
+内置技能 29 个，由 `ai.BuiltinSkills()` 提供、`SkillService.SeedDefaults` 幂等播种为全局作用域 `builtin_flag=true`。其中 `pitch`/`sixcheck`/`voice`/`scene`/`hitscan`/`humanness`/`platform`/`ledger` 属进阶方法论技能，采用可机检、可对账的判据与阈值组织。
 
 ### 16.2 实现路径
 
@@ -481,6 +482,32 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 ### 16.4 权衡
 
 把提示词做成数据而不是代码，让作者不改代码、不发版就能调技能；代价是模板与变量的一致性必须在保存期校验，运行期还要处理变量缺失与参考资料预算。作用域覆盖规则（项目覆盖全局）让「全局默认 + 项目特化」成为可能，代价是列表页必须显式标注「被覆盖」，否则作者会困惑于改了全局为什么没生效。参考资料用关键词命中而不是向量相似度，与第 14 节的检索取舍一致：可解释、零额外依赖，但同义表达命中率有限。
+
+## 16.5 提示词档案
+
+### 16.5.1 职责与数据
+
+`prompt_profiles` 存「AI 是谁」：编码、名称、作用域 `global`/`project`、系统提示词正文、启停与内置标记。与技能的分工是：**档案定身份与底线，技能定本次动作**。同一次对话两者同时下发，档案不会被技能覆盖。
+
+内置 5 份：`novelist`（长篇连载作者，默认）、`editor`（连载责任编辑）、`architect`（故事架构师）、`deai`（去 AI 味修订）、`continuity`（设定守门人），由 `ai.BuiltinPromptProfiles()` 提供、`PromptProfileService.SeedDefaults` 幂等播种。
+
+### 16.5.2 实现路径
+
+- `SystemPromptOf(projectULID, promptProfileULID)`：显式档案（须启用且为全局或属于当前项目）→ 启用的全局默认档案（排序号最小）→ `ai.SystemPrompt("")` 内置兜底。解析失败不报错，直接降级，保证链路永远有身份约束。
+- `ai.ComposeSystemPrompt(profileText, styleText)`：档案正文 + 「本项目文风约束」段落。有档案时不再拼内置人设，避免两套身份打架。
+- `Save`：作用域缺省 `global`；项目档案必须带项目并经 `mustOwnProject` 校验归属；`CountByCode` 保证作用域内编码唯一；内置档案可改正文与名称，但编码与作用域不可变。
+- `Delete`：内置档案拒绝删除（可停用），停用后使用它的对话自动回退到默认档案。
+- 前端 `views/prompts/index.vue` 管理档案，`views/workspace/ChatComposer.vue` 提供对话期档案选择（清空即用默认）。
+
+### 16.5.3 边界
+
+- 档案不参与上下文预算裁剪：它走 `system` 角色，不受 `ContextBudgetChars` 约束，因此正文上限设为 8000 字符。
+- 项目档案的归属校验与技能不同：档案用 `mustOwnProject`（校验创建者），技能用 `mustProjectAccess`（只校验项目存在）。档案会直接影响模型行为，收得更紧。
+- 档案只在对话链路生效，知识库重排等内部调用仍走固定提示词。
+
+### 16.5.4 权衡
+
+把系统提示词做成可编辑资产，让「换一种 AI 身份」不需要改代码；代价是多一层解析与一次数据库读取（每次发送一次 `GetByULID` 或 `GetDefaultGlobal`，单行主键查询，可忽略）。不做缓存是刻意的：档案改完要立刻生效，缓存失效逻辑比查询本身更贵。
 
 ## 17. 模型生态
 
@@ -640,6 +667,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 ```mermaid
 flowchart TD
   chat[AI 对话] --> skill[技能资产]
+  chat --> profile["提示词档案"]
   chat --> knowledge[知识库]
   chat --> provider[模型生态]
   chat --> character[角色卡]
@@ -668,6 +696,7 @@ flowchart TD
 | 依赖 | 说明 |
 | --- | --- |
 | 对话 → 技能 / 知识库 / 模型 | `ChatService` 持有 `SkillService`、`KnowledgeService`、`ModelProviderService`：先解析技能，再召回切片，最后取 `ChatSpecOf` 下发模型规格 |
+| 对话 → 提示词档案 | `ChatService` 调 `PromptProfileService.SystemPromptOf` 解析对话系统提示词，显式档案优先、默认档案兜底，与技能模板共同组成最终下发指令 |
 | 知识库 → 模型 | 重排走 `DefaultChatSpec`（系统默认模型），与用户授权无关；无模型时 fail-open 保留检索顺序 |
 | 知识库 → 任务中心 | `enqueueIndexJob` 写 `jobs` 行后投递队列，worker 回写任务与文档状态 |
 | 菜单 → 角色 | `MenuService.Nav` 调 `RoleService.PermCodesOfUser` 取权限并集；`RequirePermMiddleware` 调 `RoleService.HasPerm` |

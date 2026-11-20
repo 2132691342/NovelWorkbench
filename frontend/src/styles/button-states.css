@@ -1,13 +1,18 @@
 /* ============================================================
- * 全局按钮五态体系
+ * 全局按钮五态体系（镂空线条风格）
  * 覆盖 Element Plus 按钮（.el-button）与自定义按钮（.nw-button）
  *
- * 五态：DEFAULT 常态 / HOVER 悬停 / PRESSED 按下 / DISABLED 禁用 / LOADING 加载
- * - HOVER：放大 scale(1.05) + 颜色提亮 + 投影加深
- * - PRESSED：缩小 scale(0.95) + 颜色加深 + 投影收敛
- * - DISABLED：降透明、禁交互、无动效
- * - LOADING：转圈 + 禁点 + 微光扫过
- * 每态 transition 0.2s ease（DISABLED 无动效除外）
+ * 设计前提：按钮默认是「透明底 + 描边 + 彩色字」的镂空形态，
+ * 只有悬停与按下才填入淡底——这样一屏几十个按钮也不会糊成一片色块。
+ *
+ * 五态：
+ * - DEFAULT  透明底、1px 描边、主色字
+ * - HOVER    scale(1.05) + 淡底填充 + 描边提亮 + 投影浮起
+ * - PRESSED  scale(0.95) + 底色加深 + 投影收敛（明显的按下手感）
+ * - DISABLED 降透明、禁交互、无动效
+ * - LOADING  转圈 + 微光扫过 + 禁点（保持当前底色，不闪烁）
+ *
+ * 过渡统一 0.18s cubic-bezier，缩放用带回弹的曲线，避免机械线性。
  * ============================================================ */
 
 /* ===== DEFAULT 常态 ===== */
@@ -15,14 +20,19 @@
 .nw-button {
   position: relative;
   transform: scale(1);
-  transition: all 0.2s ease;
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.4, 0.64, 1),
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
-/* 自定义按钮基础外观（Element Plus 按钮保留自身主题） */
+/* 自定义按钮基础外观：镂空线条 */
 .nw-button {
-  --nw-btn-bg: #ffffff;
-  --nw-btn-text: var(--text-main);
-  --nw-btn-border: var(--border);
+  --nw-btn-bg: var(--btn-default-bg);
+  --nw-btn-text: var(--btn-default-text);
+  --nw-btn-border: var(--btn-default-border);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -33,7 +43,7 @@
   border-radius: var(--radius-base);
   background-color: var(--nw-btn-bg);
   color: var(--nw-btn-text);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
@@ -41,48 +51,50 @@
   white-space: nowrap;
 }
 
-.nw-button--large {
+.nw-button--size-large {
   height: 40px;
   padding: 0 22px;
-  font-size: 16px;
+  font-size: 15px;
 }
 
-.nw-button--small {
-  height: 24px;
-  padding: 0 12px;
+.nw-button--size-small {
+  height: 26px;
+  padding: 0 11px;
   font-size: 12px;
 }
 
-/* 自定义按钮变体 */
+/* 变体：底/字/边三色成组定义，状态只覆盖需要的项 */
 .nw-button--primary {
-  --nw-btn-bg: var(--primary);
-  --nw-btn-text: var(--text-inverse);
-  --nw-btn-border: var(--primary);
+  --nw-btn-bg: var(--btn-primary-bg);
+  --nw-btn-text: var(--btn-primary-text);
+  --nw-btn-border: var(--btn-primary-border);
 }
 
 .nw-button--default {
-  --nw-btn-bg: #ffffff;
-  --nw-btn-text: var(--text-main);
-  --nw-btn-border: var(--border);
+  --nw-btn-bg: var(--btn-default-bg);
+  --nw-btn-text: var(--btn-default-text);
+  --nw-btn-border: var(--btn-default-border);
 }
 
 .nw-button--danger {
-  --nw-btn-bg: var(--error);
-  --nw-btn-text: var(--text-inverse);
-  --nw-btn-border: var(--error);
+  --nw-btn-bg: transparent;
+  --nw-btn-text: var(--btn-danger-text);
+  --nw-btn-border: var(--btn-danger-border);
 }
 
 .nw-button--text {
   --nw-btn-bg: transparent;
-  --nw-btn-text: var(--primary);
+  --nw-btn-text: var(--primary-active);
   --nw-btn-border: transparent;
+  padding: 0 8px;
 }
 
 /* 表格行内的次要危险操作：默认弱化，悬停/按下才显红 */
 .nw-button--danger-text {
   --nw-btn-bg: transparent;
-  --nw-btn-text: var(--error);
+  --nw-btn-text: var(--error-text);
   --nw-btn-border: transparent;
+  padding: 0 8px;
 }
 
 .nw-button__content {
@@ -90,19 +102,15 @@
   align-items: center;
   gap: 6px;
 }
+
 /* 图标按钮与文本标签按钮：紧凑外观 + 五态缩放 */
 .nw-button--icon {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: none;
   background-color: transparent;
   color: var(--text-secondary);
-}
-
-.nw-button--icon:hover {
-  background-color: var(--border-light);
-  color: var(--text-main);
 }
 
 .nw-button--tab {
@@ -112,101 +120,134 @@
 }
 
 .nw-button--tab.is-active {
-  background-color: var(--primary);
-  color: var(--text-inverse);
-  box-shadow: var(--shadow-button-hover);
+  border-color: var(--primary);
+  background-color: var(--primary-light);
+  color: var(--primary-active);
+  box-shadow: none;
 }
 
-
-/* ===== HOVER 悬停态 ===== */
+/* ===== HOVER 悬停态：放大 + 淡底 + 描边提亮 + 浮起 ===== */
 .el-button:not(.is-disabled):not(.is-loading):hover,
 .nw-button:not(.nw-button--disabled):not(.nw-button--loading):hover {
-  transform: scale(1.05);
+  transform: scale(var(--btn-hover-scale));
   box-shadow: var(--shadow-button-hover);
+  z-index: 2;
 }
 
-.el-button:not(.is-disabled):not(.is-loading):hover {
-  color: var(--primary);
-  border-color: var(--primary-hover);
+/* 小尺寸按钮放大更多，保证点击感可感知 */
+.nw-button--size-small:not(.nw-button--disabled):not(.nw-button--loading):hover,
+.nw-button--icon:not(.nw-button--disabled):not(.nw-button--loading):hover,
+.nw-button--text:not(.nw-button--disabled):not(.nw-button--loading):hover,
+.nw-button--danger-text:not(.nw-button--disabled):not(.nw-button--loading):hover,
+.el-button--small:not(.is-disabled):not(.is-loading):hover,
+.el-button.is-text:not(.is-disabled):not(.is-loading):hover {
+  transform: scale(var(--btn-tap-hover-scale));
+}
+
+/* Element Plus：默认按钮转镂空主色，主色按钮转淡底 */
+.el-button:not(.is-disabled):not(.is-loading):not(.el-button--primary):not(.el-button--danger):hover {
+  background-color: var(--btn-default-bg-hover);
+  border-color: var(--primary);
+  color: var(--primary-active);
 }
 
 .el-button--primary:not(.is-disabled):not(.is-loading):hover {
-  background-color: var(--primary-hover);
+  background-color: var(--btn-primary-bg-hover);
   border-color: var(--primary-hover);
-  color: var(--text-inverse);
+  color: var(--primary-active);
 }
 
 .el-button--danger:not(.is-disabled):not(.is-loading):hover {
-  background-color: var(--error-hover);
+  background-color: var(--btn-danger-bg-hover);
   border-color: var(--error-hover);
-  color: var(--text-inverse);
+  color: var(--error-text);
 }
 
-.nw-button--primary:hover,
-.nw-button--primary.nw-button--loading {
-  background-color: var(--primary-hover);
+.nw-button--primary:not(.nw-button--disabled):hover {
+  background-color: var(--btn-primary-bg-hover);
   border-color: var(--primary-hover);
+  color: var(--primary-active);
 }
 
-.nw-button--default:hover {
-  background-color: var(--primary-light);
+.nw-button--default:not(.nw-button--disabled):hover {
+  background-color: var(--btn-default-bg-hover);
   border-color: var(--primary-hover);
-  color: var(--primary);
+  color: var(--primary-active);
 }
 
-.nw-button--danger:hover {
-  background-color: var(--error-hover);
+.nw-button--danger:not(.nw-button--disabled):hover {
+  background-color: var(--btn-danger-bg-hover);
   border-color: var(--error-hover);
+  color: var(--error-hover);
 }
 
-.nw-button--text:hover {
-  background-color: var(--primary-light);
+.nw-button--text:not(.nw-button--disabled):hover,
+.nw-button--danger-text:not(.nw-button--disabled):hover,
+.nw-button--icon:not(.nw-button--disabled):hover {
+  background-color: var(--btn-primary-bg-hover);
 }
 
-.nw-button--danger-text:hover {
-  background-color: var(--error-bg);
+.nw-button--danger-text:not(.nw-button--disabled):hover {
+  background-color: var(--btn-danger-bg-hover);
 }
 
-/* ===== PRESSED 按下态 ===== */
+/* ===== PRESSED 按下态：缩小 + 底色加深 + 投影收敛 ===== */
 .el-button:not(.is-disabled):not(.is-loading):active,
 .nw-button:not(.nw-button--disabled):not(.nw-button--loading):active {
-  transform: scale(0.95);
+  transform: scale(var(--btn-pressed-scale));
   box-shadow: var(--shadow-button-pressed);
+  transition-duration: 0.06s;
+}
+
+.nw-button--size-small:not(.nw-button--disabled):not(.nw-button--loading):active,
+.nw-button--icon:not(.nw-button--disabled):not(.nw-button--loading):active,
+.nw-button--text:not(.nw-button--disabled):not(.nw-button--loading):active,
+.nw-button--danger-text:not(.nw-button--disabled):not(.nw-button--loading):active,
+.el-button--small:not(.is-disabled):not(.is-loading):active,
+.el-button.is-text:not(.is-disabled):not(.is-loading):active {
+  transform: scale(var(--btn-tap-pressed-scale));
 }
 
 .el-button--primary:not(.is-disabled):not(.is-loading):active {
-  background-color: var(--primary-active);
+  background-color: var(--btn-primary-bg-pressed);
   border-color: var(--primary-active);
+  color: var(--primary-active);
 }
 
 .el-button--danger:not(.is-disabled):not(.is-loading):active {
-  background-color: var(--error-active);
+  background-color: var(--btn-danger-bg-pressed);
   border-color: var(--error-active);
-}
-
-.nw-button--primary:active {
-  background-color: var(--primary-active);
-  border-color: var(--primary-active);
-}
-
-.nw-button--default:active {
-  background-color: var(--primary-light);
-  color: var(--primary-active);
-}
-
-.nw-button--danger:active {
-  background-color: var(--error-active);
-  border-color: var(--error-active);
-}
-
-.nw-button--text:active {
-  background-color: var(--primary-light);
-  color: var(--primary-active);
-}
-
-.nw-button--danger-text:active {
-  background-color: var(--error-border);
   color: var(--error-active);
+}
+
+.el-button:not(.is-disabled):not(.is-loading):not(.el-button--primary):not(.el-button--danger):active {
+  background-color: var(--btn-default-bg-pressed);
+  border-color: var(--primary-active);
+  color: var(--primary-active);
+}
+
+.nw-button--primary:not(.nw-button--disabled):active {
+  background-color: var(--btn-primary-bg-pressed);
+  border-color: var(--primary-active);
+  color: var(--primary-active);
+}
+
+.nw-button--default:not(.nw-button--disabled):active {
+  background-color: var(--btn-default-bg-pressed);
+  border-color: var(--primary-active);
+  color: var(--primary-active);
+}
+
+.nw-button--danger:not(.nw-button--disabled):active {
+  background-color: var(--btn-danger-bg-pressed);
+  border-color: var(--error-active);
+  color: var(--error-active);
+}
+
+.nw-button--text:not(.nw-button--disabled):active,
+.nw-button--danger-text:not(.nw-button--disabled):active,
+.nw-button--icon:not(.nw-button--disabled):active {
+  background-color: var(--btn-primary-bg-pressed);
 }
 
 /* ===== DISABLED 禁用态（降透明、禁交互、无动效） ===== */
@@ -214,11 +255,12 @@
 .el-button[disabled],
 .nw-button.nw-button--disabled,
 .nw-button[disabled] {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
-  transition: none;
+  transition: opacity 0.18s ease;
+  filter: grayscale(0.15);
 }
 
 /* ===== LOADING 加载态（转圈 + 禁点 + 微光） ===== */
@@ -229,6 +271,7 @@
   box-shadow: none;
   pointer-events: none;
   overflow: hidden;
+  opacity: 0.85;
 }
 
 /* 转圈：自定义按钮内置 spinner */
@@ -241,7 +284,7 @@
   animation: nw-btn-spin 0.8s linear infinite;
 }
 
-/* 微光：亮带自左向右扫过 */
+/* 微光：亮带自左向右扫过（用主色淡带，避免白底按钮上看不见） */
 .el-button.is-loading::before,
 .nw-button.nw-button--loading::before {
   content: '';
@@ -250,7 +293,7 @@
   background: linear-gradient(
     115deg,
     transparent 30%,
-    rgba(255, 255, 255, 0.45) 50%,
+    var(--primary-ring) 50%,
     transparent 70%
   );
   background-size: 200% 100%;
@@ -273,5 +316,25 @@
   }
   to {
     background-position: -200% 0;
+  }
+}
+
+/* 减少动效偏好：只保留颜色变化，去掉缩放与扫光 */
+@media (prefers-reduced-motion: reduce) {
+  .el-button,
+  .nw-button {
+    transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+
+  .el-button:hover,
+  .nw-button:hover,
+  .el-button:active,
+  .nw-button:active {
+    transform: none;
+  }
+
+  .el-button.is-loading::before,
+  .nw-button.nw-button--loading::before {
+    animation: none;
   }
 }

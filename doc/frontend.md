@@ -1,7 +1,6 @@
 # 前端设计
 
 本文描述 NovelWorkbench 前端（`frontend/`）的工程结构、设计系统、状态与数据流、路由与权限、页面实现、国际化与测试。
-事实来源为 `frontend/src/**`、`vite.config.ts`、`vitest.config.ts`、`uno.config.ts`、`package.json`，代码引用格式为 `路径` 的 `符号`。
 
 ## 1. 工程结构与构建
 
@@ -19,11 +18,11 @@
 | `src/stores/` | 5 个 Pinia store：`app`、`auth`、`menu`、`notification`、`project` |
 | `src/styles/` | 5 个全局样式文件，按 `variables` → `element-theme` → `button-states` → `page` → `global` 顺序加载 |
 | `src/i18n/` | `index.ts` + `locales/` 下中英各 5 个分片 |
-| `src/utils/` | `storage.ts`（localStorage 读写与结构校验） |
-| `src/views/` | 15 个页面目录，按业务域拆分 |
+| `src/utils/` | `storage.ts`（localStorage 读写与结构校验）、`designToken.ts`（图表与画布读取 CSS 令牌，见 2.9） |
+| `src/views/` | 16 个页面目录，按业务域拆分 |
 
-`src/views/` 的 15 个目录：`admin`、`character`、`continuity`、`dashboard`、`knowledge`、`login`、`lore`、`models`、`notes`、`notification`、`outline`、`profile`、`settings`、`skills`、`workspace`。
-源文件合计 58 个 `.vue`、47 个 `.ts`、29 个 `.css`。
+`src/views/` 的 16 个目录：`admin`、`character`、`continuity`、`dashboard`、`knowledge`、`login`、`lore`、`models`、`notes`、`notification`、`outline`、`profile`、`prompts`、`settings`、`skills`、`workspace`。
+源文件合计 64 个 `.vue`、50 个 `.ts`、35 个 `.css`。
 
 ### 1.2 样式加载顺序
 
@@ -56,7 +55,7 @@
 ### 1.4 文件组织约定
 
 - 页面样式超过单文件承载量时抽到同目录 `*.css`，模板用 `<style scoped src="./xxx.css">` 引入（如 `views/dashboard/index.vue` → `views/dashboard/dashboard.css`，`views/workspace/index.vue` → `views/workspace/workspace.css`）。
-- 复杂页面拆子组件，放同目录由父组件组合：`views/workspace/` 下 `WorkspaceTree.vue`、`ChapterEditor.vue`、`AiPanel.vue`、`ChatComposer.vue`、`ChatMessage.vue`、`SnapshotDialog.vue`；`views/knowledge/` 下 `KnowledgeUploadPanel.vue`、`KnowledgeSearchPanel.vue`、`ChunkListDialog.vue`、`KnowledgePreviewDrawer.vue`。
+- 复杂页面拆子组件，放同目录由父组件组合：`views/workspace/` 下 `WorkspaceTree.vue`、`ChapterEditor.vue`、`AiPanel.vue`、`AiPanelHeader.vue`、`ChatComposer.vue`、`ComposerToolbar.vue`、`ChatMessage.vue`、`ThinkingPanel.vue`、`SlashMenu.vue`、`RefPicker.vue`、`SnapshotDialog.vue`；`views/knowledge/` 下 `KnowledgeUploadPanel.vue`、`KnowledgeSearchPanel.vue`、`ChunkListDialog.vue`、`KnowledgePreviewDrawer.vue`。
 - 纯逻辑抽成独立 `.ts` 便于直接测试：`views/workspace/wordCount.ts`、`views/workspace/workspaceTreeExport.ts`、`views/workspace/chatTypes.ts`、`views/notes/noteContent.ts`、`views/outline/outlineOptions.ts`、`views/admin/menuIcons.ts`。
 
 ## 2. 设计系统
@@ -81,6 +80,9 @@
 | 背景 | `--bg-page` → color-4；`--bg-card` → `#ffffff`；`--bg-hover` → `#f1f5f9`；`--bg-subtle` → `#f8fafc`；`--bg-inverse` → `#0f172a`；`--bg-gradient` → 两段径向渐变（`#eef2ff` / `#f5f3ff`） |
 | 文字 | `--text-main` → color-5；`--text-secondary` → `#64748b`；`--text-placeholder` → `#94a3b8`；`--text-inverse` → `#ffffff`；`--text-strong` → `#0f172a` |
 | 边框 | `--border` → `#e2e8f0`；`--border-light` → `#eef2f7`；`--border-strong` → `#cbd5e1` |
+| 按钮（镂空） | 主色：底 `--btn-primary-bg` 透明 / 字 `--primary-active` / 边 `--primary`，悬停底 `--primary-soft`、按下底 `--primary-light`；默认：底透明 / 字 `--text-main` / 边 `--border-strong`；危险：字 `--error-text` / 边 `--error`；缩放 `--btn-hover-scale` 1.05 / `--btn-pressed-scale` 0.95 / `--btn-tap-*-scale` 1.08 / 0.92 |
+| 中性表面阶梯 | `--surface-tint` `#f8faff`（行悬停）；`--surface-stripe` `#fbfcff`（斑马纹）；`--surface-raise` `#fdfdff`（浮起面）；`--skeleton-base` `#f1f5f9` / `--skeleton-shine` `#e9eef7`（骨架）；`--scroll-thumb` `#cbd5e1` / `--scroll-thumb-hover` `#94a3b8` |
+| 渐变 | `--accent-gradient`（`--primary-soft` → `--primary-light`）；`--accent-gradient-soft`（`--primary-soft` → `#f5f3ff`）；`--nav-active-gradient`（`--primary` → `--primary-hover`）。只用于品牌色块、选中态与图表面积，不铺整页 |
 | 状态基色 | `--success` `#10b981`；`--warning` `#f59e0b`；`--error` `#ef4444`；`--error-hover` `#dc2626`；`--error-active` `#b91c1c`；`--info` `#3b82f6` |
 | 图表 | `--chart-series-1` → color-1；`--chart-series-2` → color-2；`--chart-grid` → `#eef2f7` |
 | 阴影 | `--shadow-xs`、`--shadow-card`、`--shadow-card-hover`、`--shadow-popover`、`--shadow-button-hover`、`--shadow-button-pressed`、`--shadow-sidebar` |
@@ -115,21 +117,29 @@
 | `--el-box-shadow-light` | `--shadow-card` |
 | `--el-font-size-base` / `--el-component-size` / `-small` / `-large` | 14px / 36px / 28px / 42px |
 
-`src/styles/element-theme.css` 在此基础上做形态收敛：按钮 `min-height` 36/42/28px 三档、输入聚焦 `box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 3px var(--primary-ring)`、弹层圆角 `--radius-xl` 与 `--shadow-popover`、表格表头底色 `--bg-subtle` 与斑马纹 `#fbfcff`、分页选中项填充 `--primary`、标签统一 `--radius-pill`、抽屉遮罩 `backdrop-filter: blur(2px)`。
+`src/styles/element-theme.css` 在此基础上做形态收敛：按钮 `min-height` 36/42/28px 三档且主色/危险按钮改为镂空描边（`--btn-*` 令牌，见 2.5）、输入聚焦 `box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 3px var(--primary-ring)`、弹层圆角 `--radius-xl` 与 `--shadow-popover`、弹窗进入 `nw-dialog-in` 动画、表格表头底色 `--bg-subtle` 与斑马纹 `--surface-stripe`、行悬停底色 `--surface-tint` 加首列主色引导条、分页选中项填充 `--primary`、标签统一 `--radius-pill`、抽屉遮罩 `backdrop-filter: blur(2px)`。
 
-### 2.5 按钮五态
+### 2.5 按钮五态（镂空线条风格）
 
 `src/styles/button-states.css` 同时覆盖 Element Plus 的 `.el-button` 与自定义的 `.nw-button`，五态必须齐备。
 
+**造型前提**：按钮默认是「透明底 + 1px 描边 + 彩色字」的镂空形态，只有悬停与按下才填入淡底。一屏几十个按钮不会糊成一片色块，这是「简洁易用」的具体做法，而不是把主色铺满。
+
 | 状态 | 触发 | 视觉 | 实现 |
 | --- | --- | --- | --- |
-| DEFAULT | 静止 | 底色/文字/边框由 `--nw-btn-*` 变量决定；Element Plus 保留自身主题 | `transform: scale(1)`、`transition: all 0.2s ease` |
-| HOVER | 悬停 | `scale(1.05)` + `--shadow-button-hover`；`primary` 转 `--primary-hover`；`default` 转底 `--primary-light`、字 `--primary`；`danger` 转 `--error-hover`；`text` 底转 `--primary-light` | `:hover` 排除 `.is-disabled` / `.is-loading` |
-| PRESSED | 按下 | `scale(0.95)` + `--shadow-button-pressed`；`primary` 转 `--primary-active`；`danger` 转 `--error-active` | `:active` |
-| DISABLED | `disabled` | `opacity: 0.5`、`cursor: not-allowed`、`transform: none`、`box-shadow: none`、`transition: none` | `.is-disabled` / `[disabled]` / `.nw-button--disabled` |
-| LOADING | `loading` | `cursor: wait`、`pointer-events: none`、`transform: none`；`::before` 亮带自左向右扫过（`nw-btn-shimmer` 1.2s）；`nw-button` 额外渲染 `.nw-button__spinner`（`nw-btn-spin` 0.8s） | `.is-loading` / `.nw-button--loading` |
+| DEFAULT | 静止 | 透明底 + `--btn-*-border` 描边 + `--btn-*-text` 字色；三色成组由 `--nw-btn-*` 变量承载 | `transform: scale(1)`；`transition` 为缩放 + 底色 + 描边 + 字色 + 投影五项，0.18s |
+| HOVER | 悬停 | `scale(1.05)` + 淡底填充（`--btn-*-bg-hover`）+ 描边提亮 + `--shadow-button-hover` 浮起；小号/文字/图标按钮放大 `1.08`（小尺寸需要更大相对位移才可感知） | `:hover` 排除 `.is-disabled` / `.is-loading`，`z-index: 2` 防止被相邻元素裁切 |
+| PRESSED | 按下 | `scale(0.95)`（小号 `0.92`）+ 底色加深（`--btn-*-bg-pressed`）+ 投影收敛为 `--shadow-button-pressed`；过渡压到 0.06s 制造「即时回弹」 | `:active` |
+| DISABLED | `disabled` | `opacity: 0.45` + `grayscale(0.15)`、`cursor: not-allowed`、无缩放无投影 | `.is-disabled` / `[disabled]` / `.nw-button--disabled` |
+| LOADING | `loading` | `cursor: wait`、`pointer-events: none`、`opacity: 0.85`（保持当前底色，不闪烁）；`::before` 用 `--primary-ring` 亮带自左向右扫过（`nw-btn-shimmer` 1.2s）；`nw-button` 额外渲染 `.nw-button__spinner`（`nw-btn-spin` 0.8s） | `.is-loading` / `.nw-button--loading` |
+
+缩放曲线用 `cubic-bezier(0.34, 1.4, 0.64, 1)`（轻微回弹），不是线性 ease——这是「明显的点击感」与「机械缩放」的区别。
 
 `components/NWButton.vue` 的 `type` 取 `primary` / `default` / `text` / `danger` / `danger-text`，`size` 取 `large` / `default` / `small`；`loading` 或 `disabled` 时不派发 `click` 并置 `disabled` 属性。表格行内的次要危险操作使用 `danger-text`（默认弱化为文字色，悬停才显红底）。
+
+**尺寸类命名**：`size` 只在非默认档生成 `nw-button--size-large` / `nw-button--size-small`。早期版本把默认档也生成 `nw-button--default`，与类型变体同名，导致 `type="primary"` 的主按钮被覆盖成默认外观——这是已修复的真实缺陷，改类名时不要退回去。
+
+`prefers-reduced-motion: reduce` 下只保留颜色过渡，去掉缩放与扫光。
 
 ### 2.6 布局骨架
 
@@ -149,6 +159,7 @@
 | --- | --- | --- |
 | 外壳 | `display: flex`、`height: 100vh`、`overflow: hidden`，背景 `--bg-page` + `--bg-gradient` | `layout/AdminLayout.css` 的 `.admin-layout` |
 | 侧边栏宽 | 236px；`.is-collapsed` 时 72px；`transition: width var(--transition-base)` | `.admin-layout__aside` |
+| 折叠态导航 | 折叠后宽 72px：隐藏品牌文字、项目切换器、分组标题与 `kbd`，图标居中；分组之间用 1px 分隔线代替标题边界；每个菜单项包在 `el-tooltip`（`placement=right`、`show-after=120`、仅折叠态启用）里，避免只靠 `title` 的延迟提示；折叠态悬停只变底色不位移，防止一列图标抖动 | `.admin-layout__aside.is-collapsed`、`.is-collapsed .admin-layout__nav-*` |
 | 顶栏高 | 60px；半透明白底 + `backdrop-filter: blur(10px)` + 下边框 | `.admin-layout__header` |
 | 内容区 | `padding: 22px 26px 32px`、`overflow-y: auto`、`scroll-behavior: smooth` | `.admin-layout__content` |
 | 工作台路由 | `.is-workspace` 修饰：`padding: 14px 18px 18px`、`overflow: hidden`（三栏各自滚动） | `src/layout/AdminLayout.vue` 按 `route.name === 'WorkspaceView'` 绑定 |
@@ -178,7 +189,10 @@
 | --- | --- | --- |
 | 路由切换 | `fade-slide`：`opacity` + `translateY(±12px)`，0.2s | `styles/global.css` |
 | 页面进入 | `nw-page-enter`：`opacity` + `translateY(6px)`，0.28s，结束态 `transform: none` | `styles/page.css` |
-| 按钮悬停/按下 | `scale(1.05)` / `scale(0.95)`，0.2s | `styles/button-states.css` |
+| 按钮悬停/按下 | 悬停 `scale(1.05)`（小号 `1.08`）、按下 `scale(0.95)`（小号 `0.92`），0.18s 回弹曲线；按下时过渡压到 0.06s | `styles/button-states.css` |
+| 弹窗进入 | `nw-dialog-in`：`opacity` + `translateY(10px)` + `scale(0.985)`，0.24s | `styles/element-theme.css` |
+| 抽屉/遮罩 | Element Plus 位移过渡 0.3s + 遮罩 `backdrop-filter: blur(2px)` | `styles/element-theme.css` |
+| 表格行悬停 | 底色转 `--surface-tint` + 首列 `inset 2px 0 0 var(--primary)` 主色引导条 | `styles/element-theme.css` |
 | 卡片悬停 | `translateY(-4px)` + `--shadow-card-hover` | `styles/global.css` 的 `.nw-card-hover:hover` |
 | 统计磁贴悬停 | `translateY(-2px)` + 阴影加深 | `components/NWStatTile.vue` |
 | 导航项悬停/按下 | `translateX(1px)` / `scale(0.985)` | `layout/AdminLayout.css` |
@@ -203,6 +217,22 @@
 | 加载态语义 | `NWLoading` 根节点 `role="status"` 并输出 `common.loading` 文案 |
 | 状态不只靠颜色 | 状态同时给出文字标签（`nw-badge` 文案、`el-tag` 文案） |
 | 减少动效 | `prefers-reduced-motion: reduce` 降级 |
+
+### 2.9 图表与画布侧取色
+
+ECharts 与 AntV X6 渲染在 Canvas/SVG 上，拿不到 CSS 变量。`src/utils/designToken.ts` 提供唯一的取色入口：
+
+| 导出 | 用途 |
+| --- | --- |
+| `readDesignToken(name, fallback)` | 读 `documentElement` 的计算样式并模块级缓存；令牌缺失时用兜底色，保证图表不出现透明或黑块 |
+| `chartSeriesColor(index)` | 取 `--chart-series-N`，主序列用 1 |
+| `tokenWithAlpha(name, alpha, fallback)` | 把 `#rrggbb` 令牌转成 `rgba()`——Canvas 不支持 `color-mix`，面积渐变必须给实值 |
+| `chartToken.*` | 图表中性色：`background` / `border` / `textMain` / `textSecondary` / `textPlaceholder` / `axisLine` / `splitLine` |
+| `resetDesignTokenCache()` | 清缓存；主题或语言切换导致变量变化时调用 |
+
+使用点：`views/dashboard/DashboardTrendCard.vue`（双系列趋势图）、`views/admin/usage.vue`（用量双轴图）、`views/character/CharacterGraphTab.vue`（X6 节点与边配色）、`views/dashboard/index.vue`（项目封面色板）。
+
+**纪律**：JS/TS 里出现的色值只允许作为 `readDesignToken` 的兜底参数，不允许直接赋给图表或节点。`grep -rn "#[0-9a-fA-F]\{6\}" frontend/src --include=*.vue --include=*.css` 除 `variables.css` 与兜底参数外应为空。
 
 ## 3. 状态与数据流
 
@@ -284,13 +314,33 @@ sequenceDiagram
 | `streamSsePost(urlPath, body, handlers, signal)` | `fetch('/api/v1' + urlPath)`，带 `Authorization`，`TextDecoder` 流式解码；流结束后补一个换行再解析一次兜住末尾无换行的事件；`AbortError` 视为主动取消静默结束，其余异常走 `handlers.onError` |
 | `useSSE()` | 返回 `{ streamingFlag, startStream, stopStream }`；`startStream` 先中止上一条流 |
 
-事件字段由 `api/contracts.ts` 的 `NWChatStreamEventVo` 定义：`seq`、`event_type`、`session_ulid`、`message_ulid`、`content_text`、`reference_list`、`error_message`。`views/workspace/AiPanel.vue` 的 `runStream` 按 `event_type` 分支：`chunk` 追加正文、`done` 覆盖正文并写入引用、`error` 记录错误文案；首个事件带 `session_ulid` 时同步会话列表。
+事件字段由 `api/contracts.ts` 的 `NWChatStreamEventVo` 定义：`seq`、`event_type`、`session_ulid`、`message_ulid`、`content_text`、`reasoning_text`、`reference_list`、`error_message`。`views/workspace/AiPanel.vue` 的 `runStream` 按 `event_type` 分支：`thinking` 追加思考、`chunk` 追加正文、`done` 覆盖正文并写入完整思考与引用、`error` 记录错误文案；首个事件带 `session_ulid` 时同步会话列表。
+
+### 3.5 AI 面板交互（思考态 / 等待态 / @ / 斜杠）
+
+写作台右栏的 AI 面板由四个组件分担：`AiPanel.vue` 管会话与流，`ChatMessage.vue` 管单条气泡，`ThinkingPanel.vue` 管思考过程，`ChatComposer.vue` 管输入（内部再用 `SlashMenu.vue` 与 `RefPicker.vue`）。
+
+**三态反馈**（解决「等待时界面像卡死」）：
+
+| 态 | 触发条件 | 呈现 |
+| --- | --- | --- |
+| 等待态 | 已发起流，正文与思考都为空 | 三点跳动 + `已连接，正在等待模型输出（{seconds}s）`；秒数由 `AiPanel` 的 200ms 计时器写入 `waited_ms` |
+| 思考态 | 收到 `thinking` 事件 | `ThinkingPanel` 自动展开，逐字追加并跟随滚动；头部显示「思考中 · N 字」与脉冲点 |
+| 正文态 | 收到 `chunk` | 思考面板自动收起为一行摘要（可点开回看），正文显示打字光标 |
+
+`ThinkingPanel` 的展开态优先级：用户手动操作 > 自动规则（思考中展开、正文出现后收起）；正文出现时清空手动状态回到自动。`done` 携带的 `reasoning_text` 覆盖本地累积值，保证与服务端落库一致。
+
+**@ 引用**（`RefPicker.vue`）：三个页签——知识库文档、本项目章节、本会话历史消息（取 `messageList` 最近 40 条非流式消息）。多选以 chips 回显，三类引用分别落到 `ref_doc_ulid_list` / `ref_chapter_ulid_list` / `ref_message_ulid_list`；历史消息引用由后端 `validateRefMessages` 校验必须属于当前会话。
+
+**斜杠命令**（`SlashMenu.vue`）：`/(^|\s)\/([^\s]*)$/` 触发，按分类分组（写作 / 修订 / 规划 / 设定 / 审稿 / 其他），`↑↓` 移动、`Enter` 或 `Tab` 确认、`Esc` 关闭；项目技能带「项目」徽标（同编码时后端已让项目技能覆盖全局）。选中后填入技能徽标，`Backspace` 在空输入时可移除。
+
+**提示词档案**：`ChatComposer` 的档案下拉来自 `POST /prompt/profile/list`（`enabled_only=true`，带 `project_ulid` 以合并项目档案）。清空即用默认档案；选择结果随 `prompt_profile_ulid` 下发，不持久化到会话——换档案只影响下一次发送。
 
 ## 4. 路由与权限守卫
 
 ### 4.1 路由表
 
-`src/router/index.ts` 共 25 条路由记录：`/login`、根布局 `/`、22 条布局子路由、兜底 `/:pathMatch(.*)*`；其中具名页面路由 23 条（含 `LoginView`）。除 `/login` 外全部挂在 `layout/AdminLayout.vue` 之下，组件均为 `() => import(...)` 懒加载。
+`src/router/index.ts` 共 26 条路由记录：`/login`、根布局 `/`、23 条布局子路由、兜底 `/:pathMatch(.*)*`；其中具名页面路由 24 条（含 `LoginView`）。除 `/login` 外全部挂在 `layout/AdminLayout.vue` 之下，组件均为 `() => import(...)` 懒加载。
 
 | path | name | 组件 | `meta.menu_code` | `meta.perm_code` | 项目内 |
 | --- | --- | --- | --- | --- | --- |
@@ -298,6 +348,7 @@ sequenceDiagram
 | `/`（子路由 `''`） | `DashboardView` | `views/dashboard/index.vue` | `dashboard` | — | 否 |
 | `/settings` | `SettingsView` | `views/settings/index.vue` | `settings` | `system:setting:manage` | 否 |
 | `/skills` | `SkillAdminView` | `views/skills/index.vue` | `skills` | `skill:manage` | 否 |
+| `/prompts` | `PromptProfileView` | `views/prompts/index.vue` | `prompts` | `prompt:manage` | 否 |
 | `/models` | `ModelProviderView` | `views/models/index.vue` | `models` | — | 否 |
 | `/profile` | `ProfileView` | `views/profile/index.vue` | `profile` | — | 否 |
 | `/notifications` | `NotificationCenterView` | `views/notification/index.vue` | `notifications` | — | 否 |
@@ -365,7 +416,7 @@ flowchart TD
 | 快捷键 | `src/layout/AdminLayout.vue` 的 `handleGlobalKeydown`：Ctrl/Cmd+K 开命令面板、Ctrl/Cmd+B 折叠侧栏、Esc 关闭面板 |
 | 项目切换 | `handleProjectCommand`：切换项目后停留在同类页面（当前命中的项目内菜单 `route_path`），不在项目内页面时进 `/workspace/{ulid}`；`dashboard` 命令回仪表盘 |
 
-后端内置菜单（`backend/internal/service/menu_service.go` 的 `menuSeedList`）提供三个分组与 7 个项目页：`group_project`（写作台 / 创作规划 / 连续性看板 / 角色管理 / 世界观设定 / 知识库 / 素材笔记）、`group_platform`（模型供应商 / 技能管理 / 通知中心）、`group_system`（用户 / 角色 / 菜单 / 权限目录 / 审计 / 登录日志 / 用量分析 / 任务中心 / 运行状态），另有 `dashboard` 与 `settings` 两个顶层页面、一个动作型权限 `action_model_write`。菜单名称直接取后端 `menu_name`，语言包不提供菜单文案。
+后端内置菜单（`backend/internal/service/menu_service.go` 的 `menuSeedList`）提供三个分组与 7 个项目页：`group_project`（写作台 / 创作规划 / 连续性看板 / 角色管理 / 世界观设定 / 知识库 / 素材笔记）、`group_platform`（模型供应商 / 技能管理 / 提示词档案 / 通知中心）、`group_system`（用户 / 角色 / 菜单 / 权限目录 / 审计 / 登录日志 / 用量分析 / 任务中心 / 运行状态），另有 `dashboard` 与 `settings` 两个顶层页面、一个动作型权限 `action_model_write`。菜单名称直接取后端 `menu_name`，语言包不提供菜单文案。
 
 ## 6. 页面实现
 
@@ -397,7 +448,7 @@ flowchart TD
 
 项目内 6 个页面（`character`、`continuity`、`knowledge`、`lore`、`notes`、`outline`）复用 `components/ProjectPageHeader.vue`：返回工作台、项目封面首字、名称与状态徽标、字数与章节数、7 个项目内导航页签（`workspace` / `outline` / `continuity` / `character` / `lore` / `knowledge` / `notes`），并支持 `actions` 插槽。`workspace` 使用自己的顶栏，不复用该组件。
 
-`components/NWPageHeader.vue` 提供标题、说明、图标、`eyebrow`、`badge` 插槽与 `actions` 插槽，被 16 个页面使用（仪表盘、设置、技能、6 个项目内页面、7 个管理端页面）；`models`、`profile`、`notification`、`admin/usage`、`admin/status` 与 `workspace` 保留各自的页头结构。21 个页面文件套用 `nw-page` 骨架，登录页为独立全屏布局。
+`components/NWPageHeader.vue` 提供标题、说明、图标、`eyebrow`、`badge` 插槽与 `actions` 插槽，被 17 个页面使用（仪表盘、设置、技能、提示词档案、6 个项目内页面、7 个管理端页面）；`models`、`profile`、`notification`、`admin/usage`、`admin/status` 与 `workspace` 保留各自的页头结构。22 个页面文件套用 `nw-page` 骨架，登录页为独立全屏布局。
 
 弹层尺寸约定：表单类抽屉 `76%`（模型）或固定宽（技能 720px、菜单与世界观 520px、角色与项目 480px、上传 500px），阅读类抽屉 `72%`（知识库原文预览）；对话框按内容取 440–680px（重置密码 440、权限保存 600、模型授权与连续性表单 560、切片列表 680）。
 

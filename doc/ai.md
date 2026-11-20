@@ -1,7 +1,8 @@
 # AI 子系统设计
 
 本文描述 NovelWorkbench 的 AI 能力：模型网关、上下文装配、技能资产、无向量检索、流式协议与用量统计。
-事实来源为 `backend/internal/ai/`、`backend/internal/service/chat*.go`、`skill*.go`、`knowledge*.go`、`model_*.go`。
+
+内置技能按用途分为写作动作、方法论与进阶方法论三组。
 
 ## 1. 定位与边界
 
@@ -11,7 +12,7 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | --- | --- |
 | 协议 | OpenAI 兼容（`openai`）、Anthropic 原生（`anthropic`） |
 | 调用形态 | 非流式生成、流式生成、连通性探测、候选重排 |
-| 业务能力 | 续写、大纲、润色、扩写、缩写、梗概、审稿、取名、设定问答，以及 12 个方法论技能 |
+| 业务能力 | 续写、大纲、润色、扩写、缩写、梗概、审稿、取名、设定问答，以及进阶方法论技能 |
 | 检索 | Manticore CJK ngram 词法召回 + RRF 融合 + 可选对话模型重排 |
 
 明确不做：
@@ -32,7 +33,7 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | `ai.ProviderSpec` | 同上 | 单次调用所需供应商快照；`APIKey` 明文只存在于内存 |
 | `ai.UsageRecorder` | `backend/internal/ai/usage.go` | 用量上报接口，由 `service.ModelUsageService` 实现 |
 | `ai.AssembleContext` / `ai.RenderPrompt` / `ai.SystemPrompt` / `ai.TemplatePlaceholders` | `backend/internal/ai/prompt.go` | 上下文装配、模板渲染与校验、系统提示词 |
-| `ai.BuiltinSkills` | `backend/internal/ai/skills.go`、`skills_novel.go`、`skills_craft.go` | 21 个内置技能定义，与持久化结构解耦 |
+| `ai.BuiltinSkills` | `backend/internal/ai/skills.go`、`skills_novel.go`、`skills_craft.go`、`skills_advanced.go` | 29 个内置技能定义，与持久化结构解耦 |
 
 `ProviderSpec` 字段：`ProviderULID`、`ProviderName`、`ProtocolCode`、`BaseURL`、`APIKey`、`ChatModelName`、`Temperature`、`MaxTokens`、`Timeout`。密钥由 `ModelProviderService.specOf` 解密后传入，`ai` 包不接触存储。
 
@@ -87,9 +88,24 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 ## 3. 上下文装配
 
-### 3.1 系统提示词
+### 3.1 系统提示词与提示词档案
 
-`ai.SystemPrompt(styleText)`：固定创作助手人设（直接输出内容、不解释过程、不擅自编造设定），`styleText` 非空时追加项目文风约束。
+系统提示词由两层组成，`ai.ComposeSystemPrompt(profileText, styleText)` 负责组合：
+
+1. **档案层（身份与底线）**：`PromptProfileService.SystemPromptOf` 解析顺序为「请求显式 `prompt_profile_ulid` → 启用的全局默认档案（排序号最小）→ `ai.SystemPrompt("")` 内置兜底」。显式档案必须启用，且为全局档案或属于当前项目，否则视为未指定。
+2. **项目层（文风约束）**：`projects.style_text`，非空时以「本项目文风约束」段落追加在档案之后。
+
+分工约定：档案写「你是谁、什么绝不写」（长篇连载作者 / 责任编辑 / 故事架构师 / 去 AI 味修订 / 设定守门人），技能写「这一次做什么」。二者同时下发，互不覆盖。
+
+| 档案编码 | 名称 | 定位 |
+| --- | --- | --- |
+| `novelist` | 长篇连载作者 | 默认档案：只交稿不解释、具体优先、章末留钩 |
+| `editor` | 连载责任编辑 | 先判后改、P0/P1/P2 分级、给可直接替换的改法 |
+| `architect` | 故事架构师 | 六层结构自上而下、每层给最薄弱处与补齐顺序 |
+| `deai` | 去 AI 味修订 | 只改怎么说不动说什么、按痕迹清单扫描 |
+| `continuity` | 设定守门人 | 只依据给定上下文作答、缺失即明说、冲突给三种收敛方案 |
+
+档案表 `prompt_profiles` 与技能表结构同构（作用域 + 编码唯一 + 内置不可删 + 可停用），由 `PromptProfileService.SeedDefaults` 幂等播种，管理端在「提示词档案」页维护。
 
 ### 3.2 块优先级
 
@@ -160,11 +176,11 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 ## 4. 消息序列
 
-`buildChatMessages(styleText, contextText, instructionText, historyList)`：
+`buildChatMessages(systemPromptText, styleText, contextText, instructionText, historyList)`：
 
 | 顺序 | 角色 | 内容 |
 | --- | --- | --- |
-| 1 | `system` | `ai.SystemPrompt(styleText)` |
+| 1 | `system` | `ai.ComposeSystemPrompt(systemPromptText, styleText)`：档案正文 + 项目文风约束 |
 | 2 | `user` | `【上下文】\n{contextText}`，`contextText` 为空时整条省略 |
 | 3… | 按历史顺序 | 逐条历史，`chatRoleOf` 映射角色 |
 | 末 | `user` | 最终指令（自由对话为用户正文，命中技能为渲染结果） |
@@ -182,9 +198,9 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `skills` | `skill_ulid`(`SKL_`)、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`、`description_text`、`prompt_template`、`variable_spec_json`、`enabled_flag`、`builtin_flag`、`sort_order` | 作用域 `global` / `project`；同编码项目技能覆盖全局 |
 | `skill_references` | `ref_ulid`(`SKR_`)、`skill_ulid`、`ref_name`、`ref_text`、`keyword_list`、`sort_order` | 关键词为空表示总是注入 |
 
-### 5.2 内置技能（21 个）
+### 5.2 内置技能（29 个）
 
-由 `ai.BuiltinSkills()` 合并三个来源文件返回，`SkillService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种：
+由 `ai.BuiltinSkills()` 合并四个分组返回（写作动作 / 方法论 / 进阶方法论 / 进阶方法论扩展），`SkillService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种：
 
 | code | 名称 | 分类 | 用途 |
 | --- | --- | --- | --- |
@@ -209,8 +225,16 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `pacing` | 节奏体检 | review | 标注推进 / 铺垫 / 爆发 / 喘息，定位塌陷 |
 | `worldrule` | 世界观规则卡 | setting | 规则 / 边界 / 代价 / 叙事用途四栏 |
 | `mainline` | 主线守门 | review | 推进 / 原地踏步 / 跑题判定并引原文为证 |
+| `pitch` | 立项评估 | outline | 15 维命中率打分 + 否决项 + 最弱两维补齐方案 |
+| `sixcheck` | 六道质检 | review | 剧情 / 跨章 / 配比 / 结构 AI 味 / 表层痕迹 / 口径，出 P0-P2 与可发结论 |
+| `voice` | 角色声线卡 | setting | 句长 / 用词域 / 口头禅 / 情绪动作 / 权力姿态 + 冲突检查 |
+| `scene` | 场景拆解 | outline | 目标-结果场景表，结果必须与目标有差距 |
+| `hitscan` | 量化门禁 | review | 字数 / 段长 / 标点 / 对话占比 / 重复 / 章末钩，未提供项标「未运行」 |
+| `humanness` | 活人感改写 | revise | 先补材料再定说话位置，最后调语气 |
+| `platform` | 平台适配 | outline | 按目标平台重排字数、开篇 300 字、节奏密度与章末钩 |
+| `ledger` | 连续性台账 | setting | 人物 / 战力 / 伏笔 / 时间线 / 关系 / 情绪六账对账与吃书风险 |
 
-方法论技能的写法约定：判据优先、可逐条对账——每条要求给出可核对的输出格式（分栏、评分维度、表格列），需要正文的读 `{{chapter_content}}`，需要设定对照的读 `{{context}}`。
+进阶方法论技能统一采用判据优先的组织方式：每条要求给出可核对的输出格式（分栏、评分维度、表格列），需要正文的读 `{{chapter_content}}`，需要设定对照的读 `{{context}}`。
 
 ### 5.3 解析与覆盖
 
@@ -353,10 +377,11 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `seq` | int64 | 事件序号，从 1 单调递增 |
-| `event_type` | string | `chunk` / `done` / `error` |
+| `event_type` | string | `thinking` / `chunk` / `done` / `error` |
 | `session_ulid` | string | 会话 ULID |
 | `message_ulid` | string | 助手消息 ULID |
-| `content_text` | string | 增量文本（chunk）或完整回复（done） |
+| `content_text` | string | 增量思考（thinking）、增量正文（chunk）或完整回复（done） |
+| `reasoning_text` | string | 完整思考过程，仅 `done`（模型未返回推理内容时为空串） |
 | `reference_list` | []KnowledgeChunkVO | RAG 召回依据，仅 `done` |
 | `error_message` | string | 错误说明，仅 `error` |
 
@@ -364,11 +389,12 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 
 | 阶段 | 事件 |
 | --- | --- |
+| 思考中 | `thinking`（推理模型的 `reasoning_content` 每片一条，仅在模型返回时出现） |
 | 生成中 | `chunk`（每片一条，空片跳过） |
 | 生成启动失败 | `error`：`AI 生成启动失败：{err}` |
 | 生成异常 | `error`：`AI 生成失败，请稍后重试` |
 | 助手消息落库失败 | `error`：`回复保存失败，请重试` |
-| 正常结束 | `done`（完整文本 + `reference_list`） |
+| 正常结束 | `done`（完整文本 + `reasoning_text` + `reference_list`） |
 
 ### 7.3 错误边界
 

@@ -37,6 +37,12 @@ const routes: RouteRecordRaw[] = [
         meta: { menu_code: 'skills', perm_code: 'skill:manage' },
       },
       {
+        path: 'prompts',
+        name: 'PromptProfileView',
+        component: () => import('@/views/prompts/index.vue'),
+        meta: { menu_code: 'prompts', perm_code: 'prompt:manage' },
+      },
+      {
         path: 'models',
         name: 'ModelProviderView',
         component: () => import('@/views/models/index.vue'),

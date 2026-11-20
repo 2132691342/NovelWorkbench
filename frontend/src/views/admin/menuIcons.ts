@@ -2,5 +2,5 @@
 export const NW_ICON_CODE_LIST = [
   'dashboard', 'book', 'edit', 'tree', 'shield', 'user', 'globe', 'database', 'note',
   'layers', 'model', 'wand', 'settings', 'users', 'key', 'menu', 'lock', 'history',
-  'chart', 'pulse', 'sliders', 'folder',
+  'chart', 'pulse', 'sliders', 'folder', 'sparkles',
 ] as const

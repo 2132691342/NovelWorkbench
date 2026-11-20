@@ -2,7 +2,6 @@
 
 本文说明认证、授权、密钥、审计、登录防护、上传与部署边界。
 安全目标：**账号由管理员分配、权限逐请求校验、密钥不出明文、关键动作可追溯。**
-事实来源为 `backend/internal/pkg/`、`backend/internal/service/auth_service.go`、`role_service.go`、`menu_service.go`、`deploy/`。
 
 ## 1. 认证
 

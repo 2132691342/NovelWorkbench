@@ -339,7 +339,7 @@ onMounted(() => {
 
 .notification-page__item.is-unread {
   border-left: 3px solid var(--primary);
-  background-color: #fbfbff;
+  background-color: var(--surface-stripe);
 }
 
 .notification-page__dot {

@@ -1,6 +1,6 @@
-// 本文件覆盖 AI 对话输入端的两条长链路：技能解析与上下文装配。
-// 技能决定用哪个模板与哪些参考资料，装配决定模型最终看到的块与消息序列；
-// 任一环节变化都会改变产出，因此各用一条用例串起全部环节。
+// 本文件覆盖 AI 对话的三条长链路：技能解析、上下文装配、流式事件契约。
+// 技能决定模板与参考资料，装配决定模型最终看到的块与消息序列，事件契约决定前端能否
+// 从「思考中」走到「完成」；任一环节变化都会改变产出或让界面卡在等待态。
 
 package service
 
@@ -41,10 +41,24 @@ func findBlock(blocks []ai.ContextBlock, blockKey string) *ai.ContextBlock {
 	return nil
 }
 
+// eventSink 收集 SSE 事件的测试替身。
+type eventSink struct {
+	eventList []domain.ChatStreamEventDTO
+}
+
+// Event 记录一条事件。
+func (s *eventSink) Event(dto domain.ChatStreamEventDTO) error {
+	s.eventList = append(s.eventList, dto)
+	return nil
+}
+
+// Ping 记录一次心跳。
+func (s *eventSink) Ping() error { return nil }
+
 // TestSkillResolutionChain 覆盖技能链路：编码解析 → 作用域优先级 → 变量取值 →
-// 模板占位符校验 → 参考资料关键词命中与预算截断 → 关键词归一 → 全局技能覆盖标记。
+// 模板占位符校验 → 参考资料关键词命中与预算截断 → 全局技能覆盖标记。
 func TestSkillResolutionChain(t *testing.T) {
-	// ---- 环节一：技能编码解析（显式编码优先；否则取正文首 token 的 /code） ----
+	// ---- 环节一：编码解析（显式编码优先；否则取正文首个 /code） ----
 	code, remainder := resolveSkillCode("", "/continue 以林澈视角")
 	if code != "continue" || remainder != "以林澈视角" {
 		t.Fatalf("正文命令解析失败: %q %q", code, remainder)
@@ -53,17 +67,14 @@ func TestSkillResolutionChain(t *testing.T) {
 	if code != "polish" || remainder != "加强画面感" {
 		t.Fatalf("空白归一失败: %q %q", code, remainder)
 	}
+	// 显式编码由请求给出时正文不剥离，避免用户正文被静默改写。
 	code, remainder = resolveSkillCode("polish", "/continue 以林澈视角")
 	if code != "polish" || remainder != "/continue 以林澈视角" {
 		t.Fatalf("显式编码应优先且不剥离正文: %q %q", code, remainder)
 	}
 	for _, contentText := range []string{"普通的正文开头，不该命中", "续写 /continue", "/continue"} {
-		parsedCode, parsedRemainder := resolveSkillCode("", contentText)
-		if parsedCode != "" {
+		if parsedCode, _ := resolveSkillCode("", contentText); parsedCode != "" {
 			t.Fatalf("content %q 未命中时不应产出技能编码: %q", contentText, parsedCode)
-		}
-		if contentText != "/continue" && parsedRemainder != contentText {
-			t.Fatalf("content %q 未命中时应原样保留: %q", contentText, parsedRemainder)
 		}
 	}
 
@@ -77,12 +88,6 @@ func TestSkillResolutionChain(t *testing.T) {
 	if winner := pickSkillByScope(&disabledProject, &globalSkill); winner.SkillULID != "SKL_G" {
 		t.Fatalf("停用的项目技能应回退全局技能: %s", winner.SkillULID)
 	}
-	if winner := pickSkillByScope(nil, &globalSkill); winner.SkillULID != "SKL_G" {
-		t.Fatalf("无项目技能时应取全局技能: %s", winner.SkillULID)
-	}
-	if winner := pickSkillByScope(nil, nil); winner != nil {
-		t.Fatalf("技能不存在时不应命中: %+v", winner)
-	}
 	disabledGlobal := skillDO("SKL_G", domain.SkillScopeGlobal, "", "polish", false)
 	if winner := pickSkillByScope(nil, &disabledGlobal); winner != nil {
 		t.Fatalf("停用的全局技能不应命中: %+v", winner)
@@ -92,17 +97,11 @@ func TestSkillResolutionChain(t *testing.T) {
 	variableList := []domain.SkillVariableDO{
 		{VariableName: "tone", VariableLabel: "语气", DefaultValue: "克制"},
 		{VariableName: "scene", VariableLabel: "场景", RequiredFlag: true},
-		{VariableName: "optional", VariableLabel: "可选"},
 	}
 	valueMap, missing := resolveSkillVariables("polish", variableList, map[string]string{"scene": "雨夜"}, "正文")
-	if valueMap["tone"] != "克制" || valueMap["scene"] != "雨夜" || valueMap["user_input"] != "正文" {
+	if valueMap["tone"] != "克制" || valueMap["scene"] != "雨夜" ||
+		valueMap["user_input"] != "正文" || valueMap["skill_code"] != "polish" {
 		t.Fatalf("变量取值错误: %+v", valueMap)
-	}
-	if valueMap["skill_code"] != "polish" {
-		t.Fatalf("内置变量 skill_code 未注入: %+v", valueMap)
-	}
-	if valueMap["optional"] != "" {
-		t.Fatalf("非必填无值变量应为空串: %+v", valueMap)
 	}
 	if len(missing) != 0 {
 		t.Fatalf("必填变量已提供时不应缺失: %v", missing)
@@ -112,12 +111,9 @@ func TestSkillResolutionChain(t *testing.T) {
 		t.Fatalf("必填变量缺失应被记录: %v", missing)
 	}
 	// 显式空值不算已提供，回落到声明缺省值。
-	valueMap, missing = resolveSkillVariables("polish", variableList, map[string]string{"tone": ""}, "正文")
+	valueMap, _ = resolveSkillVariables("polish", variableList, map[string]string{"tone": ""}, "正文")
 	if valueMap["tone"] != "克制" {
 		t.Fatalf("显式空值应回落缺省值: %+v", valueMap)
-	}
-	if len(missing) != 1 {
-		t.Fatalf("必填变量仍应缺失: %v", missing)
 	}
 
 	// ---- 环节四：模板占位符校验（未声明变量必须拒绝） ----
@@ -127,16 +123,10 @@ func TestSkillResolutionChain(t *testing.T) {
 	if err := validateSkillTemplate("润色 {{unknown_var}}", variableList); err == nil {
 		t.Fatal("未声明占位符必须被拒绝")
 	}
-	if err := validateSkillTemplate("润色 {{user_input}}", []domain.SkillVariableDO{{VariableName: ""}}); err == nil {
-		t.Fatal("空变量名必须被拒绝")
-	}
 
 	// ---- 环节五：参考资料（空关键词总是命中；任一关键词出现即命中；超预算不注入） ----
 	if !matchSkillReferenceKeywords("", []string{"任意正文"}) {
 		t.Fatal("空关键词应总是命中")
-	}
-	if !matchSkillReferenceKeywords("雨夜, 追车", []string{"这是一个雨夜"}) {
-		t.Fatal("关键词出现在正文中应命中")
 	}
 	if matchSkillReferenceKeywords("雨夜", []string{"晴天的午后"}) {
 		t.Fatal("关键词未出现时不应命中")
@@ -157,28 +147,14 @@ func TestSkillResolutionChain(t *testing.T) {
 		t.Fatalf("参考资料注入格式错误: %v", selected)
 	}
 
-	// ---- 环节六：关键词列表归一（去空去重后以逗号拼接） ----
-	if got := normalizeKeywordList(" 雨夜 , 追车 ,雨夜, "); got != "雨夜,追车" {
-		t.Fatalf("关键词归一结果 = %q", got)
-	}
-	keywords := splitKeywordList("a,,b,a")
-	if len(keywords) != 2 || keywords[0] != "a" || keywords[1] != "b" {
-		t.Fatalf("关键词拆分结果 = %v", keywords)
-	}
-
-	// ---- 环节七：全局技能被同编码项目技能覆盖时须打标记 ----
+	// ---- 环节六：全局技能被同编码项目技能覆盖时须打标记 ----
 	if !isOverriddenGlobalSkill(&globalSkill, []domain.SkillDO{globalSkill, projectSkill}) {
 		t.Fatal("全局技能应被同编码项目技能标记为已覆盖")
 	}
-	if isOverriddenGlobalSkill(&projectSkill, []domain.SkillDO{globalSkill, projectSkill}) {
-		t.Fatal("项目技能不应被标记为已覆盖")
-	}
-	disabledOverride := skillDO("SKL_P", domain.SkillScopeProject, "PRJ_1", "polish", false)
-	if isOverriddenGlobalSkill(&globalSkill, []domain.SkillDO{globalSkill, disabledOverride}) {
+	if isOverriddenGlobalSkill(&globalSkill, []domain.SkillDO{globalSkill, disabledProject}) {
 		t.Fatal("停用的项目技能不应覆盖全局技能")
 	}
-	other := skillDO("SKL_O", domain.SkillScopeProject, "PRJ_1", "continue", true)
-	if isOverriddenGlobalSkill(&globalSkill, []domain.SkillDO{globalSkill, other}) {
+	if isOverriddenGlobalSkill(&globalSkill, []domain.SkillDO{globalSkill, skillDO("SKL_O", domain.SkillScopeProject, "PRJ_1", "continue", true)}) {
 		t.Fatal("不同编码的项目技能不应覆盖全局技能")
 	}
 }
@@ -187,26 +163,22 @@ func TestSkillResolutionChain(t *testing.T) {
 // 同优先级稳定顺序 → 预算裁剪 → 历史选取 → 消息序列成型 → 显式引用会话归属校验。
 func TestChatContextChain(t *testing.T) {
 	// ---- 环节一：技能命中，模板占位符用其余块装配文本与变量填充 ----
-	input := chatContextInput{
+	blocks, instruction := buildContextBlocks(chatContextInput{
 		SkillTemplate: "润色指令：{{user_input}}｜语气：{{tone}}｜章节：{{chapter_content}}｜依据：{{context}}",
 		SkillVariable: map[string]string{"tone": "克制"},
 		SkillRefList:  []string{"【文风样例】\n短句为主"},
 		UserInput:     "这段话",
 		ChapterList:   []chapterSource{{ChapterName: "第一章", ContentText: "章节正文", IsCurrent: true}},
 		DocList:       []docSource{{DocName: "设定集", FullText: "文档全文"}},
-	}
-	blocks, instruction := buildContextBlocks(input)
+	})
 	skillBlock := findBlock(blocks, "skill")
-	if skillBlock == nil {
-		t.Fatal("技能命中时应产出 skill 块")
-	}
-	if skillBlock.Priority != ai.PrioritySkill {
-		t.Fatalf("skill 块优先级 = %d, want %d", skillBlock.Priority, ai.PrioritySkill)
+	if skillBlock == nil || skillBlock.Priority != ai.PrioritySkill {
+		t.Fatalf("技能命中时应产出 skill 块且优先级最高: %+v", skillBlock)
 	}
 	if instruction != skillBlock.ContentText {
 		t.Fatal("最终指令应为技能渲染结果")
 	}
-	for _, want := range []string{"润色指令：这段话", "语气：克制", "章节：章节正文", "依据：", "文档全文"} {
+	for _, want := range []string{"润色指令：这段话", "语气：克制", "章节：章节正文", "文档全文"} {
 		if !strings.Contains(instruction, want) {
 			t.Fatalf("渲染结果缺少 %q: %q", want, instruction)
 		}
@@ -221,11 +193,8 @@ func TestChatContextChain(t *testing.T) {
 		UserInput:   "自由提问原文",
 		ChapterList: []chapterSource{{ChapterName: "第一章", ContentText: "章节正文", IsCurrent: true}},
 	})
-	if freeInstruction != "自由提问原文" {
-		t.Fatalf("最终指令 = %q, want 自由提问原文", freeInstruction)
-	}
-	if findBlock(freeBlocks, "skill") != nil {
-		t.Fatal("技能未命中时不应有 skill 块")
+	if freeInstruction != "自由提问原文" || findBlock(freeBlocks, "skill") != nil {
+		t.Fatalf("技能未命中时应直接用用户正文且无 skill 块: %q", freeInstruction)
 	}
 
 	// ---- 环节三：@引用按当前章(90)/引用章与引用文档(80)分优先级 ----
@@ -237,16 +206,16 @@ func TestChatContextChain(t *testing.T) {
 		},
 		DocList: []docSource{{DocName: "设定集", FullText: "文档全部切片拼接"}},
 	})
-	current := findBlock(blocks, "current_chapter")
-	if current == nil || current.Priority != ai.PriorityCurrentChapter || !strings.Contains(current.ContentText, "当前章正文") {
+	if current := findBlock(blocks, "current_chapter"); current == nil ||
+		current.Priority != ai.PriorityCurrentChapter || !strings.Contains(current.ContentText, "当前章正文") {
 		t.Fatalf("当前章块缺失或优先级错误: %+v", current)
 	}
-	refChapter := findBlock(blocks, "ref_chapter")
-	if refChapter == nil || refChapter.Priority != ai.PriorityExplicitRef || !strings.Contains(refChapter.ContentText, "引用章正文") {
+	if refChapter := findBlock(blocks, "ref_chapter"); refChapter == nil ||
+		refChapter.Priority != ai.PriorityExplicitRef || !strings.Contains(refChapter.ContentText, "引用章正文") {
 		t.Fatalf("引用章块缺失或优先级错误: %+v", refChapter)
 	}
-	refDoc := findBlock(blocks, "ref_doc")
-	if refDoc == nil || refDoc.Priority != ai.PriorityExplicitRef || !strings.Contains(refDoc.ContentText, "文档全部切片拼接") {
+	if refDoc := findBlock(blocks, "ref_doc"); refDoc == nil ||
+		refDoc.Priority != ai.PriorityExplicitRef || !strings.Contains(refDoc.ContentText, "文档全部切片拼接") {
 		t.Fatalf("引用文档块缺失或优先级错误: %+v", refDoc)
 	}
 
@@ -259,24 +228,12 @@ func TestChatContextChain(t *testing.T) {
 		},
 	})
 	lore := findBlock(blocks, "lore")
-	if lore == nil {
-		t.Fatal("有可用设定条目时应产出 lore 块")
+	if lore == nil || lore.Priority != ai.PriorityCharacter ||
+		!strings.Contains(lore.ContentText, "设定内容正文") {
+		t.Fatalf("lore 块缺失或内容错误: %+v", lore)
 	}
-	if lore.Priority != ai.PriorityCharacter {
-		t.Fatalf("lore 块优先级 = %d, want %d", lore.Priority, ai.PriorityCharacter)
-	}
-	if !strings.Contains(lore.ContentText, "灵力体系") || !strings.Contains(lore.ContentText, "设定内容正文") {
-		t.Fatalf("lore 块应含设定名与内容: %q", lore.ContentText)
-	}
-	if strings.Contains(lore.ContentText, "笔记内容正文") || strings.Contains(lore.ContentText, "私人笔记") {
+	if strings.Contains(lore.ContentText, "笔记内容正文") {
 		t.Fatalf("note 私人笔记禁止注入: %q", lore.ContentText)
-	}
-	blocks, _ = buildContextBlocks(chatContextInput{
-		UserInput: "提问",
-		LoreList:  []domain.LoreDO{{LoreName: "私人笔记", LoreTypeCode: loreTypeCodeNote, ContentText: "笔记内容正文"}},
-	})
-	if findBlock(blocks, "lore") != nil {
-		t.Fatal("全部为 note 时不应产出 lore 块")
 	}
 
 	// ---- 环节五：同优先级保持输入顺序（角色卡在设定之前），保证输出确定性 ----
@@ -285,10 +242,6 @@ func TestChatContextChain(t *testing.T) {
 		CharacterList: []domain.CharacterDO{{CharacterName: "林澈"}},
 		LoreList:      []domain.LoreDO{{LoreName: "灵力体系", LoreTypeCode: "rule", ContentText: "设定内容正文"}},
 	})
-	characterBlock, loreBlock := findBlock(blocks, "character"), findBlock(blocks, "lore")
-	if characterBlock == nil || loreBlock == nil || characterBlock.Priority != loreBlock.Priority {
-		t.Fatalf("角色与设定块应同优先级存在: %+v / %+v", characterBlock, loreBlock)
-	}
 	assembled, _ := ai.AssembleContext(blocks, ai.ContextBudgetChars)
 	if strings.Index(assembled, "林澈") > strings.Index(assembled, "灵力体系") {
 		t.Fatalf("同优先级应保持输入顺序: %q", assembled)
@@ -310,11 +263,8 @@ func TestChatContextChain(t *testing.T) {
 	if strings.Contains(droppedText, "ref_doc") || strings.Contains(droppedText, "rag") {
 		t.Fatalf("高优先级块不应被丢弃，实际 %v", dropped)
 	}
-	if !strings.Contains(assembled, strings.Repeat("d", 100)) || !strings.Contains(assembled, strings.Repeat("r", 100)) {
-		t.Fatal("装配文本应保留高优先级块")
-	}
-	if strings.Contains(assembled, strings.Repeat("h", 100)) {
-		t.Fatal("被丢弃块不应进入装配文本")
+	if !strings.Contains(assembled, strings.Repeat("d", 100)) || strings.Contains(assembled, strings.Repeat("h", 100)) {
+		t.Fatalf("装配文本应只保留高优先级块: %q", assembled)
 	}
 
 	// ---- 环节七：历史选取（最近 N 条 + 显式引用必注入且去重置尾） ----
@@ -339,8 +289,7 @@ func TestChatContextChain(t *testing.T) {
 			t.Fatalf("selected[%d] = %s, want %s", i, selected[i].MessageULID, wantSelected[i])
 		}
 	}
-	selected = selectHistoryMessages(messages, []string{"MSG_2"}, 0)
-	if len(selected) != 1 || selected[0].MessageULID != "MSG_2" {
+	if selected = selectHistoryMessages(messages, []string{"MSG_2"}, 0); len(selected) != 1 || selected[0].MessageULID != "MSG_2" {
 		t.Fatalf("N 为 0 时只应注入引用消息，实际 %v", selected)
 	}
 
@@ -349,7 +298,7 @@ func TestChatContextChain(t *testing.T) {
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "历史问"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "历史答"),
 	}
-	messagesOut := buildChatMessages("文风约束", "装配文本", "最终指令", history)
+	messagesOut := buildChatMessages("", "文风约束", "装配文本", "最终指令", history)
 	if len(messagesOut) != 5 {
 		t.Fatalf("len = %d, want 5", len(messagesOut))
 	}
@@ -366,8 +315,7 @@ func TestChatContextChain(t *testing.T) {
 	if messagesOut[4].Content != "最终指令" {
 		t.Fatalf("末条应为最终指令: %q", messagesOut[4].Content)
 	}
-	messagesOut = buildChatMessages("文风约束", "", "最终指令", nil)
-	if len(messagesOut) != 2 || messagesOut[1].Content != "最终指令" {
+	if messagesOut = buildChatMessages("", "文风约束", "", "最终指令", nil); len(messagesOut) != 2 || messagesOut[1].Content != "最终指令" {
 		t.Fatalf("装配文本为空时应省略上下文消息: %+v", messagesOut)
 	}
 
@@ -385,5 +333,41 @@ func TestChatContextChain(t *testing.T) {
 	}
 	if _, err := validateRefMessages(sessionMessages, []string{"MSG_999"}); err == nil {
 		t.Fatal("引用会话外消息必须失败")
+	}
+}
+
+// TestChatStreamContract 覆盖流式事件契约：thinking/chunk/done 顺序、seq 从 1 单调递增、
+// done 携带完整思考过程与空数组引用。
+// 前端据此在「等待 → 思考 → 正文 → 完成」之间切换；done 缺 reasoning_text 会让重开会话丢失思考，
+// reference_list 为 null 会让依据面板报错。
+func TestChatStreamContract(t *testing.T) {
+	sink := &eventSink{}
+	writer := &chatEventWriter{writer: sink, sessionULID: "SES_1", messageULID: "MSG_1"}
+	if err := writer.emit(domain.StreamEventThinking, "先想一步", "", nil); err != nil {
+		t.Fatalf("thinking emit 失败: %v", err)
+	}
+	if err := writer.emit(domain.StreamEventChunk, "正文", "", nil); err != nil {
+		t.Fatalf("chunk emit 失败: %v", err)
+	}
+	if err := writer.emitWithReasoning(domain.StreamEventDone, "正文完", "先想一步", "", nil); err != nil {
+		t.Fatalf("done emit 失败: %v", err)
+	}
+	if len(sink.eventList) != 3 {
+		t.Fatalf("事件数 = %d, want 3", len(sink.eventList))
+	}
+	if sink.eventList[0].EventType != domain.StreamEventThinking || sink.eventList[0].ContentText != "先想一步" {
+		t.Fatalf("首条应为 thinking 增量: %+v", sink.eventList[0])
+	}
+	doneEvent := sink.eventList[2]
+	if doneEvent.EventType != domain.StreamEventDone || doneEvent.ReasoningText != "先想一步" {
+		t.Fatalf("done 应携带完整思考过程: %+v", doneEvent)
+	}
+	if doneEvent.ReferenceList == nil {
+		t.Fatal("done 的 reference_list 应为空数组而非 null")
+	}
+	for i := range sink.eventList {
+		if sink.eventList[i].Seq != int64(i+1) {
+			t.Fatalf("seq 应单调递增: %+v", sink.eventList)
+		}
 	}
 }

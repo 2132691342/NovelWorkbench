@@ -51,8 +51,8 @@
   flex-shrink: 0;
   border-radius: 13px;
   color: var(--primary);
-  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
-  border: 1px solid #e0e7ff;
+  background: var(--accent-gradient);
+  border: 1px solid var(--border-accent);
 }
 
 .nw-page-header__text {
@@ -282,8 +282,8 @@
   height: 64px;
   border-radius: 20px;
   color: var(--primary);
-  background: linear-gradient(135deg, #eef2ff, #f5f3ff);
-  border: 1px solid #e0e7ff;
+  background: var(--accent-gradient-soft);
+  border: 1px solid var(--border-accent);
 }
 
 .nw-empty-state__title {

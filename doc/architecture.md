@@ -1,7 +1,6 @@
 # 系统架构
 
 本文描述 NovelWorkbench 的整体定位、技术选型、分层约束、请求生命周期与核心链路。
-事实来源为 `backend/`、`frontend/`、`docker-compose.yml`、`deploy/podman/`。
 
 ## 1. 系统定位
 
@@ -142,7 +141,7 @@ backend/
 `backend/cmd/server/main.go` 的顺序：
 
 1. 初始化 Zap 与配置（`infra.LoadConfig`，启动期校验关键项）。
-2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 32 张表（失败即退出）。
+2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 33 张表（失败即退出）。
 3. 连接 Redis / RabbitMQ / MinIO / Manticore；失败只告警并降级。
 4. 构造仓储 → 服务 → 中间件 → 路由。
 5. 播种：内置技能、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。

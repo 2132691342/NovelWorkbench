@@ -41,6 +41,7 @@ var menuSeedList = []menuSeed{
 	{MenuCode: "group_platform", MenuName: "平台", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "layers", SortOrder: 30},
 	{MenuCode: "models", ParentCode: "group_platform", MenuName: "模型供应商", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/models", IconCode: "model", SortOrder: 10},
 	{MenuCode: "skills", ParentCode: "group_platform", MenuName: "技能管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/skills", IconCode: "wand", PermCode: domain.PermSkillManage, SortOrder: 20},
+	{MenuCode: "prompts", ParentCode: "group_platform", MenuName: "提示词档案", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/prompts", IconCode: "sparkles", PermCode: domain.PermPromptManage, SortOrder: 25},
 	{MenuCode: "notifications", ParentCode: "group_platform", MenuName: "通知中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/notifications", IconCode: "bell", SortOrder: 30},
 
 	{MenuCode: "group_system", MenuName: "系统", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "settings", SortOrder: 40},
