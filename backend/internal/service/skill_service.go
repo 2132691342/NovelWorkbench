@@ -32,7 +32,11 @@ func NewSkillService(skillRepo *repo.SkillRepo, projectRepo *repo.ProjectRepo) *
 }
 
 // SeedDefaults 播种内置全局技能（幂等：按编码查缺补插；已存在则保留作者的改动）。
+// 不在当前清单中的旧内置技能连同参考资料一并删除；用户自建技能不受影响。
 func (s *SkillService) SeedDefaults(ctx context.Context) error {
+	if err := s.dropRetiredBuiltins(ctx); err != nil {
+		return err
+	}
 	for _, builtin := range ai.BuiltinSkills() {
 		existing, err := s.skillRepo.GetByCode(ctx, domain.SkillScopeGlobal, "", builtin.CommandCode)
 		if err != nil {
@@ -55,6 +59,27 @@ func (s *SkillService) SeedDefaults(ctx context.Context) error {
 			SortOrder:        builtin.SortOrder,
 		}
 		if err := s.skillRepo.Create(ctx, do); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropRetiredBuiltins 删除不在当前内置清单中的旧内置技能（含其参考资料）。
+func (s *SkillService) dropRetiredBuiltins(ctx context.Context) error {
+	codeSet := ai.BuiltinSkillCodeSet()
+	builtinList, err := s.skillRepo.ListBuiltinGlobal(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range builtinList {
+		if codeSet[builtinList[i].SkillCode] {
+			continue
+		}
+		if err := s.skillRepo.DeleteReferencesBySkill(ctx, builtinList[i].SkillULID); err != nil {
+			return err
+		}
+		if err := s.skillRepo.Delete(ctx, builtinList[i].SkillULID); err != nil {
 			return err
 		}
 	}

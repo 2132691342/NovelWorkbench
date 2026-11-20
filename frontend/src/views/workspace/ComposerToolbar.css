@@ -116,7 +116,7 @@
 .chat-composer__stop-icon {
   width: 8px;
   height: 8px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   background: currentColor;
 }
 

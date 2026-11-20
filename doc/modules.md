@@ -29,7 +29,7 @@
 | 20 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
 | 21 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/stores`、`frontend/src/views/workspace` |
 
-后端在 `backend/internal/api/router.go` 内注册 111 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、29 个内置技能（`backend/internal/ai` 的 `BuiltinSkills`，分 `builtinSkillList` / `novelSkillList` / `craftSkillList` / `advancedSkillList` 四组）、5 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
+后端在 `backend/internal/api/router.go` 内注册 111 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、8 个内置技能（`backend/internal/ai/skills.go` 的 `builtinSkillList` 单清单）、5 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
 
 ## 2. 认证与会话
 
@@ -459,7 +459,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 `skills` 是可编辑的提示词资产：编码（对话中以 `/code` 触发）、名称、作用域 `global`/`project`、分类 `write/revise/outline/setting/review/other`、模板 `prompt_template`、变量声明 `variable_spec_json`、启停与内置标记。`skill_references` 存参考资料（名称、正文、逗号分隔关键词、排序），在技能命中时按关键词挑选注入。
 
-内置技能 29 个，由 `ai.BuiltinSkills()` 提供、`SkillService.SeedDefaults` 幂等播种为全局作用域 `builtin_flag=true`。其中 `pitch`/`sixcheck`/`voice`/`scene`/`hitscan`/`humanness`/`platform`/`ledger` 属进阶方法论技能，采用可机检、可对账的判据与阈值组织。
+内置技能 8 个（`continue`/`outline`/`polish`/`summary`/`deai`/`review`/`golden3`/`foreshadow`），由 `ai.BuiltinSkills()` 提供、`SkillService.SeedDefaults` 幂等播种为全局作用域 `builtin_flag=true`。技能按「写正文 → 做结构 → 改文字 → 做质检」排列，判据均可逐条对账。
 
 ### 16.2 实现路径
 
@@ -709,6 +709,6 @@ flowchart TD
 
 三条贯穿全局的约定：
 
-1. **归属校验统一走 `mustOwnProject`**：项目、卷、章节、角色卡、设定、大纲、连续性、知识库、技能、对话全部经此函数，只有技能作用域是例外（只校验项目存在，方便协作）。
+1. **归属校验统一走 `mustOwnProject`**：项目、卷、章节、角色卡、设定、大纲、连续性、知识库、对话、提示词档案全部经此函数；技能例外地只校验项目存在（`mustProjectAccess`），方便协作。
 2. **事务边界在 service**：跨表写入用 `repo.WithTx`（章节更新、项目级联删除、切片重建、助手消息 + AI 字数），事务外只做可重建或可降级的外部清理。
 3. **外部依赖失败按「能力边界」处理，而非一律中断**：站内通知、审计日志、登录日志、用量缓冲、Manticore 同步、令牌黑名单查询失败只降级并告警，主链路继续；而 MinIO 写入/读取、队列投递、检索双通道全失败属于该能力本身不可用，直接返回 `ERR_STORAGE`。

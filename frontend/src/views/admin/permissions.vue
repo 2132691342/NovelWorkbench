@@ -167,7 +167,7 @@ onMounted(() => {
 
 .admin-perms-page__code {
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background-color: var(--bg-hover);
   font-size: 12.5px;
 }

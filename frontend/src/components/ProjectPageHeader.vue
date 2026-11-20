@@ -200,7 +200,7 @@ defineExpose({ loading })
   width: 38px;
   height: 42px;
   flex-shrink: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: linear-gradient(160deg, var(--primary), var(--primary-hover));
   color: var(--text-inverse);
   font-size: 17px;

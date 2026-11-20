@@ -94,7 +94,7 @@ const displayValue = computed(() => {
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: var(--primary);
   background: var(--primary-soft);
 }

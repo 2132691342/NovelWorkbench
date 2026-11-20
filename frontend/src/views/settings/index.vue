@@ -272,7 +272,7 @@ onMounted(() => {
   width: 36px;
   height: 36px;
   flex-shrink: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--primary-soft);
   color: var(--primary);
 }
@@ -353,7 +353,7 @@ onMounted(() => {
   width: 34px;
   height: 34px;
   flex-shrink: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--info-bg);
   color: var(--info-text);
 }

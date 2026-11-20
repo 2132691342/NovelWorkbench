@@ -170,7 +170,7 @@ function waitedSeconds(): string {
 .chat-message__bubble {
   max-width: 92%;
   padding: 9px 11px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border-light);
   background-color: var(--bg-subtle);
 }

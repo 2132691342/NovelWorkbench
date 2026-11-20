@@ -49,7 +49,7 @@
   width: 44px;
   height: 44px;
   flex-shrink: 0;
-  border-radius: 13px;
+  border-radius: var(--radius-lg);
   color: var(--primary);
   background: var(--accent-gradient);
   border: 1px solid var(--border-accent);
@@ -280,7 +280,7 @@
   justify-content: center;
   width: 64px;
   height: 64px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   color: var(--primary);
   background: var(--accent-gradient-soft);
   border: 1px solid var(--border-accent);

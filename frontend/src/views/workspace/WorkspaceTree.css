@@ -127,7 +127,7 @@
   flex-shrink: 0;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-base);
   background: transparent;
   color: var(--text-placeholder);
   cursor: pointer;

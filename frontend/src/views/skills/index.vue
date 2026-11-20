@@ -25,6 +25,9 @@ const NW_CATEGORY_CODE_LIST = ['write', 'revise', 'outline', 'setting', 'review'
 /** 作用域选项 */
 const NW_SCOPE_LIST = ['global', 'project'] as const
 
+/** 内置占位符清单（与后端 validateSkillTemplate 的 known 集合一致，用于表单提示） */
+const BUILTIN_PLACEHOLDER_LIST = ['user_input', 'chapter_content', 'context', 'skill_code'] as const
+
 const skillList = ref<NWSkillVo[]>([])
 const listLoading = ref(false)
 const scopeFilter = ref<'global' | 'project'>('project')
@@ -400,7 +403,12 @@ onMounted(() => {
             show-word-limit
             class="skills-page__template"
           />
-          <p class="skills-page__field-hint">{{ t('skills.promptTemplateHint') }}</p>
+          <p class="skills-page__field-hint">
+            {{ t('skills.promptTemplateHint') }}
+            <code v-for="placeholderName in BUILTIN_PLACEHOLDER_LIST" :key="placeholderName" class="skills-page__placeholder">
+              {{ placeholderName }}
+            </code>
+          </p>
         </el-form-item>
 
         <!-- 变量声明 -->

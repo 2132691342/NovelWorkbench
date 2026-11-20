@@ -50,7 +50,7 @@
 | 测试环境 | `environment: 'node'`、`include: ['src/**/*.test.ts']` | `vitest.config.ts` 的 `test` |
 | 类型严格度 | `strict`、`noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch`、`noEmit` | `tsconfig.json` 的 `compilerOptions` |
 
-`uno.config.ts` 启用 `presetUno` 与 `transformerDirectives`（支持 `@apply` / `@variants`）。当前页面样式全部由语义 class 与 CSS 变量构成，未使用原子类，也未出现 `@apply`。
+`uno.config.ts` 启用 `presetUno` 与 `transformerDirectives`，支持 `@apply` / `@variants`。页面样式由语义 class 与 CSS 变量构成。
 
 ### 1.4 文件组织约定
 
@@ -86,7 +86,7 @@
 | 状态基色 | `--success` `#10b981`；`--warning` `#f59e0b`；`--error` `#ef4444`；`--error-hover` `#dc2626`；`--error-active` `#b91c1c`；`--info` `#3b82f6` |
 | 图表 | `--chart-series-1` → color-1；`--chart-series-2` → color-2；`--chart-grid` → `#eef2f7` |
 | 阴影 | `--shadow-xs`、`--shadow-card`、`--shadow-card-hover`、`--shadow-popover`、`--shadow-button-hover`、`--shadow-button-pressed`、`--shadow-sidebar` |
-| 圆角 | `--radius-sm` 6px；`--radius-base` 8px；`--radius-md` 10px；`--radius-lg` 14px；`--radius-xl` 18px；`--radius-pill` 999px |
+| 圆角 | `--radius-sm` 4px；`--radius-base` 6px；`--radius-md` 8px；`--radius-lg` 10px；`--radius-xl` 12px；`--radius-pill` 999px。四级严格对应「控件 → 按钮/输入 → 卡片 → 弹层」，页面内禁止写 px 值，否则圆角会失控变大 |
 | 动效 | `--transition-fast` 0.15s ease；`--transition-base` 0.2s ease；`--transition-slow` 0.32s cubic-bezier(0.22, 0.61, 0.36, 1) |
 | 布局 | `--layout-sidebar-width` 236px；`--layout-sidebar-collapsed-width` 72px；`--layout-header-height` 60px；`--layout-content-max-width` 1560px |
 
@@ -137,7 +137,7 @@
 
 `components/NWButton.vue` 的 `type` 取 `primary` / `default` / `text` / `danger` / `danger-text`，`size` 取 `large` / `default` / `small`；`loading` 或 `disabled` 时不派发 `click` 并置 `disabled` 属性。表格行内的次要危险操作使用 `danger-text`（默认弱化为文字色，悬停才显红底）。
 
-**尺寸类命名**：`size` 只在非默认档生成 `nw-button--size-large` / `nw-button--size-small`。早期版本把默认档也生成 `nw-button--default`，与类型变体同名，导致 `type="primary"` 的主按钮被覆盖成默认外观——这是已修复的真实缺陷，改类名时不要退回去。
+**尺寸类命名**：`size` 只在非默认档生成 `nw-button--size-large` / `nw-button--size-small`；默认档不生成尺寸类，避免与 `nw-button--default` 类型变体同名互相覆盖。
 
 `prefers-reduced-motion: reduce` 下只保留颜色过渡，去掉缩放与扫光。
 
@@ -509,6 +509,7 @@ flowchart TD
 | Element Plus 语言 | `App.vue` 用 `el-config-provider` 包裹根节点，`:locale` 由 `appStore.locale_code` 计算：`en-US` 用 `element-plus/es/locale/lang/en`，否则用 `element-plus/es/locale/lang/zh-cn` |
 | 键集同步 | 中英两份分片键集一一对应；仅 `admin.roles` 下有 4 个只存在于英文侧的键（`permAll`、`permUserManage`、`permRoleManage`、`permAuditRead`），页面不引用 |
 | 不进语言包的文案 | 菜单名称、权限名称、技能名称、通知正文、项目名称等后端数据一律直接渲染 |
+| 字面特殊字符 | vue-i18n 会把 `{name}` / `{{name}}` 当插值编译。文案要显示花括号时由组件渲染（技能表单的 `BUILTIN_PLACEHOLDER_LIST`）；要显示 `@` / `/` 时用 `{'@'}` / `{'/'}` 转义 |
 
 ## 9. 前端测试
 

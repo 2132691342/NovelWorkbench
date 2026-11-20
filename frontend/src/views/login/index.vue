@@ -154,7 +154,7 @@ async function handleSubmit(): Promise<void> {
   width: 48px;
   height: 48px;
   margin-bottom: 24px;
-  border-radius: 14px;
+  border-radius: var(--radius-xl);
   background-color: rgba(255, 255, 255, 0.16);
   font-size: 24px;
   font-weight: 700;

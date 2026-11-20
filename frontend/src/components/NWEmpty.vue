@@ -49,7 +49,7 @@ const resolvedTitle = computed(() => props.title_text || t('common.empty'))
 .nw-empty-state.is-compact .nw-empty-state__icon {
   width: 48px;
   height: 48px;
-  border-radius: 15px;
+  border-radius: var(--radius-lg);
 }
 
 .nw-empty-state.is-compact .nw-empty-state__title {

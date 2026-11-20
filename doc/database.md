@@ -783,7 +783,7 @@ ORDER BY score DESC LIMIT <topK>
 | --- | --- | --- | --- |
 | 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model` 且 `model_providers` 为空 | 告警，继续启动 |
 | 2 | `ModelProviderService.MigrateLegacyModels` 把 `model_providers.chat_model_name` 非空的行转成 `model_catalogs` 行 | `model_catalogs` 为空 | 告警，继续启动 |
-| 3 | `SkillService.SeedDefaults` 播种 29 个内置全局技能 | 按 `(global, "", skill_code)` 查缺补插 | `os.Exit(1)` |
+| 3 | `SkillService.SeedDefaults` 播种 8 个内置全局技能并下线旧内置技能 | 按 `(global, "", skill_code)` 查缺补插；不在 `BuiltinSkillCodeSet` 内的内置技能连带参考资料删除 | `os.Exit(1)` |
 | 3.1 | `PromptProfileService.SeedDefaults` 播种 5 份内置全局提示词档案 | 按 `(global, "", prompt_profile_code)` 查缺补插 | `os.Exit(1)` |
 | 4 | `SettingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插；已存在时仅同步 `setting_desc` | `os.Exit(1)` |
 | 5 | `RoleService.SeedDefaults` 播种内置角色 | 按 `role_code` 查缺补插 | `os.Exit(1)` |
@@ -796,7 +796,7 @@ ORDER BY score DESC LIMIT <topK>
 | --- | --- |
 | 供应商 | 名称「默认模型网关」，`enabled_flag=true`，`last_test_status_code='untested'`，API Key 用 JWT 密钥派生材料做 AES-256-GCM 封存（`pkg.SealSecret`） |
 | 默认模型 | 取 `ai.chat_model`，`default_flag=true`，`model_label` 回填模型名；播种后 `grantToBuiltinRoles` 授权给全部内置角色 |
-| 内置技能 | 来源 `ai.BuiltinSkills()`，共 29 个：`continue`、`outline`、`polish`、`expand`、`condense`、`summary`、`review`、`name`、`setting`、`deconstruct`、`deai`、`golden3`、`foreshadow`、`arc`、`chaptercheck`、`architect`、`hook`、`dialogue`、`pacing`、`worldrule`、`mainline`、`pitch`、`sixcheck`、`voice`、`scene`、`hitscan`、`humanness`、`platform`、`ledger`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`、`variable_spec_json='[]'`，已存在不覆盖 |
+| 内置技能 | 来源 `ai.BuiltinSkills()`，共 8 个：`continue`、`outline`、`polish`、`summary`、`deai`、`review`、`golden3`、`foreshadow`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`、`variable_spec_json='[]'`，已存在不覆盖。清单之外的旧内置技能由 `dropRetiredBuiltins` 连同参考资料一并删除 |
 | 提示词档案 | 来源 `ai.BuiltinPromptProfiles()`，共 5 份：`novelist`（默认）、`editor`、`architect`、`deai`、`continuity`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`，已存在不覆盖 |
 | 应用配置 | `chat_history_count=5`、`rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
 | 内置角色 | `admin`（`perm_codes_json=["*"]`）、`user`（`perm_codes_json="[]"`），`builtin_flag=true`，已存在不覆盖 |

@@ -68,7 +68,7 @@
   height: 28px;
   padding: 0 10px;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
@@ -125,7 +125,7 @@
   width: 30px;
   height: 30px;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--primary-soft);
   color: var(--primary);
 }
@@ -160,7 +160,7 @@
 .knowledge-page__text-btn {
   padding: 2px 6px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-base);
   background: transparent;
   color: var(--primary);
   font-size: 12px;

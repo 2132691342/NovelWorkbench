@@ -2,8 +2,6 @@
 
 本文描述 NovelWorkbench 的 AI 能力：模型网关、上下文装配、技能资产、无向量检索、流式协议与用量统计。
 
-内置技能按用途分为写作动作、方法论与进阶方法论三组。
-
 ## 1. 定位与边界
 
 AI 能力按「单轮可控生成」设计：用户给出意图，服务端装配最小充分上下文，模型流式产出，作者显式决定是否采纳。
@@ -12,7 +10,7 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | --- | --- |
 | 协议 | OpenAI 兼容（`openai`）、Anthropic 原生（`anthropic`） |
 | 调用形态 | 非流式生成、流式生成、连通性探测、候选重排 |
-| 业务能力 | 续写、大纲、润色、扩写、缩写、梗概、审稿、取名、设定问答，以及进阶方法论技能 |
+| 业务能力 | 续写正文、搭建大纲、润色文字、章节梗概、去 AI 味、章节质检、开篇体检、伏笔台账 |
 | 检索 | Manticore CJK ngram 词法召回 + RRF 融合 + 可选对话模型重排 |
 
 明确不做：
@@ -33,7 +31,7 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | `ai.ProviderSpec` | 同上 | 单次调用所需供应商快照；`APIKey` 明文只存在于内存 |
 | `ai.UsageRecorder` | `backend/internal/ai/usage.go` | 用量上报接口，由 `service.ModelUsageService` 实现 |
 | `ai.AssembleContext` / `ai.RenderPrompt` / `ai.SystemPrompt` / `ai.TemplatePlaceholders` | `backend/internal/ai/prompt.go` | 上下文装配、模板渲染与校验、系统提示词 |
-| `ai.BuiltinSkills` | `backend/internal/ai/skills.go`、`skills_novel.go`、`skills_craft.go`、`skills_advanced.go` | 29 个内置技能定义，与持久化结构解耦 |
+| `ai.BuiltinSkills` | `backend/internal/ai/skills.go` | 8 个内置技能定义与 `BuiltinSkillCodeSet` 下线集合，与持久化结构解耦 |
 
 `ProviderSpec` 字段：`ProviderULID`、`ProviderName`、`ProtocolCode`、`BaseURL`、`APIKey`、`ChatModelName`、`Temperature`、`MaxTokens`、`Timeout`。密钥由 `ModelProviderService.specOf` 解密后传入，`ai` 包不接触存储。
 
@@ -198,43 +196,24 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `skills` | `skill_ulid`(`SKL_`)、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`、`description_text`、`prompt_template`、`variable_spec_json`、`enabled_flag`、`builtin_flag`、`sort_order` | 作用域 `global` / `project`；同编码项目技能覆盖全局 |
 | `skill_references` | `ref_ulid`(`SKR_`)、`skill_ulid`、`ref_name`、`ref_text`、`keyword_list`、`sort_order` | 关键词为空表示总是注入 |
 
-### 5.2 内置技能（29 个）
+### 5.2 内置技能（8 个）
 
-由 `ai.BuiltinSkills()` 合并四个分组返回（写作动作 / 方法论 / 进阶方法论 / 进阶方法论扩展），`SkillService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种：
+由 `ai.BuiltinSkills()` 返回单一清单（`builtinSkillList`），`SkillService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种。技能按「写正文 → 做结构 → 改文字 → 做质检」的作业顺序排列，每个都带可核对的输出格式：
 
 | code | 名称 | 分类 | 用途 |
 | --- | --- | --- | --- |
-| `continue` | 续写 | write | 依据当前章节与上下文续写下一段 |
-| `outline` | 生成大纲 | outline | 按需求输出章节大纲 |
-| `polish` | 润色 | revise | 提升流畅度与画面感 |
-| `expand` | 扩写 | revise | 补充细节与心理描写 |
-| `condense` | 缩写 | revise | 保留关键信息更紧凑 |
-| `summary` | 生成梗概 | outline | 生成一句话到一段话的梗概 |
-| `review` | 审稿 | revise | 指出逻辑、节奏、一致性问题 |
-| `name` | 取名 | setting | 生成角色、地名、功法候选名 |
-| `setting` | 设定问答 | setting | 基于设定与知识库回答 |
-| `deconstruct` | 拆书 | review | 卖点 / 节奏 / 钩子 / 信息密度 / 可复用套路 |
-| `deai` | 去 AI 味 | revise | 扫描三段式排比、定性总结、情绪直给等硬指标并改写 |
-| `golden3` | 黄金三章 | outline | 主角立住 / 冲突到场 / 信息克制 / 钩子强度 / 现场感打分 |
-| `foreshadow` | 伏笔台账 | setting | 抽取伏笔表格（类型 / 埋设 / 回收 / 状态 / 风险） |
-| `arc` | 人物弧光 | setting | 欲望 / 缺陷 / 代价 / 转折，判定真弧光与假弧光 |
-| `chaptercheck` | 章节体检 | review | 目标 / 冲突 / 信息增量 / 冗余 / 章末钩子 / 连续性 |
-| `architect` | 长篇架构 | outline | 卖点 / 世界观 / 主线 / 人物 / 分卷 / 章纲六层 |
-| `hook` | 章末钩子 | outline | 按钩子十型判定章末类型并给替换收尾句 |
-| `dialogue` | 对白打磨 | revise | 信息增量 / 声口区分 / 潜台词 / 权力关系 |
-| `pacing` | 节奏体检 | review | 标注推进 / 铺垫 / 爆发 / 喘息，定位塌陷 |
-| `worldrule` | 世界观规则卡 | setting | 规则 / 边界 / 代价 / 叙事用途四栏 |
-| `mainline` | 主线守门 | review | 推进 / 原地踏步 / 跑题判定并引原文为证 |
-| `pitch` | 立项评估 | outline | 15 维命中率打分 + 否决项 + 最弱两维补齐方案 |
-| `sixcheck` | 六道质检 | review | 剧情 / 跨章 / 配比 / 结构 AI 味 / 表层痕迹 / 口径，出 P0-P2 与可发结论 |
-| `voice` | 角色声线卡 | setting | 句长 / 用词域 / 口头禅 / 情绪动作 / 权力姿态 + 冲突检查 |
-| `scene` | 场景拆解 | outline | 目标-结果场景表，结果必须与目标有差距 |
-| `hitscan` | 量化门禁 | review | 字数 / 段长 / 标点 / 对话占比 / 重复 / 章末钩，未提供项标「未运行」 |
-| `humanness` | 活人感改写 | revise | 先补材料再定说话位置，最后调语气 |
-| `platform` | 平台适配 | outline | 按目标平台重排字数、开篇 300 字、节奏密度与章末钩 |
-| `ledger` | 连续性台账 | setting | 人物 / 战力 / 伏笔 / 时间线 / 关系 / 情绪六账对账与吃书风险 |
+| `continue` | 续写正文 | write | 承接当前章节往下写：衔接、具体、推进、章末留钩 |
+| `outline` | 搭建大纲 | outline | 卖点 / 世界观 / 主线 / 人物 / 分卷 / 章纲六层，附结构风险 |
+| `polish` | 润色文字 | revise | 只改「怎么说」：去翻译腔、去重复、把定性换成现场 |
+| `summary` | 章节梗概 | outline | 一句话总述 + 三句分述，供连续性看板入库 |
+| `deai` | 去 AI 味 | revise | 句长均匀、情绪直给、旁白替代现场四类痕迹的扫描与改写 |
+| `review` | 章节质检 | review | 六道检查（逻辑 / 跨章 / 配比 / 结构 AI 味 / 表层痕迹 / 口径）出 P0-P2 与可发结论 |
+| `golden3` | 开篇体检 | outline | 主角立住 / 冲突到场 / 信息克制 / 钩子强度 / 现场感打分 + 三个必改问题 |
+| `foreshadow` | 伏笔台账 | setting | 抽取伏笔表格（类型 / 埋设 / 回收 / 状态 / 风险）与疑似遗忘项 |
 
-进阶方法论技能统一采用判据优先的组织方式：每条要求给出可核对的输出格式（分栏、评分维度、表格列），需要正文的读 `{{chapter_content}}`，需要设定对照的读 `{{context}}`。
+技能判据均可核对：卖点必须能填满「一个什么人，因为什么事，必须做到什么，否则失去什么」；世界观只认「规则 / 边界 / 代价」三栏；质检每条判定必须引原句，给不出原句的判定删掉；去 AI 味只看可机检指标（句长方差、套话密度、情绪直给次数），不做主观评价。
+
+**下线机制**：内置技能属于产品资产而非用户数据。启动时 `dropRetiredBuiltins` 用 `ai.BuiltinSkillCodeSet()` 比对库中 `builtin_flag=true` 的全局技能，把已从清单移除的旧内置技能连同其参考资料一并删除，升级不需要人工清库；用户自建的技能不受影响。
 
 ### 5.3 解析与覆盖
 

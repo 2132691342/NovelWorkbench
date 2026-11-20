@@ -199,7 +199,7 @@ const { t } = useI18n()
   width: 26px;
   height: 26px;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-placeholder);
   cursor: pointer;

@@ -36,7 +36,7 @@
   width: 42px;
   height: 42px;
   flex-shrink: 0;
-  border-radius: 13px;
+  border-radius: var(--radius-lg);
   color: var(--primary);
   background: var(--accent-gradient);
   border: 1px solid var(--border-accent);

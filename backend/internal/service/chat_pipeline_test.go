@@ -1,6 +1,4 @@
 // 本文件覆盖 AI 对话的三条长链路：技能解析、上下文装配、流式事件契约。
-// 技能决定模板与参考资料，装配决定模型最终看到的块与消息序列，事件契约决定前端能否
-// 从「思考中」走到「完成」；任一环节变化都会改变产出或让界面卡在等待态。
 
 package service
 
@@ -336,10 +334,8 @@ func TestChatContextChain(t *testing.T) {
 	}
 }
 
-// TestChatStreamContract 覆盖流式事件契约：thinking/chunk/done 顺序、seq 从 1 单调递增、
-// done 携带完整思考过程与空数组引用。
-// 前端据此在「等待 → 思考 → 正文 → 完成」之间切换；done 缺 reasoning_text 会让重开会话丢失思考，
-// reference_list 为 null 会让依据面板报错。
+// TestChatStreamContract 覆盖流式事件契约：thinking/chunk/done 顺序、seq 从 1 单调递增、done 携带完整思考过程与空数组引用。
+// 前端据此在「等待 → 思考 → 正文 → 完成」之间切换；done 缺 reasoning_text 会让重开会话丢失思考，reference_list 为 null 会让依据面板报错。
 func TestChatStreamContract(t *testing.T) {
 	sink := &eventSink{}
 	writer := &chatEventWriter{writer: sink, sessionULID: "SES_1", messageULID: "MSG_1"}

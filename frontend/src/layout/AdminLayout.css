@@ -42,7 +42,7 @@
   width: 32px;
   height: 32px;
   flex-shrink: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: linear-gradient(135deg, var(--primary), var(--primary-hover));
   color: var(--text-inverse);
   font-size: 16px;
@@ -111,7 +111,7 @@
   width: 30px;
   height: 34px;
   flex-shrink: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: linear-gradient(160deg, var(--primary), var(--primary-hover));
   color: var(--text-inverse);
   font-size: 14px;
@@ -321,7 +321,7 @@
   margin-left: auto;
   padding: 1px 5px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-page);
   color: var(--text-placeholder);
   font-size: 10px;
@@ -432,7 +432,7 @@
   margin-left: auto;
   padding: 1px 5px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-card);
   color: var(--text-placeholder);
   font-size: 10px;

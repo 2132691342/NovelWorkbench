@@ -24,7 +24,7 @@
 .admin-layout__command-close {
   padding: 2px 7px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-base);
   background: var(--bg-page);
   color: var(--text-placeholder);
   font-size: 10px;
@@ -83,7 +83,7 @@
   width: 30px;
   height: 30px;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-page);
   color: var(--primary);
 }

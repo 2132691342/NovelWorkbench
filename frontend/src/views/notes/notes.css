@@ -128,7 +128,7 @@
   width: 20px;
   height: 20px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-base);
   background: transparent;
   color: var(--text-placeholder);
   cursor: pointer;

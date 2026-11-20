@@ -2,7 +2,7 @@
 .chat-thinking {
   margin-bottom: 8px;
   border: 1px solid var(--border-light);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background-color: var(--bg-card);
   overflow: hidden;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;

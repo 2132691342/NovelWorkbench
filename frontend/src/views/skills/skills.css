@@ -28,7 +28,7 @@
 
 .skills-page__code {
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background-color: var(--primary-light);
   color: var(--primary-active);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -56,10 +56,25 @@
 }
 
 .skills-page__field-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   margin: 4px 0 0;
   color: var(--text-placeholder);
   font-size: 12px;
   line-height: 1.6;
+}
+
+/* 占位符以代码片段呈现：不再把 {{...}} 写进语言包（会被 vue-i18n 当插值编译） */
+.skills-page__placeholder {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--primary-active);
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 11.5px;
 }
 
 .skills-page__section {

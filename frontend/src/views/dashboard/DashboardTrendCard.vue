@@ -32,7 +32,7 @@ function renderChart(): void {
         backgroundColor: chartToken.background(),
         borderColor: chartToken.border(),
         textStyle: { color: chartToken.textMain(), fontSize: 12 },
-        extraCssText: 'box-shadow: 0 12px 32px rgba(15,23,42,.12); border-radius: 12px;',
+        extraCssText: 'box-shadow: 0 12px 32px rgba(15,23,42,.12); border-radius: var(--radius-lg);',
       },
       legend: {
         data: [t('dashboard.trendWordDelta'), t('dashboard.trendAiWordDelta')],
