@@ -264,31 +264,6 @@ func (s *SkillService) Resolve(ctx context.Context, req *domain.SkillResolveREQ)
 	}, nil
 }
 
-// RenderByCode 按编码渲染技能提示词（对话链路消费：项目技能优先，其次全局）。
-func (s *SkillService) RenderByCode(ctx context.Context, projectULID, skillCode string,
-	variableValue map[string]string, userInput string) (domain.SkillRenderDTO, error) {
-	skill, err := s.resolveByCode(ctx, projectULID, skillCode)
-	if err != nil {
-		return domain.SkillRenderDTO{}, err
-	}
-	variableMap, missingList := resolveSkillVariables(skill.SkillCode, skill.VariableList, variableValue, userInput)
-	if len(missingList) > 0 {
-		return domain.SkillRenderDTO{}, pkg.NewBizError(domain.RespCodeInvalidParam,
-			"技能变量缺少必填项: "+strings.Join(missingList, skillRefKeywordSeparator))
-	}
-	refList, err := s.matchReferences(ctx, skill, userInput, userInput)
-	if err != nil {
-		return domain.SkillRenderDTO{}, err
-	}
-	return domain.SkillRenderDTO{
-		SkillCode:    skill.SkillCode,
-		SkillName:    skill.SkillName,
-		RenderedText: ai.RenderPrompt(skill.PromptTemplate, variableMap),
-		VariableMap:  variableMap,
-		RefTextList:  refList,
-	}, nil
-}
-
 // SkillTemplate 返回启用技能的提示词模板（对话上下文装配需要 {{context}} 等占位符保留原样）。
 func (s *SkillService) SkillTemplate(ctx context.Context, projectULID, skillCode string) (domain.SkillVO, error) {
 	return s.resolveByCode(ctx, projectULID, skillCode)

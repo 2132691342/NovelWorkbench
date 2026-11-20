@@ -186,6 +186,18 @@ function insertTextAtCursor(insertText: string): void {
   editorView.focus()
 }
 
+/** 用 AI 回复替换整章正文（走同一自动保存通道） */
+function replaceContent(text: string): void {
+  if (!editorView) {
+    return
+  }
+  editorView.dispatch({
+    changes: { from: 0, to: editorView.state.doc.length, insert: text },
+    scrollIntoView: true,
+  })
+  editorView.focus()
+}
+
 /** 立即落盘未保存的防抖内容（切换章节/打开快照前调用） */
 async function flushSave(): Promise<void> {
   if (!dirtyFlag.value) {
@@ -195,7 +207,7 @@ async function flushSave(): Promise<void> {
   await saveChapter()
 }
 
-defineExpose({ insertTextAtCursor, flushSave })
+defineExpose({ insertTextAtCursor, replaceContent, flushSave })
 
 watch(() => props.chapter, initFromChapter, { immediate: true })
 

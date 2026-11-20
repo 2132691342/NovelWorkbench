@@ -1,23 +1,20 @@
-# NovelWorkbench 架构设计
+# 系统架构
 
-本文描述 NovelWorkbench 当前的系统定位、技术选型、分层约束与核心链路实现。
-只讲"现在是怎么设计的、为什么这样设计"，不记录演进过程。
+本文描述 NovelWorkbench 的整体定位、技术选型、分层约束、请求生命周期与核心链路。
+事实来源为 `backend/`、`frontend/`、`docker-compose.yml`、`deploy/podman/`。
 
 ## 1. 系统定位
 
-NovelWorkbench 是前后端分离的 AI 小说创作工作台。系统以"项目 → 卷 → 章节"为写作主线，
-把大纲、正文、角色、世界观、知识资料、AI 对话与技能统一在一个工作台中。
+NovelWorkbench 是前后端分离的 AI 小说创作工作台，以「项目 → 卷 → 章节」为写作主线，把大纲、正文、角色、世界观、知识资料、AI 对话与技能资产统一在一个工作台中，同时提供完整的 SaaS 管理能力。
 
-系统同时承担两类职责：
+| 职责 | 内容 |
+| --- | --- |
+| 创作业务 | 项目导航、卷章目录、正文编辑、快照回滚、角色关系、世界观设定、创作规划、连续性看板、知识库检索、技能资产、AI 流式生成 |
+| SaaS 管理 | 用户、角色权限、菜单与权限目录、审计、登录日志、模型供应商与模型目录、用量分析、运行状态、任务中心、站内通知 |
 
-1. **SaaS 管理**：用户、角色权限、菜单与权限目录、审计、模型供应商、用量分析、运行状态。
-2. **创作业务**：项目导航、卷章目录、正文编辑、快照、角色关系、世界观设定、
-   创作规划、连续性看板、知识库检索、技能资产、AI 流式生成。
+系统不开放注册，账号只能由管理员在「用户管理」中创建并分配角色。
 
-系统不开放注册：账号只能由管理员在「用户管理」中创建并分配角色。
-
-设计优先级：稳定性 > 体验 > 性能。项目当前无正式用户，系统收敛到清晰可维护的设计，
-不做多余抽象层；所有写入动作由作者显式触发，AI 产出不自动落库到权威数据。
+设计优先级：**稳定性 > 体验 > 性能**。写入动作全部由作者显式触发，AI 产出不自动落库为权威数据；中间件故障降级而非阻断写作。
 
 ## 2. 总体结构
 
@@ -28,98 +25,91 @@ flowchart LR
   SVC --> REPO[repo 数据访问层]
   SVC --> AI[ai 模型能力域]
   REPO --> PG[(PostgreSQL 16)]
-  REPO --> REDIS[(Redis 7)]
-  REPO --> MQ[(RabbitMQ 4)]
-  REPO --> MINIO[(MinIO S3)]
-  REPO --> MANTICORE[(Manticore 全文检索)]
-  AI -->|OpenAI / Anthropic| LLM[模型服务]
+  REPO --> REDIS[(Redis)]
+  REPO --> MQ[(RabbitMQ)]
+  REPO --> MINIO[(MinIO)]
+  SVC --> MC[(Manticore 全文索引)]
+  AI -->|OpenAI 兼容 / Anthropic| LLM[模型服务]
 ```
 
-部署形态：前端 nginx 容器 + 后端 Go 容器。中间件可使用云服务器既有实例，
-也可通过 `--profile infra` 在本地拉起同版本实例。后端 `CGO_ENABLED=0` 静态编译，不引入 cgo。
+部署形态：前端 nginx 容器 + 后端 Go 容器；中间件可复用宿主机既有实例，也可通过 `--profile infra` 本地拉起。后端 `CGO_ENABLED=0` 静态编译，不引入 cgo。
 
 ## 3. 技术选型
 
-| 层 | 选型 | 承担的职责 |
+| 层 | 选型 | 职责 |
 | --- | --- | --- |
-| 后端语言 | Go 1.24 | 静态编译，无 cgo，单二进制部署 |
+| 后端语言 | Go 1.24 | 静态编译、单二进制部署 |
 | Web 框架 | Gin 1.11 | 路由、参数绑定、中间件链 |
-| ORM | GORM 1.31 + pgx | 关系数据读写与自动迁移 |
+| ORM | GORM 1.31 + pgx | 关系数据读写与启动期自动迁移 |
 | 配置 | Viper 1.21 | YAML 模板 + `NW_` 环境变量覆盖 |
 | 日志 | Zap 1.28 | 结构化 JSON 日志 |
-| AI 编排 | eino 0.9 + eino-ext | OpenAI 兼容与 Anthropic 消息协议对话组件 |
+| AI 编排 | eino 0.9 + eino-ext | OpenAI 兼容与 Anthropic 对话组件 |
 | 关系存储 | PostgreSQL 16 | 业务主数据、权限、统计、任务状态 |
-| 全文检索 | Manticore（HTTP SQL API） | CJK ngram 全文召回，索引可整体重建 |
-| 缓存 | Redis 7 | 登出令牌黑名单 |
-| 队列 | RabbitMQ 4 | 知识库异步索引任务 |
+| 全文检索 | Manticore HTTP SQL API | CJK ngram 召回，索引可整体重建 |
+| 缓存 | Redis | 登出令牌黑名单 |
+| 队列 | RabbitMQ | 知识库异步索引任务 |
 | 对象存储 | MinIO | 知识库文档原文 |
-| 前端 | Vue 3.4 + TypeScript 5.4 + Vite 5.2 | SPA |
-| UI | Element Plus 2.9 + UnoCSS 0.58 | 组件库与品牌色工具类 |
-| 状态 | Pinia 2.1 | 认证、应用配置、当前项目上下文 |
-| 路由 | Vue Router 4.3 | 登录守卫、页面懒加载 |
-| HTTP | Axios 1.6 | 包络解包、Bearer 注入、错误归一 |
-| 可视化 | ECharts 5.5 / AntV X6 2.18 | 趋势图 / 角色关系图 |
-| 编辑 | CodeMirror 6 / WangEditor 5 | 正文 / 富文本笔记 |
+| 前端 | Vue 3 + TypeScript + Vite | SPA |
+| UI | Element Plus + UnoCSS | 组件库与品牌令牌 |
+| 状态 / 路由 / HTTP | Pinia、Vue Router、Axios | 认证、项目上下文、包络解包 |
+| 可视化 / 编辑器 | ECharts、AntV X6、CodeMirror 6、WangEditor、MavonEditor | 趋势图、关系图、正文、富文本与 Markdown 笔记 |
+| 测试 | Go testing + Vitest | 链路级单元测试 |
+| 部署 | Docker Compose / Podman Compose + GitHub Actions | 镜像构建与发布 |
 
 ## 4. 后端分层
 
-依赖方向严格单向：`api → service → repo → domain`。
-`ai`、`infra`、`pkg` 是能力层与叶子层，不反向依赖 `api` 或 `service`。
+依赖方向严格单向：`api → service → repo → domain`；`ai`、`infra`、`pkg` 为叶子能力层，不反向依赖 `api` 或 `service`。
 
 ```
 backend/
-├── cmd/server                装配启动、优雅关闭
-├── configs/                  配置模板（凭据留空，靠环境变量注入）
-├── internal/
-│   ├── api                   HTTP 处理：绑定、鉴权挂载、响应输出
-│   ├── service               业务规则、事务边界、上下文装配
-│   ├── repo                  SQL 与中间件访问的唯一出口；含 WithTx 事务封装
-│   ├── domain                DO/REQ/RESP/DTO/VO 唯一定义处（含菜单与技能）
-│   ├── ai                    模型网关、提示词模板、技能、用量契约
-│   ├── infra                 配置加载、连接构造、启动期校验
-│   └── pkg                   ULID、响应包络、错误、JWT、中间件、密钥封存、文本统计
+├── cmd/server        装配启动、迁移播种、路由、优雅关闭
+├── configs/          配置模板（凭据留空，环境变量注入）
+└── internal/
+    ├── api           HTTP 处理器与路由注册
+    ├── service       业务规则、事务边界、上下文装配
+    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx）
+    ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处
+    ├── ai            模型网关、提示词装配、内置技能、用量契约
+    ├── infra         配置加载、连接构造、启动校验
+    └── pkg           ULID、包络、错误、JWT、中间件、密钥封存、文本工具
 ```
 
-分层约束：
-
-| 规则 | 原因 |
+| 约束 | 原因 |
 | --- | --- |
-| 请求/响应结构只在 domain 定义 | 前后端契约单一事实源 |
-| SQL 只写在 repo | service 只调 repo 方法，不拼 gorm 条件 |
-| service 持有 `*gorm.DB` 仅作事务入口 | 跨表写入需要同一事务；事务边界由 service 决定，`repo.WithTx` 提供唯一封装 |
-| 判定与装配规则下沉为纯函数 | 可见性过滤、作用域优先级、变量取值、关键词命中、预算裁剪等规则抽成无依赖函数，行为可单测且不依赖数据库 |
-| Manticore 客户端只在知识库相关 service 使用 | 检索是业务语义的一部分（融合、重排、追踪），不是通用数据访问 |
-| service 不写 HTTP 状态码 | 响应码到 HTTP 状态的映射集中在 `pkg.HTTPStatusForCode` |
-| api 不写业务判断 | 避免同规则散落多个处理器 |
-| 文件名与业务名一致 | 一个业务域一个文件，便于检索 |
-| 单文件不超过 500 行 | 控制认知负载；超限按同域子文件拆分 |
-| 导出符号必须有注释 | 可读性与静态检查 |
-| ID 用带业务前缀的 ULID | 例如 `PRJ_01H...`、`USR_...`、`SKL_...`，日志可定位业务类型 |
+| 请求/响应结构只在 `domain` 定义 | 前后端契约单一事实源 |
+| SQL 只写在 `repo` | service 只调仓储方法，不拼查询条件 |
+| service 持有 `*gorm.DB` 仅作事务入口 | 跨表写入需同一事务，`repo.WithTx` 是唯一封装 |
+| 判定与装配规则下沉为纯函数 | 可见性过滤、作用域优先级、变量取值、关键词命中、预算裁剪可独立单测，不依赖数据库 |
+| Manticore 客户端只在知识库相关 service 使用 | 融合、重排、追踪属于业务语义，不是通用数据访问 |
+| service 不写 HTTP 状态码 | 业务码到状态码的映射集中在 `pkg.HTTPStatusForCode` |
+| api 不写业务判断 | 避免同一规则散落多个处理器 |
+| 业务路由只开放 GET/POST | 删除走 `POST /xxx/delete`，方法白名单强制 |
+| 路径参数放末尾 | `/menu/detail/{MenuULID}`、`/knowledge/content/{DocULID}` |
+| ID 为带业务前缀的 ULID | `PRJ_` / `CHP_` / `SKL_` …，日志可定位业务类型 |
 | 字段使用显式后缀 | `project_name`、`genre_code`、`created_at_ms` |
-| 业务码用字符串 | `SUCCESS`、`ERR_*`；HTTP 状态仍是 int |
-| 路由只开放 GET/POST | 删除通过 `POST /xxx/delete`，方法白名单强制 |
-| 路径参数放在末尾 | `/menu/detail/{MenuULID}`、`/skill/detail/{SkillULID}`，不做 `/xxx/{id}/yyy` |
-| 权限码由菜单登记 | 新增权限码只需在「菜单管理」登记一行，角色页自动可见可勾选 |
+| 权限码由菜单表登记 | 新增权限只需在「菜单管理」登记一行，角色页自动可见 |
+| 单文件 ≤500 行 | 控制认知负载，超限按同域拆分 |
 
 ## 5. 请求生命周期
 
-中间件顺序：`Recovery → RequestID → Logger → CORS → MethodWhitelist → Auth → Audit → Permission`。
+中间件顺序（`api.NewRouter`）：
 
-1. **Recovery** 捕获 panic，记日志并输出 500 包络。
-2. **RequestID** 读取或生成 `REQ_` 前缀 ULID，贯穿日志与响应 `trace_id`。
-3. **Logger** 在出口层记录路径、耗时、请求 ID、响应码。
-4. **CORS** 允许前端开发态与部署态访问；预检请求不进入业务。
-5. **MethodWhitelist** 只放行 GET/POST/OPTIONS。
-6. **Auth** 解析 Bearer Token，注入 `user_ulid`；登出令牌在 Redis 黑名单；
-   每次请求检查用户状态，禁用账号的旧令牌立即失效。
-7. **Audit** 对写请求记录审计日志，失败只告警不阻断业务。
-8. **Permission** 按权限码控制管理端路由。
+`Recovery → RequestID → Logger → CORS → MethodWhitelist → Auth → Audit → RequirePerm`
 
-免鉴权白名单：`/api/v1/auth/register`、`/api/v1/auth/login`。
-免审计白名单：上述两条 + `/api/v1/auth/logout` + `/api/v1/chat/send`（SSE 会话正文不入审计）。
-`/health` 与 `/ready` 注册在根引擎上，不经过鉴权与审计。
+| 中间件 | 行为 |
+| --- | --- |
+| Recovery | 捕获 panic，记日志并输出 `ERR_INTERNAL` |
+| RequestID | 读取或生成 `REQ_` 前缀 ULID，写入日志与响应头 `X-Request-ID` |
+| Logger | 出口层记录方法、路径、状态码、耗时、请求 ID |
+| CORS | 放行前端访问；`OPTIONS` 预检不进入业务 |
+| MethodWhitelist | 仅放行 GET / POST |
+| Auth | 解析 Bearer 令牌 → 查黑名单 → 校验用户状态 → 注入 `user_ulid` |
+| Audit | POST 且不在跳过名单时落审计（失败只告警） |
+| RequirePerm | 按权限码收口管理接口，缺失返回 `ERR_FORBIDDEN` |
 
-统一响应包络：
+白名单：免鉴权仅 `/api/v1/auth/login`；免审计为登录、登出与 `/api/v1/chat/send`（会话正文不入审计）。`/health`、`/ready` 挂在根引擎，不经过鉴权与审计。
+
+统一响应包络（`pkg.Ok` / `pkg.Fail`）：
 
 ```json
 {
@@ -130,47 +120,54 @@ backend/
 }
 ```
 
-错误码族与 HTTP 状态映射只在 `pkg.codeHTTPStatus` 一处维护：
+业务码到 HTTP 状态的映射只维护在 `pkg` 一处：
 
-| 业务码 | HTTP 状态 | 语义 |
+| 业务码 | HTTP | 语义 |
 | --- | --- | --- |
 | `SUCCESS` | 200 | 成功 |
 | `ERR_INVALID_PARAM` | 400 | 参数校验失败 |
 | `ERR_UNAUTHORIZED` | 401 | 未登录或登录失效 |
 | `ERR_FORBIDDEN` | 403 | 无权限 |
 | `ERR_NOT_FOUND` | 404 | 资源不存在 |
-| `ERR_CONFLICT` | 409 | 资源冲突（重名/重复提交） |
+| `ERR_CONFLICT` | 409 | 资源冲突 |
 | `ERR_BIZ_FAILED` | 400 | 通用业务失败 |
-| `ERR_AI_PROVIDER` | 502 | AI 模型调用失败 |
-| `ERR_STORAGE` | 503 | 对象存储/检索/队列等基础设施异常 |
+| `ERR_AI_PROVIDER` | 502 | 模型调用失败 |
+| `ERR_STORAGE` | 503 | 存储 / 检索 / 队列异常 |
 | `ERR_INTERNAL` | 500 | 服务内部错误 |
 
 两个端点不使用该包络：`/chat/send` 返回 SSE 事件流，`/knowledge/content` 返回文件字节流。
 
-## 6. 核心业务链路
+## 6. 启动装配
 
-### 6.1 登录与权限
+`backend/cmd/server/main.go` 的顺序：
 
-- 系统不开放注册；管理员在用户管理里创建账号并分配角色，密码用 bcrypt 哈希，API 永不返回哈希。
-- 登录签发 JWT（HS256，默认 7 天），返回用户信息；权限码集合改由 `GET /menu/nav` 下发。
-- 登出把令牌写入 Redis 黑名单，TTL 与令牌剩余有效期一致。
-- 管理接口按权限码收口：`system:user:manage`、`system:role:manage`、`system:menu:manage`、
-  `system:perm:read`、`system:audit:read`、`system:setting:manage`、`system:model:manage`、
-  `system:usage:read`、`system:status:read`、`skill:manage`。
-- **权限码单一事实源是菜单表**：菜单行的 `perm_code` 就是权限登记，权限目录由菜单汇总，
-  角色勾选后立即生效，不需要额外的权限码表或角色-菜单关联表。
-- 导航树同样由后端下发：只返回启用 + 展示 + 有权限的非动作节点，前端不再硬编码菜单。
-- 权限逐请求查库，改角色立即生效；管理接口流量极低，这一跳查询可接受。
+1. 初始化 Zap 与配置（`infra.LoadConfig`，启动期校验关键项）。
+2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 32 张表（失败即退出）。
+3. 连接 Redis / RabbitMQ / MinIO / Manticore；失败只告警并降级。
+4. 构造仓储 → 服务 → 中间件 → 路由。
+5. 播种：内置技能、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。
+6. 可选播种出厂模型供应商（配置了网关地址与模型名且供应商表为空时），并迁移旧版供应商单模型数据。
+7. 启动知识库索引 worker（RabbitMQ 消费）。
+8. 监听端口；收到 SIGINT/SIGTERM 后优雅关闭 HTTP、worker、连接池。
 
-### 6.2 项目导航与写作台
+## 7. 核心链路
 
-- 项目是全部创作资源的隔离边界，所有创作表都带 `project_ulid`。
-- 章节表同时冗余 `project_ulid`，鉴权不必多表 join。
-- 快照用于留档与回滚；写入正文时服务端计算字数并按差值维护项目累计字数与当日统计。
-- 前端侧边栏有项目切换器，URL 中的 `project_ulid` 优先级最高；路由变化反写 Pinia store，
-  切换项目不丢失当前功能页面。
+### 7.1 登录与权限
 
-### 6.3 AI 对话
+- 账号由管理员创建，密码 bcrypt 存储，API 永不返回哈希。
+- 登录签发 HS256 JWT（默认 7 天），返回用户信息与角色编码；权限码由 `GET /menu/nav` 下发。
+- 登出把令牌写入 Redis 黑名单，TTL 取令牌 `expires_at - issued_at`（签发时长）。
+- **权限码单一事实源是菜单表**：`menus.perm_code` 即权限登记，权限目录由菜单汇总，角色勾选后立即生效，无需权限码表或角色-菜单关联表。
+- 权限逐请求查库（`RoleService.HasPerm`），管理接口流量低，这一跳可接受。
+
+### 7.2 项目与写作台
+
+- 项目是创作资源隔离边界，所有创作表带 `project_ulid`；章节表冗余该列，鉴权不必多表 join。
+- 正文更新时服务端计算字数，按差值维护项目累计字数与当日统计。
+- 快照用于留档与回滚；快照恢复重新计算字数。
+- 前端侧边栏有项目切换器，URL 中的 `project_ulid` 优先级最高，路由变化反写 Pinia store。
+
+### 7.3 AI 对话
 
 ```mermaid
 sequenceDiagram
@@ -179,145 +176,86 @@ sequenceDiagram
   participant SVC as chat_service
   participant RAG as knowledge_service
   participant AI as ai.Client
-  FE->>API: POST /chat/send（正文/技能/@引用/历史条数/模型）
+  FE->>API: POST /chat/send
   API->>SVC: Send(ctx, req, writer)
-  SVC->>SVC: 解析技能（项目技能覆盖全局；skill_code 优先，其次正文首 token）
-  SVC->>RAG: 检索资料（关键词召回 + 可选重排）
-  RAG-->>SVC: 召回切片与检索追踪
-  SVC->>SVC: 上下文装配（按优先级与预算裁剪）
+  SVC->>SVC: 技能解析（项目技能覆盖全局）
+  SVC->>RAG: 混合检索（词法 + RRF + 可选重排）
+  RAG-->>SVC: 召回切片与追踪
+  SVC->>SVC: 上下文装配（优先级 + 12000 字节预算）
   SVC->>SVC: 落库用户消息
-  SVC->>AI: Stream(spec, system + context + history)
+  SVC->>AI: Stream(system + 上下文 + 历史 + 指令)
   AI-->>SVC: 增量文本
   SVC-->>API: SSE chunk（seq 递增）
-  API-->>FE: text/event-stream
   SVC->>SVC: 事务落库助手消息与 AI 字数
   SVC-->>API: SSE done（含召回依据）
 ```
 
-关键设计：
+关键机制见 `doc/ai.md`。设计取舍：单链路（所有生成走 `/chat/send` + 技能码）保证上下文、容错与审计只有一处实现。
 
-| 机制 | 实现 | 收益 |
-| --- | --- | --- |
-| 单链路 | 续写、润色、大纲、审稿都走 `/chat/send` + 技能码 | 上下文、容错、审计一处实现 |
-| 技能资产化 | 技能 = 作用域 + 模板 + 变量声明 + 参考资料 | 提示词可维护、可覆盖、可复用 |
-| 参考资料 | 关键词命中才注入，单技能上限 4000 字符 | 长文经验片段按需进入上下文 |
-| 双协议 | OpenAI 兼容与 Anthropic 消息协议 | 厂商不限，密钥加密存储 |
-| 上下文预算 | 固定 12000 字符预算，按优先级裁剪整块 | 长篇输入可控且可解释 |
-| 历史可配置 | 默认 5 条，请求可覆盖，显式引用不受限 | 用户能感知上下文长度 |
-| SSE | `seq` 递增、15s 心跳、断连取消 | 流式体验稳定 |
-| 召回透明 | `done` 事件返回引用依据 | AI 产出可追溯 |
-| 失败不落库 | 客户端断开或生成失败不写助手消息 | 避免半成品污染历史 |
+### 7.4 知识库
 
-### 6.4 知识库检索
+上传 → MinIO 原文 + `pending` 文档行 → RabbitMQ 任务 → worker 提取/切片/哈希去重 → 写 PostgreSQL 切片与 Manticore 索引 → `indexed`。检索为双词法通道 + RRF 融合 + 可选对话模型重排，全程可追踪。权威数据始终在 PostgreSQL 与 MinIO，索引可随时重建。
 
-系统不接入向量模型，也不保留伪造向量。检索使用 Manticore CJK ngram 作为权威文本的可重建投影：
+### 7.5 创作规划与连续性
 
-1. **上传**：原文写 MinIO，文档行落库 `pending`，投递 RabbitMQ 索引任务。
-2. **索引**：拉取原文，按标题/段落/字符上限切片，计算内容哈希；写 Manticore，
-   状态更新为 `indexed`。表结构与旧版不符时自动重建并回灌。
-3. **检索**：从用户输入抽取查询词，Manticore 双通道召回候选；
-   多通道时按 RRF 融合（`score = Σ 1/(60+rank)`），单通道按同式排序；
-   可选 chat 模型按候选 ID 做重排，失败时回退原排序。
-4. **追踪**：返回查询词、候选数、选中 ID、来源通道、耗时，前端展示"AI 依据"。
+- 大纲树以项目为根，节点覆盖卷 / 幕 / 故事块 / 章节；父子关系与成环由 service 校验，含子节点不可直接删除。
+- 场景卡挂在大纲节点上，记录出场角色、地点、冲突、节奏、入场/出场状态、目标与关键选择。
+- 连续性由时序事实、伏笔钩子、章节摘要三本账组成；事实需显式复核（确认/取代/过期）才成为依据，AI 产出默认只是候选。
+- 章节摘要带内容哈希与状态，正文变化后可标记 stale，避免过期证据进入上下文。
 
-权威源是 PostgreSQL/MinIO 中的原文，Manticore 索引可随时重建。这一约束使删除、改名、
-重新切片都可控，且不依赖外部向量服务。
+### 7.6 设定与关系
 
-### 6.5 创作规划与连续性
+角色卡记录基础信息、性格、目标、秘密、声音特征与当前状态；角色关系由起点、终点与描述构成，前端用 AntV X6 渲染。世界观设定按分类（世界背景 / 规则 / 地点 / 物品 / 事件）管理。创作笔记复用设定表，`lore_type_code = note`，私人笔记永不进入 AI 上下文。
 
-- 大纲树以项目为根，节点类型覆盖卷、幕、故事块与章节；父子关系与排序由 service 校验，
-  含子节点的节点不可直接删除，父节点不能挂到自身或后代上。
-- 场景卡挂在大纲节点上，记录出场角色、地点、冲突、节奏、入场状态、目标、关键选择、
-  结果与出场状态，是章节正文生成前的可执行任务单。
-- 连续性看板由时序事实、伏笔钩子与章节摘要三张账本组成；事实必须经过显式审核
-  （确认/取代/过期）才成为正式依据，AI 产出默认只生成候选。
-- 章节摘要带内容哈希与状态；正文变化后摘要可标记 stale，避免过期证据进入 AI 上下文。
+### 7.7 可观测性
 
-### 6.6 设定与关系
+- 用量：按供应商、模型、调用类型聚合调用数、token、延迟、成功率；内存缓冲 5 秒批量落库。
+- 运行状态：探测 PostgreSQL / Redis / RabbitMQ / MinIO / Manticore 与模型健康，展示耗时与结论。
+- 审计：写操作记录操作者、动作码、目标、结果、IP；仅 `/api/v1/admin/` 路径读取 body 提取目标。
+- 任务中心：`jobs` 表状态机 `queued → running → success|failed`，失败可重试。
 
-- 角色卡：基础信息、性格、目标、秘密、声音特征、当前状态。
-- 角色关系：起点角色、终点角色、关系描述；AntV X6 展示节点与边。
-- 世界观设定：分类（世界背景/规则/地点/物品/事件）与关键词检索。
-- 创作笔记复用设定表，`lore_type_code='note'`；私人笔记不注入 AI 上下文，避免污染创作证据。
-
-### 6.7 运维与可观测性
-
-- 用量：按供应商、模型、调用类型聚合调用次数、token、延迟、成功率；内存缓冲 5 秒批量落库。
-- 运行状态：探测 PG/Redis/RabbitMQ/MinIO/Manticore 与模型健康，展示耗时与结论。
-- 审计：记录写操作的操作者、动作码、资源、结果、客户端 IP。
-- 系统配置：运行时可配置项（历史条数等）走 `app_settings` 表，改后立即生效。
-
-### 6.8 账号安全与站内通知
-
-- **登录日志**：`AuthService.Login` 在账号不存在、密码错误、账号禁用、成功四个分支写入
-  `login_logs`；API 层采集 IP 与 UA。失败只告警，不阻断登录。
-- **个人中心**：本人改邮箱 / 头像 / 备注、改密码；改密必须校验旧密码，成功后写安全通知。
-- **通知中心**：`NotificationService.Notify` 是唯一创建入口，按 `user_ulid` 隔离；
-  账号创建、密码重置、本人改密、知识库索引成功/失败都会产生通知。
-- **前端**：`stores/notification.ts` 保存未读数与最近 5 条，`layout/NotificationBell.vue`
-  每 60 秒轮询；标记已读立即本地扣减，不等待下一次轮询。
-
-### 6.9 异步任务中心
-
-- `jobs` 表是 RabbitMQ 消费的落库凭据，状态机 `queued → running → success|failed`。
-- 任务中心只读展示与失败重试；重试会重置任务为 `queued`、文档为 `pending` 并重新投递。
-- 任务列表解析载荷 `doc_ulid` 后批量回填文档名，避免逐行查询。
-- worker 内部重试上限 3 次，失败落库后 ack，避免毒消息阻塞队列。
-
-## 7. 前端架构
+## 8. 前端架构
 
 ```
 frontend/src/
-├── api        HTTP 客户端与模块 API（含 menu/skill）
-├── components 无业务组件（按钮/卡片/空态/加载/图标/页头）
-├── composables SSE 流式解析与请求
-├── layout     主框架：后端驱动导航 + 项目切换 + 快速跳转
-├── router     路由表与守卫（含权限码校验）
-├── stores     auth/app/menu/project/notification
-├── styles     变量、全局样式、按钮五态、通知浮层
-├── i18n       zh-CN/en-US
-└── views      登录、仪表盘、个人中心、通知中心、工作台、角色、设定、笔记、创作规划、
-               连续性、知识库、模型、技能、管理（用户/角色/菜单/权限目录/审计/
-               登录日志/用量/任务中心/运行状态）
+├── api           Axios 封装与各业务模块 API（含 contracts.ts 契约类型）
+├── components    无业务组件：NWButton / NWCard / NWEmpty / NWIcon / NWLoading / NWPageHeader / NWStatTile / ProjectPageHeader
+├── composables   useSSE：流式解析与请求
+├── layout        AdminLayout、CommandPalette、NotificationBell
+├── router        路由表与守卫（含 meta.perm_code 校验）
+├── stores        auth / app / menu / project / notification
+├── styles        variables / element-theme / button-states / page / global
+├── i18n          zh-CN / en-US 分片：common / workspace / assets / admin / extensions
+└── views         登录、仪表盘、工作台、知识库、角色、设定、笔记、创作规划、连续性、
+                  模型、技能、个人中心、通知、管理端各页
 ```
 
-交互约定：
+交互约定：按钮五态（默认/悬停/按下/禁用/加载）、异步动作必有反馈、列表具备加载与空态、危险操作二次确认、路由切换有过渡、AI 流式输出可中止。侧边栏完全由 `GET /menu/nav` 下发，改菜单即改导航。
 
-- 所有按钮走全局五态体系：默认、悬停放大、按下缩小、禁用、加载。
-- 成功/失败必有反馈，错误页必有重试入口。
-- 路由切换有过渡；卡片有悬停微抬起；列表有加载与空态。
-- AI 流式输出逐字展示，停止按钮可取消请求。
-- 侧边栏完全由 `GET /menu/nav` 下发：分组、页面、图标、排序都来自菜单表，
-  改菜单即改导航；项目内菜单在未选项目时置灰。
-- 顶栏「快速跳转」列出全部可见页面，按名称/编码过滤。
-- 顶栏铃铛展示未读通知；头像菜单进入个人中心、通知中心与退出。
-- 通知每 60 秒轮询一次；标记已读立即更新本地未读数。
+## 9. 部署架构
 
-## 8. 部署架构
+- 后端镜像：多阶段构建，最终只含二进制与 CA 证书，`CGO_ENABLED=0`。
+- 前端镜像：Node 构建静态资源，nginx 托管 SPA、反代 `/api/`、关闭 SSE 缓冲。
+- 本地：`docker-compose.yml` 提供应用容器与可选 `infra` profile。
+- 云主机：`deploy/podman/` 用 Podman Compose 加入既有中间件网络，`deploy.sh` 完成构建、重建与健康自检。
+- CI：push / PR 触发 vet、build、test 与前端构建；tag 触发镜像发布到 GHCR。
 
-- 后端镜像：多阶段构建，最终镜像只含二进制与 CA 证书，`CGO_ENABLED=0`。
-- 前端镜像：Node 构建静态资源，nginx 提供 SPA、反代 `/api`、关闭 SSE 缓冲。
-- Docker Compose：应用容器 + 可选本地中间件 profile。
-- Podman Compose：云主机使用既有中间件网络；脚本完成构建、替换镜像、健康检查。
-- CI：push/PR 触发 vet/build/test 与前端构建；tag 触发镜像发布。
-
-## 9. 设计取舍
+## 10. 设计取舍
 
 | 决策 | 收益 | 代价 |
 | --- | --- | --- |
 | 单 AI 链路 | 行为一致、排错路径唯一 | 一键生成需前端两步：发问 + 插入 |
-| 不使用向量模型 | 部署轻、成本可控、结果可解释 | 同义改写召回弱于语义向量；用查询改写与 chat 重排补偿 |
-| 关键词索引可重建 | 数据一致性与删除可控 | 索引构建需异步任务与状态机 |
-| 项目切换器常驻 | 导航死角少 | 侧栏信息密度较高 |
-| 审计同步落库 | 顺序一致、不丢记录 | 高写入量下表是热点；当前规模可接受 |
+| 不使用向量模型 | 部署轻、成本可控、结果可解释 | 同义改写召回弱于语义向量，靠查询词扩展与 chat 重排补偿 |
+| 关键词索引可重建 | 数据一致、删除可控 | 需要异步任务与状态机 |
+| 审计同步落库 | 顺序一致、不丢记录 | 高写入量时表是热点；当前规模可接受 |
 | 权限逐请求查库 | 改角色立即生效 | 管理接口多一跳查询；流量极低可接受 |
-| 笔记复用设定表 | 少一张表、少一套 CRUD | 设定与笔记共用分类字段，笔记固定为 `note` 类型 |
+| 笔记复用设定表 | 少一张表与一套 CRUD | 设定与笔记共用分类字段，笔记固定为 `note` |
 | 无数据库外键 | 迁移与批量写入不受约束校验拖累 | 引用完整性只能由 service 保证 |
+| 菜单即权限登记 | 新增权限零代码改动 | 菜单表承担两重语义，改动需谨慎 |
 
-## 10. 质量约束
+## 11. 质量约束
 
-- 所有 Go 源文件 ≤500 行；导出符号有注释；文件头有一句话职责说明。
-- 前端页面样式超阈值抽到同目录 CSS，单文件保持可维护。
-- 新增业务优先复用已有 DO/REQ/RESP/DTO/VO 命名与字段后缀约定。
-- 不引入 cgo；不引入向量模型；不为几行不可复用代码抽函数。
-- 文档只描述当前设计与实现，不写调研来源与对比。
+- Go 与前端源文件控制在 500 行内；导出符号有注释；文件头一句话说明职责。
+- 业务规则优先写成纯函数，测试直接驱动，不引入数据库与 mock 框架。
+- 不引入 cgo、不引入向量模型、不为几行不可复用代码抽函数。
+- 文档只描述当前设计与实现。

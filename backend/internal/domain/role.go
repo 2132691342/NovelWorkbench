@@ -16,9 +16,7 @@ const (
 	PermSettingManage  = "system:setting:manage" // 运行时配置维护
 	PermLoginLogRead   = "system:loginlog:read"  // 登录日志查看
 	PermJobManage      = "system:job:manage"     // 异步任务查看与重试
-	PermProjectDelete  = "project:delete"        // 删除项目
 	PermSkillManage    = "skill:manage"          // 技能资产管理
-	PermSkillApply     = "skill:apply"           // 技能使用
 )
 
 // 内置角色编码常量。

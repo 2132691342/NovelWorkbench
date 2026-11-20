@@ -1,6 +1,6 @@
 <!--
   AI 面板：模型选择 + 会话切换 + 上下文开关 + 快捷指令 + 消息流 + 输入区。
-  默认把当前章节作为上下文发送，避免自由对话脱离正文。
+  模型列表来自「当前账号可用模型」（按角色授权），默认选中系统默认或第一个可用模型。
 -->
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
@@ -12,7 +12,7 @@ import {
   getChatHistory,
   listChatSessions,
 } from '@/api/chat'
-import { getChatOptions, type NWModelCapabilityVo, type NWModelProviderVo } from '@/api/model'
+import { getModelCapability, type NWModelCapabilityVo, type NWModelOptionVo } from '@/api/model'
 import { useSSE } from '@/composables/useSSE'
 import type { NWChapterBriefVo, NWChatSendReqVo, NWChatSessionVo } from '@/api/contracts'
 import NWIcon from '@/components/NWIcon.vue'
@@ -20,6 +20,7 @@ import NWLoading from '@/components/NWLoading.vue'
 import ChatComposer from './ChatComposer.vue'
 import ChatMessage from './ChatMessage.vue'
 import type { NWChatDisplayMessage, NWChatSendPayload } from './chatTypes'
+import { NW_QUICK_PROMPT_LIST } from './quickPrompts'
 
 const props = defineProps<{
   projectUlid: string
@@ -30,6 +31,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'insert-to-chapter': [contentText: string]
+  'replace-chapter': [contentText: string]
 }>()
 
 const { t } = useI18n()
@@ -45,15 +47,17 @@ const currentSessionUlid = ref('')
 const messageList = ref<NWChatDisplayMessage[]>([])
 const historyLoading = ref(false)
 const sessionCreating = ref(false)
-const providerList = ref<NWModelProviderVo[]>([])
 const capabilityVo = ref<NWModelCapabilityVo | null>(null)
-const selectedProviderUlid = ref('')
+const selectedModelUlid = ref('')
 /** 是否自动附带当前章节 */
 const attachChapterFlag = ref(true)
 
-/** 可选对话供应商（仅启用的） */
-const chatProviderOptions = computed(() =>
-  providerList.value.filter((providerItem) => providerItem.enabled_flag),
+/** 当前账号可用模型（按角色授权过滤） */
+const modelOptionList = computed<NWModelOptionVo[]>(() => capabilityVo.value?.option_list ?? [])
+
+/** 当前选中的模型选项 */
+const selectedModelVo = computed(
+  () => modelOptionList.value.find((item) => item.model_ulid === selectedModelUlid.value) ?? null,
 )
 
 /** 当前选中的会话 */
@@ -61,30 +65,16 @@ const currentSessionVo = computed(
   () => sessionList.value.find((sessionItem) => sessionItem.session_ulid === currentSessionUlid.value) ?? null,
 )
 
-/** 快捷指令 */
-const quickPromptList = computed(() => [
-  {
-    prompt_code: 'continue',
-    prompt_title: t('workspace.ai.quickContinueTitle'),
-    prompt_desc: t('workspace.ai.quickContinueDesc'),
-    prompt_text: t('workspace.ai.quickContinuePrompt'),
-    skill_code: 'continue',
-  },
-  {
-    prompt_code: 'consistency',
-    prompt_title: t('workspace.ai.quickCheckTitle'),
-    prompt_desc: t('workspace.ai.quickCheckDesc'),
-    prompt_text: t('workspace.ai.quickCheckPrompt'),
-    skill_code: '',
-  },
-  {
-    prompt_code: 'directions',
-    prompt_title: t('workspace.ai.quickBranchTitle'),
-    prompt_desc: t('workspace.ai.quickBranchDesc'),
-    prompt_text: t('workspace.ai.quickBranchPrompt'),
-    skill_code: '',
-  },
-])
+/** 快捷指令（文案按 i18n 键渲染） */
+const quickPromptList = computed(() =>
+  NW_QUICK_PROMPT_LIST.map((promptItem) => ({
+    prompt_code: promptItem.prompt_code,
+    prompt_title: t(promptItem.title_key),
+    prompt_desc: t(promptItem.desc_key),
+    prompt_text: t(promptItem.text_key),
+    skill_code: promptItem.skill_code,
+  })),
+)
 
 /** 组装 /chat/send 请求体（当前章节自动并入引用清单） */
 function buildStreamRequest(payload: NWChatSendPayload): NWChatSendReqVo {
@@ -111,23 +101,22 @@ function buildStreamRequest(payload: NWChatSendPayload): NWChatSendReqVo {
   if (refChapterUlidList.length > 0) {
     request.ref_chapter_ulid_list = refChapterUlidList
   }
-  if (selectedProviderUlid.value) {
-    request.provider_ulid = selectedProviderUlid.value
+  if (selectedModelUlid.value) {
+    request.model_ulid = selectedModelUlid.value
   }
   return request
 }
 
-/** 加载模型供应商与能力（失败降级为空，面板照常可用） */
+/** 加载当前账号可用模型（失败降级为空，面板照常可用） */
 async function loadModelOptions(): Promise<void> {
   try {
-    const options = await getChatOptions()
-    providerList.value = Array.isArray(options.provider_list) ? options.provider_list : []
-    capabilityVo.value = options.capability_vo
-    if (!selectedProviderUlid.value && options.capability_vo.default_provider_ulid) {
-      selectedProviderUlid.value = options.capability_vo.default_provider_ulid
+    const capability = await getModelCapability()
+    capabilityVo.value = capability
+    const existsFlag = capability.option_list.some((item) => item.model_ulid === selectedModelUlid.value)
+    if (!existsFlag) {
+      selectedModelUlid.value = capability.default_model_ulid || capability.option_list[0]?.model_ulid || ''
     }
   } catch {
-    providerList.value = []
     capabilityVo.value = null
   }
 }
@@ -161,6 +150,9 @@ async function runStream(
     },
   })
   assistantMessage.streaming_flag = false
+  if (assistantMessage.error_message) {
+    ElMessage.error(assistantMessage.error_message)
+  }
   void loadSessions()
   scrollMessagesToBottom()
 }
@@ -176,6 +168,10 @@ function scrollMessagesToBottom(): void {
 
 /** 发送消息：落用户气泡 + 占位助手气泡后发起流 */
 function handleSend(payload: NWChatSendPayload): void {
+  if (modelOptionList.value.length === 0) {
+    ElMessage.warning(t('workspace.ai.modelUnavailable'))
+    return
+  }
   const createdMs = Date.now()
   messageList.value.push(
     {
@@ -401,20 +397,35 @@ onMounted(() => {
       <div class="ai-panel__control-row">
         <span class="ai-panel__control-label">{{ t('workspace.ai.modelLabel') }}</span>
         <el-select
-          v-if="chatProviderOptions.length > 0"
-          v-model="selectedProviderUlid"
+          v-if="modelOptionList.length > 0"
+          v-model="selectedModelUlid"
           size="small"
           class="ai-panel__model-select"
           :placeholder="t('workspace.ai.modelPlaceholder')"
         >
           <el-option
-            v-for="providerItem in chatProviderOptions"
-            :key="providerItem.provider_ulid"
-            :value="providerItem.provider_ulid"
-            :label="`${providerItem.provider_name} / ${providerItem.chat_model_name}`"
-          />
+            v-for="modelOption in modelOptionList"
+            :key="modelOption.model_ulid"
+            :value="modelOption.model_ulid"
+            :label="`${modelOption.model_label || modelOption.model_name} · ${modelOption.provider_name}`"
+          >
+            <span class="ai-panel__model-option">
+              <span class="ai-panel__model-option-name">{{ modelOption.model_label || modelOption.model_name }}</span>
+              <span class="ai-panel__model-option-meta">{{ modelOption.provider_name }}</span>
+            </span>
+          </el-option>
         </el-select>
         <span v-else class="ai-panel__model-empty">{{ t('workspace.ai.modelUnavailable') }}</span>
+        <el-tooltip v-if="selectedModelVo" placement="bottom">
+          <template #content>
+            <div>{{ t('workspace.ai.modelTooltip') }}</div>
+            <div>{{ t('workspace.ai.modelTooltipMeta', {
+              provider: selectedModelVo.provider_name,
+              tokens: selectedModelVo.max_tokens,
+            }) }}</div>
+          </template>
+          <span class="ai-panel__model-badge">{{ selectedModelVo.protocol_code }}</span>
+        </el-tooltip>
       </div>
 
       <div class="ai-panel__control-row">
@@ -463,6 +474,7 @@ onMounted(() => {
           :message="messageItem"
           @retry="handleRetry(messageItem)"
           @insert-to-chapter="(contentText) => emit('insert-to-chapter', contentText)"
+          @replace-chapter="(contentText) => emit('replace-chapter', contentText)"
         />
       </template>
     </div>

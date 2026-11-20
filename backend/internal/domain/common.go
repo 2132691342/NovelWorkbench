@@ -29,6 +29,8 @@ const (
 	IDPrefixUserRole        = "URO_" // 用户-角色关联
 	IDPrefixAudit           = "AUD_" // 审计日志
 	IDPrefixModelProvider   = "MPR_" // 模型供应商
+	IDPrefixModelCatalog    = "MDL_" // 模型目录
+	IDPrefixModelGrant      = "MGR_" // 模型角色授权
 	IDPrefixModelUsage      = "MUS_" // 模型用量统计
 	IDPrefixNotification    = "NTF_" // 站内通知
 	IDPrefixLoginLog        = "LGL_" // 登录日志

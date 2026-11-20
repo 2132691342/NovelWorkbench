@@ -1,208 +1,166 @@
 <!--
-  模型供应商页：供应商卡片列表 + 新建编辑抽屉 + 连通性测试。系统仅用对话协议，不接入向量模型。
+  模型供应商页：左侧供应商列表（含模型数/连通状态），右侧模型目录表格。
+  供应商只承载「网关 + 凭据」，模型是使用与授权的最小单位：每个模型可设默认、测试连通、按角色分配。
 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { computed, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { listAdminRoles, type NWRoleVo } from '@/api/admin'
 import {
+  deleteModelCatalog,
   deleteModelProvider,
   getModelCapability,
+  grantModelCatalog,
+  listModelCatalogs,
   listModelProviders,
-  saveModelProvider,
+  saveModelCatalog,
+  setDefaultModelCatalog,
+  testModelCatalog,
   testModelProvider,
   type NWModelCapabilityVo,
+  type NWModelCatalogSaveReqVo,
+  type NWModelCatalogVo,
   type NWModelProviderVo,
-  type NWProtocolCode,
-  type NWModelProviderSaveReqVo,
 } from '@/api/model'
 import NWButton from '@/components/NWButton.vue'
-import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
+import NWIcon from '@/components/NWIcon.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import ModelProviderDrawer from './ModelProviderDrawer.vue'
+import ModelCatalogDrawer from './ModelCatalogDrawer.vue'
+import ModelGrantDialog from './ModelGrantDialog.vue'
 
 const { t } = useI18n()
 
-/** 协议选项 */
-const NW_PROTOCOL_OPTION_LIST: Array<{ value: NWProtocolCode; label_key: string }> = [
-  { value: 'openai', label_key: 'models.protocolOpenAI' },
-  { value: 'anthropic', label_key: 'models.protocolAnthropic' },
-]
-
 const providerList = ref<NWModelProviderVo[]>([])
+const modelList = ref<NWModelCatalogVo[]>([])
+const roleList = ref<NWRoleVo[]>([])
 const capabilityVo = ref<NWModelCapabilityVo | null>(null)
+const activeProviderUlid = ref('')
 const listLoading = ref(false)
-const drawerVisible = ref(false)
-const savingFlag = ref(false)
-const testingUlid = ref('')
-const editingUlid = ref('')
-const formRef = ref<FormInstance>()
+const modelLoading = ref(false)
+const testingKey = ref('')
+const providerDrawerRef = ref<InstanceType<typeof ModelProviderDrawer> | null>(null)
+const modelDrawerRef = ref<InstanceType<typeof ModelCatalogDrawer> | null>(null)
+const grantDialogRef = ref<InstanceType<typeof ModelGrantDialog> | null>(null)
 
-interface ProviderFormState {
-  provider_name: string
-  protocol_code: NWProtocolCode
-  base_url: string
-  api_key_text: string
-  chat_model_name: string
-  temperature: number
-  max_tokens: number
-  enabled_flag: boolean
-  default_flag: boolean
-  sort_order: number
-  remark_text: string
-}
+/** 当前选中的供应商（左侧高亮项） */
+const activeProviderVo = computed(
+  () => providerList.value.find((item) => item.provider_ulid === activeProviderUlid.value) ?? null,
+)
 
-const formState = reactive<ProviderFormState>({
-  provider_name: '',
-  protocol_code: 'openai',
-  base_url: '',
-  api_key_text: '',
-  chat_model_name: '',
-  temperature: 0.7,
-  max_tokens: 2048,
-  enabled_flag: true,
-  default_flag: false,
-  sort_order: 0,
-  remark_text: '',
-})
-
-const formRules = computed<FormRules>(() => ({
-  provider_name: [
-    { required: true, message: t('models.ruleNameRequired'), trigger: 'blur' },
-    { max: 64, message: t('models.ruleNameMax'), trigger: 'blur' },
-  ],
-  base_url: [
-    { required: true, message: t('models.ruleBaseURLRequired'), trigger: 'blur' },
-    {
-      pattern: /^https?:\/\/.+/,
-      message: t('models.ruleBaseURLInvalid'),
-      trigger: 'blur',
-    },
-  ],
-  chat_model_name: [
-    { required: true, message: t('models.ruleChatModelRequired'), trigger: 'blur' },
-  ],
-}))
-
+/** 当前供应商下的模型（后端已按供应商过滤，这里再兜底一次） */
+const activeModelList = computed(() =>
+  modelList.value.filter((item) => item.provider_ulid === activeProviderUlid.value),
+)
 
 /** 协议展示文案 */
 function protocolText(protocolCode: string): string {
-  return protocolCode === 'anthropic'
-    ? t('models.protocolAnthropic')
-    : t('models.protocolOpenAI')
+  return protocolCode === 'anthropic' ? t('models.protocolAnthropic') : t('models.protocolOpenAI')
 }
 
 /** 测试状态展示文案 */
 function testStatusText(statusCode: string): string {
-  switch (statusCode) {
-    case 'success':
-      return t('models.testSuccess')
-    case 'failed':
-      return t('models.testFailed')
-    default:
-      return t('models.testUntested')
+  if (statusCode === 'success') {
+    return t('models.testSuccess')
   }
+  if (statusCode === 'failed') {
+    return t('models.testFailed')
+  }
+  return t('models.testUntested')
 }
 
-/** 加载供应商列表与能力探测 */
-async function loadData(): Promise<void> {
+/** 测试状态样式类 */
+function testStatusClass(statusCode: string): string {
+  return `is-${statusCode || 'untested'}`
+}
+
+/** 加载供应商、模型与角色（一次并行拉取） */
+async function loadAll(): Promise<void> {
   listLoading.value = true
   try {
-    const [providers, capability] = await Promise.all([
+    const [providers, models, capability, roles] = await Promise.all([
       listModelProviders(),
+      listModelCatalogs(),
       getModelCapability(),
+      listAdminRoles({ page_num: 1, page_size: 100 }),
     ])
     providerList.value = Array.isArray(providers) ? providers : []
+    modelList.value = Array.isArray(models) ? models : []
     capabilityVo.value = capability
+    roleList.value = roles.items ?? []
+    if (!providerList.value.some((item) => item.provider_ulid === activeProviderUlid.value)) {
+      activeProviderUlid.value = providerList.value[0]?.provider_ulid ?? ''
+    }
   } catch {
     providerList.value = []
+    modelList.value = []
   } finally {
     listLoading.value = false
   }
 }
 
-/** 打开新建抽屉 */
-function handleCreate(): void {
-  editingUlid.value = ''
-  formState.provider_name = ''
-  formState.protocol_code = 'openai'
-  formState.base_url = ''
-  formState.api_key_text = ''
-  formState.chat_model_name = ''
-  formState.temperature = 0.7
-  formState.max_tokens = 2048
-  formState.enabled_flag = true
-  formState.default_flag = providerList.value.length === 0
-  formState.sort_order = providerList.value.length
-  formState.remark_text = ''
-  drawerVisible.value = true
-}
-
-/** 打开编辑抽屉（密钥不回显，留空表示不修改） */
-function handleEdit(providerVo: NWModelProviderVo): void {
-  editingUlid.value = providerVo.provider_ulid
-  formState.provider_name = providerVo.provider_name
-  formState.protocol_code = providerVo.protocol_code
-  formState.base_url = providerVo.base_url
-  formState.api_key_text = ''
-  formState.chat_model_name = providerVo.chat_model_name
-  formState.temperature = providerVo.temperature || 0.7
-  formState.max_tokens = providerVo.max_tokens || 2048
-  formState.enabled_flag = providerVo.enabled_flag
-  formState.default_flag = providerVo.default_flag
-  formState.sort_order = providerVo.sort_order
-  formState.remark_text = providerVo.remark_text
-  drawerVisible.value = true
-}
-
-/** 保存供应商 */
-async function handleSubmit(): Promise<void> {
-  if (!formRef.value) {
-    return
-  }
+/** 只刷新模型与能力（模型增删改后） */
+async function refreshModels(): Promise<void> {
+  modelLoading.value = true
   try {
-    await formRef.value.validate()
-  } catch {
-    return
-  }
-  if (!editingUlid.value && !formState.api_key_text.trim()) {
-    ElMessage.warning(t('models.ruleAPIKeyRequired'))
-    return
-  }
-  savingFlag.value = true
-  try {
-    const saveReq: NWModelProviderSaveReqVo = {
-      provider_name: formState.provider_name,
-      protocol_code: formState.protocol_code,
-      base_url: formState.base_url.trim(),
-      chat_model_name: formState.chat_model_name.trim(),
-      enabled_flag: formState.enabled_flag,
-      default_flag: formState.default_flag,
-      sort_order: formState.sort_order,
-      remark_text: formState.remark_text,
-    }
-    if (editingUlid.value) {
-      saveReq.provider_ulid = editingUlid.value
-    }
-    if (formState.api_key_text.trim()) {
-      saveReq.api_key_text = formState.api_key_text.trim()
-    }
-    saveReq.temperature = formState.temperature
-    saveReq.max_tokens = formState.max_tokens
-    await saveModelProvider(saveReq)
-    ElMessage.success(t('models.saveSuccess'))
-    drawerVisible.value = false
-    await loadData()
+    const [models, capability] = await Promise.all([listModelCatalogs(), getModelCapability()])
+    modelList.value = Array.isArray(models) ? models : []
+    capabilityVo.value = capability
   } catch {
     // 失败提示由 http 层统一弹出
   } finally {
-    savingFlag.value = false
+    modelLoading.value = false
   }
 }
 
-/** 连通性测试（结果回写后端，前端刷新列表） */
-async function handleTest(providerVo: NWModelProviderVo): Promise<void> {
-  testingUlid.value = providerVo.provider_ulid
+/** 切换左侧供应商 */
+function handleSelectProvider(providerUlid: string): void {
+  activeProviderUlid.value = providerUlid
+}
+
+/** 新建供应商 */
+function handleCreateProvider(): void {
+  providerDrawerRef.value?.openCreate()
+}
+
+/** 编辑供应商 */
+function handleEditProvider(providerVo: NWModelProviderVo): void {
+  providerDrawerRef.value?.openEdit(providerVo)
+}
+
+/** 供应商保存成功 */
+async function handleProviderSaved(savedUlid: string): Promise<void> {
+  await loadAll()
+  if (savedUlid) {
+    activeProviderUlid.value = savedUlid
+  }
+}
+
+/** 删除供应商 */
+async function handleDeleteProvider(providerVo: NWModelProviderVo): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      t('models.deleteProviderConfirm', { name: providerVo.provider_name }),
+      t('common.delete'),
+      { confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel'), type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteModelProvider(providerVo.provider_ulid)
+    ElMessage.success(t('models.deleteSuccess'))
+    await loadAll()
+  } catch {
+    // 失败提示由 http 层统一弹出
+  }
+}
+
+/** 供应商连通性测试（用其下首个启用模型探测） */
+async function handleTestProvider(providerVo: NWModelProviderVo): Promise<void> {
+  testingKey.value = `provider:${providerVo.provider_ulid}`
   try {
     const result = await testModelProvider(providerVo.provider_ulid)
     if (result.status_code === 'success') {
@@ -210,58 +168,123 @@ async function handleTest(providerVo: NWModelProviderVo): Promise<void> {
     } else {
       ElMessage.error(result.message_text || t('models.testFailed'))
     }
-    await loadData()
+    await loadAll()
   } catch {
     // 失败提示由 http 层统一弹出
   } finally {
-    testingUlid.value = ''
+    testingKey.value = ''
   }
 }
 
-/** 设为默认（切换全局默认对话供应商） */
-async function handleSetDefault(providerVo: NWModelProviderVo): Promise<void> {
+/** 新建模型（默认落在当前供应商） */
+function handleCreateModel(): void {
+  if (!activeProviderVo.value) {
+    ElMessage.warning(t('models.pickProviderFirst'))
+    return
+  }
+  modelDrawerRef.value?.openCreate(activeProviderVo.value)
+}
+
+/** 编辑模型 */
+function handleEditModel(modelVo: NWModelCatalogVo): void {
+  modelDrawerRef.value?.openEdit(modelVo)
+}
+
+/** 模型保存成功 */
+async function handleModelSaved(): Promise<void> {
+  await refreshModels()
+}
+
+/** 模型连通性测试 */
+async function handleTestModel(modelVo: NWModelCatalogVo): Promise<void> {
+  testingKey.value = `model:${modelVo.model_ulid}`
   try {
-    await saveModelProvider({
-      provider_ulid: providerVo.provider_ulid,
-      provider_name: providerVo.provider_name,
-      protocol_code: providerVo.protocol_code,
-      base_url: providerVo.base_url,
-      chat_model_name: providerVo.chat_model_name,
-      temperature: providerVo.temperature,
-      max_tokens: providerVo.max_tokens,
-      default_flag: true,
-      sort_order: providerVo.sort_order,
-      remark_text: providerVo.remark_text,
-    })
+    const result = await testModelCatalog(modelVo.model_ulid)
+    if (result.status_code === 'success') {
+      ElMessage.success(`${t('models.testSuccess')} · ${result.latency_ms}ms`)
+    } else {
+      ElMessage.error(result.message_text || t('models.testFailed'))
+    }
+    await refreshModels()
+  } catch {
+    // 失败提示由 http 层统一弹出
+  } finally {
+    testingKey.value = ''
+  }
+}
+
+/** 设为系统默认模型 */
+async function handleSetDefaultModel(modelVo: NWModelCatalogVo): Promise<void> {
+  try {
+    await setDefaultModelCatalog(modelVo.model_ulid)
     ElMessage.success(t('models.defaultSuccess'))
-    await loadData()
+    await refreshModels()
   } catch {
     // 失败提示由 http 层统一弹出
   }
 }
 
-/** 删除供应商 */
-async function handleDelete(providerVo: NWModelProviderVo): Promise<void> {
+/** 切换模型启用状态 */
+async function handleToggleModel(modelVo: NWModelCatalogVo): Promise<void> {
+  const saveReq: NWModelCatalogSaveReqVo = {
+    model_ulid: modelVo.model_ulid,
+    provider_ulid: modelVo.provider_ulid,
+    model_name: modelVo.model_name,
+    model_label: modelVo.model_label,
+    temperature: modelVo.temperature,
+    max_tokens: modelVo.max_tokens,
+    context_window_count: modelVo.context_window_count,
+    enabled_flag: !modelVo.enabled_flag,
+    sort_order: modelVo.sort_order,
+    remark_text: modelVo.remark_text,
+  }
   try {
-    await ElMessageBox.confirm(t('models.deleteConfirm'), t('common.delete'), {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning',
-    })
+    await saveModelCatalog(saveReq)
+    ElMessage.success(modelVo.enabled_flag ? t('models.disableSuccess') : t('models.enableSuccess'))
+    await refreshModels()
+  } catch {
+    // 失败提示由 http 层统一弹出
+  }
+}
+
+/** 删除模型 */
+async function handleDeleteModel(modelVo: NWModelCatalogVo): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      t('models.deleteModelConfirm', { name: modelVo.model_label || modelVo.model_name }),
+      t('common.delete'),
+      { confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel'), type: 'warning' },
+    )
   } catch {
     return
   }
   try {
-    await deleteModelProvider(providerVo.provider_ulid)
+    await deleteModelCatalog(modelVo.model_ulid)
     ElMessage.success(t('models.deleteSuccess'))
-    await loadData()
+    await refreshModels()
+  } catch {
+    // 失败提示由 http 层统一弹出
+  }
+}
+
+/** 打开角色分配对话框 */
+function handleGrantModel(modelVo: NWModelCatalogVo): void {
+  grantDialogRef.value?.open(modelVo, roleList.value)
+}
+
+/** 角色分配保存成功 */
+async function handleGrantSaved(modelUlid: string, roleUlidList: string[]): Promise<void> {
+  try {
+    await grantModelCatalog(modelUlid, roleUlidList)
+    ElMessage.success(t('models.grantSuccess'))
+    await refreshModels()
   } catch {
     // 失败提示由 http 层统一弹出
   }
 }
 
 onMounted(() => {
-  void loadData()
+  void loadAll()
 })
 </script>
 
@@ -272,160 +295,200 @@ onMounted(() => {
         <h2 class="models-page__title">{{ t('models.title') }}</h2>
         <p class="models-page__subtitle">{{ t('models.subtitle') }}</p>
       </div>
-      <NWButton type="primary" @click="handleCreate">{{ t('models.create') }}</NWButton>
+      <div class="models-page__header-actions">
+        <NWButton @click="handleCreateProvider">
+          <NWIcon icon_code="plus" :size_px="14" />
+          {{ t('models.create') }}
+        </NWButton>
+        <NWButton type="primary" :disabled="!activeProviderVo" @click="handleCreateModel">
+          <NWIcon icon_code="plus" :size_px="14" />
+          {{ t('models.createModel') }}
+        </NWButton>
+      </div>
     </header>
 
     <!-- 能力提示条 -->
     <div
       v-if="capabilityVo"
       class="models-page__capability"
-      :class="{
-        'is-ready': capabilityVo.chat_ready,
-        'is-down': !capabilityVo.chat_ready,
-      }"
+      :class="capabilityVo.chat_ready ? 'is-ready' : 'is-down'"
     >
       <span class="models-page__capability-dot" />
       <span>{{ capabilityVo.hint_text }}</span>
-      <span v-if="capabilityVo.default_provider_name" class="models-page__capability-meta">
+      <span v-if="capabilityVo.default_model_label" class="models-page__capability-meta">
         {{ t('models.currentDefault') }}：{{ capabilityVo.default_provider_name }} /
-        {{ capabilityVo.default_chat_model_name }}
+        {{ capabilityVo.default_model_label }}
       </span>
     </div>
 
     <NWLoading v-if="listLoading" />
-    <NWEmpty v-else-if="providerList.length === 0" :description_text="t('models.emptyTip')" />
-    <div v-else class="models-grid">
-      <NWCard v-for="providerVo in providerList" :key="providerVo.provider_ulid" :hoverable="true">
-        <article class="provider-card">
-          <header class="provider-card__header">
-            <div class="provider-card__title-wrap">
-              <h3 class="provider-card__name">{{ providerVo.provider_name }}</h3>
-              <span class="provider-card__protocol">{{ protocolText(providerVo.protocol_code) }}</span>
-              <span v-if="providerVo.default_flag" class="provider-card__badge">
-                {{ t('models.defaultTag') }}
+    <div v-else class="models-layout">
+      <!-- 左：供应商列表 -->
+      <aside class="models-side">
+        <div class="models-side__head">
+          <span class="models-side__title">{{ t('models.providerCount', { count: providerList.length }) }}</span>
+          <button type="button" class="models-side__add" :title="t('models.create')" @click="handleCreateProvider">
+            <NWIcon icon_code="plus" :size_px="14" />
+          </button>
+        </div>
+        <NWEmpty v-if="providerList.length === 0" :description_text="t('models.emptyTip')" />
+        <ul v-else class="models-side__list">
+          <li
+            v-for="providerVo in providerList"
+            :key="providerVo.provider_ulid"
+            class="provider-row"
+            :class="{ 'is-active': providerVo.provider_ulid === activeProviderUlid }"
+            @click="handleSelectProvider(providerVo.provider_ulid)"
+          >
+            <div class="provider-row__top">
+              <span class="provider-row__name" :title="providerVo.provider_name">{{ providerVo.provider_name }}</span>
+              <span class="provider-row__status" :class="testStatusClass(providerVo.last_test_status_code)">
+                {{ testStatusText(providerVo.last_test_status_code) }}
               </span>
-              <span v-if="!providerVo.enabled_flag" class="provider-card__badge provider-card__badge--muted">
+            </div>
+            <div class="provider-row__meta">
+              <span class="provider-row__protocol">{{ protocolText(providerVo.protocol_code) }}</span>
+              <span class="provider-row__count">
+                {{ t('models.modelCountLabel', { count: providerVo.model_count }) }}
+              </span>
+              <span v-if="!providerVo.enabled_flag" class="provider-row__off">{{ t('models.disabledTag') }}</span>
+            </div>
+            <div class="provider-row__url" :title="providerVo.base_url">{{ providerVo.base_url }}</div>
+          </li>
+        </ul>
+      </aside>
+
+      <!-- 右：模型表格 -->
+      <section class="models-main">
+        <template v-if="activeProviderVo">
+          <header class="models-main__head">
+            <div class="models-main__title-wrap">
+              <h3 class="models-main__title">{{ activeProviderVo.provider_name }}</h3>
+              <span class="models-main__badge">{{ protocolText(activeProviderVo.protocol_code) }}</span>
+              <span v-if="!activeProviderVo.enabled_flag" class="models-main__badge is-muted">
                 {{ t('models.disabledTag') }}
               </span>
             </div>
-            <span
-              class="provider-card__status"
-              :class="`is-${providerVo.last_test_status_code || 'untested'}`"
-            >
-              {{ testStatusText(providerVo.last_test_status_code) }}
-            </span>
+            <div class="models-main__actions">
+              <NWButton
+                size="small"
+                :loading="testingKey === `provider:${activeProviderVo.provider_ulid}`"
+                @click="handleTestProvider(activeProviderVo)"
+              >
+                {{ t('models.test') }}
+              </NWButton>
+              <NWButton size="small" @click="handleEditProvider(activeProviderVo)">{{ t('common.edit') }}</NWButton>
+              <NWButton type="danger-text" size="small" @click="handleDeleteProvider(activeProviderVo)">
+                {{ t('common.delete') }}
+              </NWButton>
+            </div>
           </header>
 
-          <dl class="provider-card__meta">
+          <dl class="models-main__meta">
             <div>
               <dt>{{ t('models.baseURL') }}</dt>
-              <dd :title="providerVo.base_url">{{ providerVo.base_url }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('models.chatModel') }}</dt>
-              <dd>{{ providerVo.chat_model_name }}</dd>
+              <dd :title="activeProviderVo.base_url">{{ activeProviderVo.base_url }}</dd>
             </div>
             <div>
               <dt>{{ t('models.apiKey') }}</dt>
-              <dd>{{ providerVo.api_key_configured ? providerVo.api_key_masked : t('models.apiKeyMissing') }}</dd>
+              <dd>{{ activeProviderVo.api_key_configured ? activeProviderVo.api_key_masked : t('models.apiKeyMissing') }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('models.lastTest') }}</dt>
+              <dd>{{ activeProviderVo.last_test_message || t('models.testUntested') }}</dd>
             </div>
           </dl>
 
-          <p v-if="providerVo.last_test_message" class="provider-card__message">
-            {{ providerVo.last_test_message }}
-          </p>
+          <div class="models-main__table-head">
+            <h4 class="models-main__table-title">
+              {{ t('models.modelCatalog') }}
+              <span class="models-main__table-count">{{ activeModelList.length }}</span>
+            </h4>
+            <NWButton size="small" type="primary" @click="handleCreateModel">
+              <NWIcon icon_code="plus" :size_px="13" />
+              {{ t('models.createModel') }}
+            </NWButton>
+          </div>
 
-          <footer class="provider-card__footer">
-            <NWButton
-              size="small"
-              :loading="testingUlid === providerVo.provider_ulid"
-              @click="handleTest(providerVo)"
-            >
-              {{ t('models.test') }}
-            </NWButton>
-            <NWButton
-              v-if="!providerVo.default_flag"
-              size="small"
-              @click="handleSetDefault(providerVo)"
-            >
-              {{ t('models.setDefault') }}
-            </NWButton>
-            <NWButton size="small" @click="handleEdit(providerVo)">{{ t('common.edit') }}</NWButton>
-            <NWButton
-              v-if="!providerVo.default_flag"
-              type="danger-text"
-              size="small"
-              @click="handleDelete(providerVo)"
-            >
-              {{ t('common.delete') }}
-            </NWButton>
-          </footer>
-        </article>
-      </NWCard>
+          <NWLoading v-if="modelLoading" />
+          <NWEmpty v-else-if="activeModelList.length === 0" :description_text="t('models.modelEmptyTip')" />
+          <el-table v-else :data="activeModelList" class="models-table" row-key="model_ulid">
+            <el-table-column :label="t('models.modelName')" min-width="220">
+              <template #default="{ row }">
+                <div class="models-table__model">
+                  <span class="models-table__model-label">{{ row.model_label || row.model_name }}</span>
+                  <span v-if="row.default_flag" class="models-table__tag is-default">{{ t('models.defaultTag') }}</span>
+                  <span v-if="!row.enabled_flag" class="models-table__tag is-muted">{{ t('models.disabledTag') }}</span>
+                </div>
+                <div class="models-table__model-name">
+                  {{ row.model_name }}
+                  <span v-if="row.context_window_count > 0" class="models-table__context">
+                    · {{ t('models.contextWindow') }} {{ row.context_window_count.toLocaleString() }}
+                  </span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('models.roleGrant')" min-width="150">
+              <template #default="{ row }">
+                <div v-if="row.role_name_list.length > 0" class="models-table__roles">
+                  <span v-for="roleName in row.role_name_list" :key="roleName" class="models-table__role">
+                    {{ roleName }}
+                  </span>
+                </div>
+                <span v-else class="models-table__roles-empty">{{ t('models.grantNone') }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('models.testStatus')" width="96">
+              <template #default="{ row }">
+                <span class="models-table__status" :class="testStatusClass(row.last_test_status_code)">
+                  {{ testStatusText(row.last_test_status_code) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('common.actions')" width="268">
+              <template #default="{ row }">
+                <div class="models-table__actions">
+                  <NWButton
+                    size="small"
+                    :loading="testingKey === `model:${row.model_ulid}`"
+                    @click="handleTestModel(row)"
+                  >
+                    {{ t('models.test') }}
+                  </NWButton>
+                  <NWButton size="small" @click="handleGrantModel(row)">{{ t('models.grant') }}</NWButton>
+                  <NWButton
+                    v-if="!row.default_flag"
+                    size="small"
+                    @click="handleSetDefaultModel(row)"
+                  >
+                    {{ t('models.setDefault') }}
+                  </NWButton>
+                  <el-dropdown trigger="click">
+                    <NWButton size="small" type="text">{{ t('common.more') }}</NWButton>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item @click="handleEditModel(row)">{{ t('common.edit') }}</el-dropdown-item>
+                        <el-dropdown-item @click="handleToggleModel(row)">
+                          {{ row.enabled_flag ? t('models.disable') : t('models.enable') }}
+                        </el-dropdown-item>
+                        <el-dropdown-item divided @click="handleDeleteModel(row)">
+                          {{ t('common.delete') }}
+                        </el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+        <NWEmpty v-else :description_text="t('models.pickProviderTip')" />
+      </section>
     </div>
 
-    <!-- 供应商编辑抽屉 -->
-    <el-drawer
-      v-model="drawerVisible"
-      :title="editingUlid ? t('models.editTitle') : t('models.createTitle')"
-      size="560px"
-    >
-      <el-form ref="formRef" :model="formState" :rules="formRules" label-position="top">
-        <el-form-item :label="t('models.providerName')" prop="provider_name">
-          <el-input v-model="formState.provider_name" maxlength="64" :placeholder="t('models.providerNamePlaceholder')" />
-        </el-form-item>
-        <el-form-item :label="t('models.protocol')">
-          <el-radio-group v-model="formState.protocol_code">
-            <el-radio-button
-              v-for="protocolOption in NW_PROTOCOL_OPTION_LIST"
-              :key="protocolOption.value"
-              :value="protocolOption.value"
-            >
-              {{ t(protocolOption.label_key) }}
-            </el-radio-button>
-          </el-radio-group>
-          <p class="models-form__hint">{{ t('models.protocolHint') }}</p>
-        </el-form-item>
-        <el-form-item :label="t('models.baseURL')" prop="base_url">
-          <el-input v-model="formState.base_url" :placeholder="t('models.baseURLPlaceholder')" />
-        </el-form-item>
-        <el-form-item :label="t('models.apiKey')">
-          <el-input
-            v-model="formState.api_key_text"
-            type="password"
-            show-password
-            :placeholder="editingUlid ? t('models.apiKeyKeepPlaceholder') : t('models.apiKeyPlaceholder')"
-          />
-        </el-form-item>
-        <el-form-item :label="t('models.chatModel')" prop="chat_model_name">
-          <el-input v-model="formState.chat_model_name" :placeholder="t('models.chatModelPlaceholder')" />
-        </el-form-item>
-        <div class="models-form__row">
-          <el-form-item :label="t('models.temperature')">
-            <el-input-number v-model="formState.temperature" :min="0" :max="2" :step="0.1" />
-          </el-form-item>
-          <el-form-item :label="t('models.maxTokens')">
-            <el-input-number v-model="formState.max_tokens" :min="0" :max="128000" :step="256" />
-          </el-form-item>
-          <el-form-item :label="t('models.sortOrder')">
-            <el-input-number v-model="formState.sort_order" :min="0" :max="9999" />
-          </el-form-item>
-        </div>
-        <el-form-item :label="t('models.remark')">
-          <el-input v-model="formState.remark_text" maxlength="256" />
-        </el-form-item>
-        <el-form-item>
-          <el-checkbox v-model="formState.enabled_flag">{{ t('models.enabled') }}</el-checkbox>
-          <el-checkbox v-model="formState.default_flag">{{ t('models.defaultTag') }}</el-checkbox>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <NWButton @click="drawerVisible = false">{{ t('common.cancel') }}</NWButton>
-        <NWButton type="primary" :loading="savingFlag" @click="handleSubmit">
-          {{ t('common.save') }}
-        </NWButton>
-      </template>
-    </el-drawer>
+    <ModelProviderDrawer ref="providerDrawerRef" @saved="handleProviderSaved" />
+    <ModelCatalogDrawer ref="modelDrawerRef" :role-list="roleList" @saved="handleModelSaved" />
+    <ModelGrantDialog ref="grantDialogRef" @saved="handleGrantSaved" />
   </div>
 </template>
 

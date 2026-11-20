@@ -74,6 +74,9 @@ const NW_ICON_PATH_MAP: Record<string, string[]> = {
   minus: ['M5 12h14'],
   maximize: ['M4 9V4h5', 'M20 9V4h-5', 'M4 15v5h5', 'M20 15v5h-5'],
   atSign: ['M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z', 'M16 8v5a2.5 2.5 0 0 0 5 0v-1a9 9 0 1 0-4 7.5'],
+  download: ['M12 4v12', 'M7 11l5 5 5-5', 'M4 20h16'],
+  fileWarning: ['M6 3.5h8l4 4v13H6z', 'M14 3.5v4h4', 'M12 10v4', 'M12 17h.01'],
+  sparkle: ['M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z'],
 }
 
 const props = withDefaults(

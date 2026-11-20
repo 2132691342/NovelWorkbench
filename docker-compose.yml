@@ -63,6 +63,7 @@ services:
       NGINX_RESOLVER: "127.0.0.11"          # docker 内嵌 DNS（podman 用网关地址），按请求重解析上游
       API_UPSTREAM: "http://backend:8080"
       NW_LISTEN_PORT: "80"                  # 容器内监听端口，宿主端口由下面的 ports 决定
+      NW_CLIENT_MAX_BODY_SIZE: "20m"        # 反代上传上限，与后端 NW_APP_UPLOAD_MAX_MB 对齐
     ports:
       - "${NW_PUBLIC_PORT:-14399}:80"       # 唯一对外入口：http://<host>:14399
     healthcheck:

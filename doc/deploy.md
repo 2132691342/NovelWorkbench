@@ -1,486 +1,397 @@
-# 部署文档
+# 部署与运维
 
-本文档描述 NovelWorkbench 当前的部署设计：两个应用容器（Go 后端 + nginx 前端）、
-中间件的两种接入方式（外部实例 / 本地 `infra` profile）、云主机 Podman 发布流程、
-CI/CD 与运维要点。所有凭据与地址一律由 `NW_*` 环境变量注入，
-仓库内的 `backend/configs/config.yaml` 只保留空值模板。
+本文描述 NovelWorkbench 当前的部署形态：两个应用容器（Go 后端 + nginx 前端）、中间件的两种接入方式、镜像构建、配置模型与环境变量、启动初始化顺序、Podman/Compose 发布流程、CI/CD 与运维操作。
 
-代码依据：
+事实来源为 `docker-compose.yml`、`deploy/podman/`（`docker-compose.yml`、`deploy.sh`、`Dockerfile.backend`、`Dockerfile.frontend`、`.env.example`）、`frontend/nginx.conf.template`、`backend/internal/infra/config.go`、`backend/cmd/server/main.go`、`backend/configs/config.yaml`、`backend/Dockerfile`、`frontend/Dockerfile`、`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`.env.example`。
 
-| 事实来源 | 文件 |
-| --- | --- |
-| 配置结构与校验 | `backend/internal/infra/config.go`（`Config`、`LoadConfig`、`validate`） |
-| 配置模板 | `backend/configs/config.yaml` |
-| 启动顺序 | `backend/cmd/server/main.go`（`main`） |
-| 本地编排 | `docker-compose.yml`、`.env.example` |
-| Podman 编排 | `deploy/podman/docker-compose.yml`、`deploy/podman/.env.example`、`deploy/podman/deploy.sh` |
-| 镜像 | `backend/Dockerfile`、`frontend/Dockerfile`、`deploy/podman/Dockerfile.*` |
-| 前端模板 | `frontend/nginx.conf.template` |
-| 流水线 | `.github/workflows/ci.yml`、`.github/workflows/release.yml` |
+## 1. 部署架构与容器清单
 
----
+应用只由两个容器组成，中间件不在应用镜像内，部署时二选一：本地用 `infra` profile 拉起，或云主机直连既有实例。
 
-## 1. 总体架构
+```mermaid
+flowchart LR
+  U["Browser"] -->|"宿主 14399"| FE["nw-frontend (nginx:80)"]
+  FE -->|"/api/ 反代"| BE["nw-backend :8080"]
+  BE --> PG[("PostgreSQL")]
+  BE --> RD[("Redis")]
+  BE --> MQ[("RabbitMQ")]
+  BE --> MI[("MinIO")]
+  BE --> MC[("Manticore")]
+  BE --> LLM["模型网关"]
+  MQ --> W["KnowledgeWorker"]
+  W --> PG
+  W --> MI
+  W --> MC
+```
 
-应用只有两个容器：后端（Go HTTP 服务）与前端（nginx 托管 SPA 并反向代理 `/api/`）。
-中间件（PostgreSQL、Redis、RabbitMQ、MinIO、Manticore）**不在应用镜像内**，
-部署时二选一：
-
-| 方案 | 中间件来源 | 编排文件 |
-| --- | --- | --- |
-| 本地全栈 | 仓库自带的 `infra` profile 拉起同版本中间件容器 | `docker-compose.yml`（根目录） |
-| 云主机 / 生产 | 直连宿主机上已运行、处于同一外部网络的中间件实例 | `deploy/podman/docker-compose.yml` |
-
-### 1.1 容器清单
-
-| 容器 | 镜像来源 | 监听端口 | 宿主机端口 | 关键路径 / 说明 |
+| 容器 | 镜像 | 监听 | 宿主端口 | 职责 |
 | --- | --- | --- | --- | --- |
-| `nw-backend` | 本地构建 `novel-workbench-backend:latest`；或 GHCR `ghcr.io/<repo>/backend:<tag>`；Podman 由 `deploy.sh` 本地构建 | 8080 | 不发布宿主端口（`expose`），仅容器网络内可达 | `/health` 存活、`/ready` 就绪、`/api/v1/*` 业务接口 |
-| `nw-frontend` | 本地构建 `novel-workbench-frontend:latest`；或 GHCR `ghcr.io/<repo>/frontend:<tag>`；Podman 由 `deploy.sh` 本地构建 | 80 | `14399:80`（`NW_PUBLIC_PORT` 可覆盖） | SPA 静态资源、`/healthz` 存活、`/api/` 反向代理到后端 |
+| `nw-backend` | `novel-workbench-backend:latest`（本地构建或 GHCR `backend:<tag>`） | 8080 | 不发布（`expose`） | `/health`、`/ready`、`/api/v1/*`、SSE、索引 worker |
+| `nw-frontend` | `novel-workbench-frontend:latest`（本地构建或 GHCR `frontend:<tag>`） | 80 | `${NW_PUBLIC_PORT:-14399}:80` | SPA 静态资源、`/healthz`、`/api/` 反代 |
 
-**对外只有 14399 一个入口**：浏览器访问 `http://<host>:14399`，所有 `/api/` 请求由前端 nginx
-转发到 `backend:8080`。后端不再映射宿主端口，减少暴露面。
+对外只有 `14399` 一个入口，后端只在容器网络内可达，减少暴露面。
 
-中间件容器（仅根目录 Compose 的 `infra` profile）：
+中间件容器（仅根目录 `docker-compose.yml` 的 `infra` profile）：
 
-| 服务 | 镜像 | 宿主机端口 | 数据卷 |
-| --- | --- | --- | --- |
-| `nw-postgres` | `pgvector/pgvector:pg16` | 5432 | `nw_pg_data` |
-| `nw-redis` | `redis:8-alpine` | 6379 | 无 |
-| `nw-rabbitmq` | `rabbitmq:4-management` | 5672 / 15672（管理台） | 无 |
-| `nw-minio` | `minio/minio:latest` | 9000（API）/ 9001（控制台） | `nw_minio_data` |
-| `nw-manticore` | `manticoresearch/manticore:latest` | 9306 / 9308 | `nw_manticore_data` |
+| 服务 | 镜像 | 宿主端口 | 数据卷 | 作用 |
+| --- | --- | --- | --- | --- |
+| `nw-postgres` | `pgvector/pgvector:pg16` | 5432 | `nw_pg_data` | 权威数据、权限、任务、审计 |
+| `nw-redis` | `redis:8-alpine` | 6379 | 无 | 令牌黑名单 |
+| `nw-rabbitmq` | `rabbitmq:4-management` | 5672 / 15672 | 无 | 索引任务队列 |
+| `nw-minio` | `minio/minio:latest` | 9000 / 9001 | `nw_minio_data` | 知识库原文 |
+| `nw-manticore` | `manticoresearch/manticore:latest` | 9306 / 9308 | `nw_manticore_data` | 全文检索投影（可重建） |
 
-### 1.2 镜像构建方式
+编排差异：
 
-| 镜像 | 构建方式 | 要点 |
+| 项 | 根目录 `docker-compose.yml` | `deploy/podman/docker-compose.yml` |
 | --- | --- | --- |
-| 后端（Docker） | `backend/Dockerfile` 多阶段 | 构建层 `golang:1.24-alpine`，`GOTOOLCHAIN=local`（禁止构建期拉取其它 Go 版本）、`CGO_ENABLED=0`，`GOOS=linux GOARCH=amd64 go build -tags "netgo osusergo" -ldflags="-s -w"`；运行层 `alpine:3.20` + `ca-certificates` + `tzdata`，非 root 用户 `appuser`(uid 10001)，`EXPOSE 8080` |
-| 后端（Podman） | `deploy/podman/Dockerfile.backend` | 仅打包预构建静态二进制 `nw-server`、`configs/config.yaml`、宿主机 CA bundle；`ARG BASE_IMAGE` 可由 `NW_BASE_IMAGE_PREFIX` 覆盖 |
-| 前端（Docker） | `frontend/Dockerfile` 多阶段 | 构建层 `node:22-slim`（与 CI 的 Node 版本一致），`npm ci --no-audit --no-fund` + `npm run build`；运行层 `nginx:1.27-alpine`，`ENV NGINX_RESOLVER=127.0.0.11`、`ENV API_UPSTREAM=http://backend:8080` |
-| 前端（Podman） | `deploy/podman/Dockerfile.frontend` | 仅打包预构建 `dist` 与 `nginx.conf.template`；`ENV NGINX_RESOLVER=10.89.0.1`、`ENV API_UPSTREAM=http://backend:8080`（由 compose 环境变量覆盖） |
+| 服务集合 | backend / frontend + `infra` profile 五个中间件 | 仅 backend / frontend |
+| 镜像来源 | `build: ./backend`、`build: ./frontend` | `${NW_BACKEND_IMAGE}` / `${NW_FRONTEND_IMAGE}`，由 `deploy.sh` 构建 |
+| 网络 | 编排默认网络 | 外部网络 `NW_INFRA_NETWORK`（默认 `novelworkbench_default`） |
+| 重启策略 | `unless-stopped` | `always` |
+| 后端资源限制 | 无 | `mem_limit: 384m` |
+| gin 模式 | 未注入 `NW_SERVER_MODE`，取 YAML 默认 `debug` | 固定 `release` |
 
-### 1.3 前端 nginx 模板
+## 2. 镜像构建
 
-`frontend/nginx.conf.template` 由 nginx 官方镜像的 `docker-entrypoint` 脚本用 `envsubst` 渲染：
+| 镜像 | Dockerfile | 构建层 | 运行层 | 要点 |
+| --- | --- | --- | --- | --- |
+| 后端（Compose / GHCR） | `backend/Dockerfile` | `golang:1.24-alpine` | `alpine:3.20` | `GOTOOLCHAIN=local`、`CGO_ENABLED=0`、`go build -tags "netgo osusergo" -ldflags="-s -w" -o /out/novel-workbench-server ./cmd/server`；运行层装 `ca-certificates`、`tzdata`，非 root 用户 `appuser`(10001) |
+| 前端（Compose / GHCR） | `frontend/Dockerfile` | `node:22-slim` | `nginx:1.27-alpine` | `npm ci --no-audit --no-fund` + `npm run build`（`vue-tsc && vite build`）；`ENV NGINX_RESOLVER=127.0.0.11`、`API_UPSTREAM=http://backend:8080`、`NW_LISTEN_PORT=80`、`NW_CLIENT_MAX_BODY_SIZE=20m` |
+| 后端（Podman） | `deploy/podman/Dockerfile.backend` | 无（只用预构建产物） | `${BASE_IMAGE}`，默认 `docker.io/library/alpine:3.20` | 拷入 `ca-certificates.crt`、`nw-server`、`configs/config.yaml`；创建 `appuser`(10001)；`ENTRYPOINT ["/app/nw-server"]` |
+| 前端（Podman） | `deploy/podman/Dockerfile.frontend` | 无（只用预构建产物） | `${BASE_IMAGE}`，默认 `docker.io/library/nginx:1.27-alpine` | 拷入 `dist/` 到 `/usr/share/nginx/html`、`nginx.conf.template` 到 `/etc/nginx/templates/default.conf.template` |
+
+两个 `Dockerfile.*` 的基础镜像由 `ARG BASE_IMAGE` 决定，`deploy.sh` 通过 `NW_BASE_IMAGE_PREFIX`（默认 `swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library`）拼接后传入，可在受限网络下换源。
+
+静态构建约束：后端全链路 `CGO_ENABLED=0`，产物可直接在 `alpine` 上运行；前端产物是纯静态文件，由 nginx 托管，不引入 Node 运行时。
+
+## 3. nginx 模板与 SSE 配置
+
+`frontend/nginx.conf.template` 由 nginx 官方镜像的 `docker-entrypoint` 用 `envsubst` 渲染为 `/etc/nginx/conf.d/default.conf`。
 
 | 变量 | 作用 | Docker 取值 | Podman 取值 |
 | --- | --- | --- | --- |
-| `NGINX_RESOLVER` | 容器 DNS 地址 | `127.0.0.11`（内嵌 DNS） | `10.89.0.1`（网络网关） |
-| `API_UPSTREAM` | 后端上游地址 | `http://backend:8080` | `http://backend.dns.podman:8080` |
+| `NGINX_RESOLVER` | 上游 DNS 地址 | `127.0.0.11`（内嵌 DNS） | `10.89.0.1`（网络网关，`NW_NGINX_RESOLVER` 可覆盖） |
+| `API_UPSTREAM` | 后端上游 | `http://backend:8080` | `http://backend.dns.podman:8080`（`NW_API_UPSTREAM` 可覆盖） |
 | `NW_LISTEN_PORT` | 容器内监听端口 | `80` | `80` |
+| `NW_CLIENT_MAX_BODY_SIZE` | 反代请求体上限 | `20m`（`frontend/Dockerfile` 的 `ENV`，compose 亦显式传值） | `20m`（`deploy/podman/Dockerfile.frontend` 的 `ENV`，compose 取 `${NW_CLIENT_MAX_BODY_SIZE:-20m}`） |
 
-宿主端口由 compose 的 `ports: "${NW_PUBLIC_PORT:-14399}:80"` 决定，用户访问端口固定 14399；
-容器内始终保持 80，便于镜像跨环境复用。
+站点行为：
 
-- `listen ${NW_LISTEN_PORT}`：容器内监听端口可配置，默认 80。
-- `/healthz` 直接返回 `ok`，不依赖后端。
-- `/` 使用 `try_files $uri $uri/ /index.html` 兜底为 SPA 路由。
-- `/assets/` 带 hash 的产物长缓存：`expires 30d` + `Cache-Control: public, immutable`。
-- `/api/` 用变量形式的 `proxy_pass $api_backend$request_uri` 配合 `resolver ... valid=10s`，
-  每次请求重新解析上游 IP，容器重建后不残留旧 IP。
-- SSE 流式响应：`proxy_buffering off`、`proxy_read_timeout 3600s`。
+| 位置 | 配置 | 目的 |
+| --- | --- | --- |
+| `listen ${NW_LISTEN_PORT}` | 容器内端口可变，宿主端口由 `ports` 决定 | 镜像跨环境复用 |
+| `resolver ${NGINX_RESOLVER} valid=10s` | 每 10 秒重新解析 | 容器重建后不残留旧 IP |
+| `client_max_body_size ${NW_CLIENT_MAX_BODY_SIZE}` | 紧跟 `resolver` 之后，作用于整个 server | 上传体积上限与后端 `NW_APP_UPLOAD_MAX_MB` 对齐，避免反代先于后端返回 413 |
+| `location = /healthz` | `return 200 "ok"`，`access_log off` | 前端存活探针，不依赖后端 |
+| `location /` | `try_files $uri $uri/ /index.html` | SPA 路由兜底 |
+| `location /assets/` | `expires 30d` + `Cache-Control: public, immutable` | 带 hash 的产物长缓存 |
+| `location /api/` | `proxy_pass $api_backend$request_uri` | 变量形式的上游，触发按请求 DNS 解析 |
+| `/api/` 头部 | `Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Request-ID` | 链路追踪与客户端 IP 透传 |
+| SSE | `proxy_buffering off`、`proxy_read_timeout 3600s` | 流式响应不被缓冲、不被读超时截断 |
 
----
+后端侧配合 SSE：`http.Server` 的 `WriteTimeout` 取 `server.write_timeout_sec`，仓库配置为 `0`（不限），`ReadTimeout` 取 `server.read_timeout_sec`（30s）；`service.ChatService` 用 `chatPingInterval = 15s` 的定时器在无输出时调用 `sseChatWriter.Ping` 输出 `: ping` 注释行维持连接，有数据块时重置定时器。
 
-## 2. 配置模型
+`gzip on`，类型为 `text/plain`、`text/css`、`application/javascript`、`application/json`、`image/svg+xml`。
 
-### 2.1 加载顺序与覆盖规则
+## 4. 配置模型
 
-`infra.LoadConfig(configPath)`（`backend/internal/infra/config.go`）：
+### 4.1 加载与覆盖
 
-1. `configPath` 为空时取 `configs/config.yaml`（容器内工作目录为 `/app`，即 `/app/configs/config.yaml`）。
-2. Viper `SetConfigFile` + `ReadInConfig` 读取 YAML；读取失败返回错误（启动退出）。
-3. `SetEnvPrefix("NW")` + `SetEnvKeyReplacer(strings.NewReplacer(".", "_"))` + `AutomaticEnv()`：
-   键 `postgres.host` 对应环境变量 `NW_POSTGRES_HOST`，`app.admin_password` 对应 `NW_APP_ADMIN_PASSWORD`，
-   `server.read_timeout_sec` 对应 `NW_SERVER_READ_TIMEOUT_SEC`，依此类推。
-4. 遍历 `v.AllKeys()` 逐个 `BindEnv`，使环境变量参与 `Unmarshal`（`AutomaticEnv` 与 `AllSettings` 合并存在盲区，必须显式绑定）。
-5. `Unmarshal` 到 `Config`，随后 `validate()` 做启动期校验与默认值补齐。
+`infra.LoadConfig`（`backend/internal/infra/config.go`）的执行顺序：
 
-结论：**环境变量优先于 YAML**；YAML 中所有敏感项（`jwt.secret`、`postgres.password`、
-`redis.password`、`rabbitmq.url`、`minio.*_key`、`ai.api_key`、`app.admin_password`）在仓库中一律留空。
+1. `configPath` 为空时取 `configs/config.yaml`（容器工作目录 `/app`，即 `/app/configs/config.yaml`）。
+2. `viper.SetConfigFile` + `ReadInConfig` 读取 YAML，失败直接返回错误。
+3. `SetEnvPrefix("NW")`、`SetEnvKeyReplacer(strings.NewReplacer(".", "_"))`、`AutomaticEnv()`：键 `postgres.host` 对应 `NW_POSTGRES_HOST`，`app.admin_password` 对应 `NW_APP_ADMIN_PASSWORD`。
+4. 遍历 `v.AllKeys()` 逐个 `BindEnv`，使环境变量参与 `Unmarshal`（`AutomaticEnv` 与 `AllSettings` 合并存在盲区）。
+5. `Unmarshal` 到 `Config`，随后 `validate()` 做校验与默认值补齐。
 
-### 2.2 启动期校验（fail fast）
+结论：环境变量优先于 YAML；YAML 中敏感项一律留空，凭据只经 `NW_*` 注入。
 
-`validate()` 中**为空即返回错误、导致进程退出**的字段：
+### 4.2 启动期校验（fail fast）
 
-| 字段 | 对应环境变量 | 报错信息 |
+`validate()` 中为空即返回错误、导致进程退出的字段：
+
+| 字段 | 环境变量 | 报错 |
 | --- | --- | --- |
 | `jwt.secret` | `NW_JWT_SECRET` | `jwt.secret is required` |
-| `postgres.host` 且 `postgres.dbname` | `NW_POSTGRES_HOST` / `NW_POSTGRES_DBNAME` | `postgres.host/dbname is required` |
-| `ai.base_url` 且 `ai.chat_model` | `NW_AI_BASE_URL` / `NW_AI_CHAT_MODEL` | 不校验：模型网关不是启动必需项，留空则不播种默认供应商 |
+| `postgres.host` / `postgres.dbname` | `NW_POSTGRES_HOST` / `NW_POSTGRES_DBNAME` | `postgres.host/dbname is required` |
 
-`validate()` 中**缺失时补默认值**（不报错）的字段：
+缺失时补默认值、不报错的字段：
 
-| 字段 | 默认值 | 对应环境变量 |
+| 字段 | 默认值 | 环境变量 |
 | --- | --- | --- |
+| `server.port`（为 0 时） | `8080` | `NW_SERVER_PORT` |
 | `ai.protocol_code` | `openai` | `NW_AI_PROTOCOL_CODE` |
-| `app.build_version` | `dev` | `NW_APP_BUILD_VERSION` |
-| `server.port` | `8080` | `NW_SERVER_PORT` |
-| `ai.history_count`（≤0） | `5` | `NW_AI_HISTORY_COUNT` |
-| `app.rag_top_k`（≤0） | `6` | `NW_APP_RAG_TOP_K` |
+| `ai.history_count`（≤0 时） | `5` | `NW_AI_HISTORY_COUNT` |
+| `app.rag_top_k`（≤0 时） | `6` | `NW_APP_RAG_TOP_K` |
 | `app.admin_password` | `Admin@123456`（生产必须覆盖） | `NW_APP_ADMIN_PASSWORD` |
+| `app.build_version` | `dev` | `NW_APP_BUILD_VERSION` |
 
-**降级项**（配置缺失或连接失败只告警，不阻断启动）：
-`redis`（令牌吊销降级）、`rabbitmq`（异步索引任务降级）、`minio`（对象存储降级）、
-`manticore`（全文检索降级）。其中 `redis.addr` 为空属于「Redis 配置无效」，仍会退出；
-`postgres` 相关配置无效或连不上直接退出。
+`ai.base_url` 与 `ai.chat_model` 不校验：两者同时非空时才播种默认供应商，留空则由页面维护。
 
-### 2.3 JWT 密钥兼作密钥封存材料（重要）
+### 4.3 JWT 密钥兼作封存材料
 
-模型供应商的 API Key 以 **AES-256-GCM 密文**保存在数据库 `model_providers.api_key_cipher`，
-封存材料由 `NW_JWT_SECRET` 经 SHA-256 派生
-（`backend/internal/pkg/secret.go` 的 `SealSecret` / `OpenSecret`，
-调用方 `service.NewModelProviderService(..., cfg.JWT.Secret, ...)`）。
+模型供应商的 API Key 以 AES-256-GCM 密文存放在 `model_providers` 表，封存密钥由 `NW_JWT_SECRET` 经 SHA-256 派生（`backend/internal/pkg/secret.go` 的 `SealSecret` / `OpenSecret`，调用点为 `service.NewModelProviderService` 的第四个参数）。
 
-> **更换 `NW_JWT_SECRET` 后，数据库中已封存的供应商 API Key 全部无法解密**，
-> 解封失败时页面提示「供应商密钥无法解密，请重新填写 API Key」。
-> 轮换后必须在「模型供应商」页面重新填写各供应商的 API Key 并保存。
-> 同时所有已签发 JWT 失效，用户需重新登录。
+更换 `NW_JWT_SECRET` 后：已签发 JWT 全部失效；数据库中已封存的供应商 API Key 无法解密，必须在「模型供应商」页面重新填写。轮换密钥等同于一次凭据重置。
 
----
+## 5. 环境变量总表
 
-## 3. 环境变量总表
+### 5.1 与 `Config` 字段一一对应
 
-下表列出编排文件与代码中**实际被消费**的全部 `NW_*` 变量。
-「必填」列的含义：编排文件中用 `${VAR:?}` 强制校验（缺值直接启动失败）或代码校验为必填。
+每个 `NW_<大写路径>` 对应 `config.go` 中一个字段，`.` 替换为 `_`。
 
-### 3.1 server
+| 结构体 | 字段 | 环境变量 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- |
+| `ServerConfig` | `host` | `NW_SERVER_HOST` | `0.0.0.0` | 监听地址 |
+| `ServerConfig` | `port` | `NW_SERVER_PORT` | `8080` | 监听端口 |
+| `ServerConfig` | `mode` | `NW_SERVER_MODE` | `debug` | gin 模式 `debug`/`release`/`test` |
+| `ServerConfig` | `read_timeout_sec` | `NW_SERVER_READ_TIMEOUT_SEC` | `30` | 读超时（秒） |
+| `ServerConfig` | `write_timeout_sec` | `NW_SERVER_WRITE_TIMEOUT_SEC` | `0` | 写超时（秒），0 为不限（SSE） |
+| `JWTConfig` | `secret` | `NW_JWT_SECRET` | 无（必填） | 签名密钥兼封存材料 |
+| `JWTConfig` | `expire_hours` | `NW_JWT_EXPIRE_HOURS` | `168` | 令牌有效期（小时） |
+| `PostgresConfig` | `host` | `NW_POSTGRES_HOST` | 无（必填） | 数据库主机 |
+| `PostgresConfig` | `port` | `NW_POSTGRES_PORT` | `5432` | 端口 |
+| `PostgresConfig` | `user` | `NW_POSTGRES_USER` | `postgres` | 账号 |
+| `PostgresConfig` | `password` | `NW_POSTGRES_PASSWORD` | 空 | 口令 |
+| `PostgresConfig` | `dbname` | `NW_POSTGRES_DBNAME` | `postgres` | 库名（必填） |
+| `PostgresConfig` | `sslmode` | `NW_POSTGRES_SSLMODE` | `disable` | SSL 模式 |
+| `PostgresConfig` | `max_open_conns` | `NW_POSTGRES_MAX_OPEN_CONNS` | `20` | 最大打开连接 |
+| `PostgresConfig` | `max_idle_conns` | `NW_POSTGRES_MAX_IDLE_CONNS` | `5` | 最大空闲连接 |
+| `PostgresConfig` | `conn_max_lifetime_min` | `NW_POSTGRES_CONN_MAX_LIFETIME_MIN` | `30` | 连接最长存活（分钟） |
+| `RedisConfig` | `addr` | `NW_REDIS_ADDR` | 无（为空则退出） | `host:port` |
+| `RedisConfig` | `password` | `NW_REDIS_PASSWORD` | 空 | 口令 |
+| `RedisConfig` | `db` | `NW_REDIS_DB` | `0` | 库号 |
+| `RabbitMQConfig` | `url` | `NW_RABBITMQ_URL` | 空 | AMQP 连接串 |
+| `RabbitMQConfig` | `queue_doc_index` | `NW_RABBITMQ_QUEUE_DOC_INDEX` | `nw_doc_index` | 索引队列名 |
+| `MinIOConfig` | `endpoint` | `NW_MINIO_ENDPOINT` | 空 | `host:port` |
+| `MinIOConfig` | `access_key` | `NW_MINIO_ACCESS_KEY` | 空 | AccessKey |
+| `MinIOConfig` | `secret_key` | `NW_MINIO_SECRET_KEY` | 空 | SecretKey |
+| `MinIOConfig` | `bucket` | `NW_MINIO_BUCKET` | `novelworkbench` | 桶名 |
+| `MinIOConfig` | `use_ssl` | `NW_MINIO_USE_SSL` | `false` | 是否 SSL |
+| `ManticoreConfig` | `base_url` | `NW_MANTICORE_BASE_URL` | 空 | HTTP SQL API 地址 |
+| `ManticoreConfig` | `table_chunks` | `NW_MANTICORE_TABLE_CHUNKS` | `nw_chunks` | 切片全文表名 |
+| `AIConfig` | `protocol_code` | `NW_AI_PROTOCOL_CODE` | `openai` | `openai` / `anthropic` |
+| `AIConfig` | `base_url` | `NW_AI_BASE_URL` | 空 | OpenAI 兼容含 `/v1`；Anthropic 填根地址 |
+| `AIConfig` | `api_key` | `NW_AI_API_KEY` | 空 | 网关密钥 |
+| `AIConfig` | `chat_model` | `NW_AI_CHAT_MODEL` | 空 | 对话模型名 |
+| `AIConfig` | `temperature` | `NW_AI_TEMPERATURE` | `0.7` | 采样温度 |
+| `AIConfig` | `max_tokens` | `NW_AI_MAX_TOKENS` | `2048` | 单次输出上限 |
+| `AIConfig` | `timeout_sec` | `NW_AI_TIMEOUT_SEC` | `120` | 调用超时（秒），≤0 时 `main` 兜底 60 |
+| `AIConfig` | `history_count` | `NW_AI_HISTORY_COUNT` | `5` | 历史消息注入条数 |
+| `AppConfig` | `upload_max_mb` | `NW_APP_UPLOAD_MAX_MB` | `20` | 上传大小上限（MB） |
+| `AppConfig` | `chunk_size` | `NW_APP_CHUNK_SIZE` | `800` | 切片字符数 |
+| `AppConfig` | `chunk_overlap` | `NW_APP_CHUNK_OVERLAP` | `120` | 切片重叠字符数 |
+| `AppConfig` | `rag_top_k` | `NW_APP_RAG_TOP_K` | `6` | 默认召回条数 |
+| `AppConfig` | `admin_password` | `NW_APP_ADMIN_PASSWORD` | `Admin@123456` | 引导管理员密码，仅用户表为空时生效 |
+| `AppConfig` | `build_version` | `NW_APP_BUILD_VERSION` | `dev` | 运行状态页展示的构建版本 |
 
-| 变量 | 必填 | 含义 | 占位值 |
+`ai.*` 组只在 `model_providers` 表为空时写入一条「默认模型网关」记录（`providerService.SeedDefault`），播种后由页面维护，配置不再参与。
+
+### 5.2 仅部署层消费（不进入 `Config`）
+
+| 变量 | 消费方 | 默认值 | 作用 |
 | --- | --- | --- | --- |
-| `NW_SERVER_PORT` | 否 | 后端监听端口，缺省 `8080` | `8080` |
-| `NW_SERVER_MODE` | 否 | gin 运行模式（`debug`/`release`/`test`）；Podman 编排固定 `release` | `release` |
-| `NW_SERVER_HOST` | 否 | 监听地址，缺省 `0.0.0.0` | `0.0.0.0` |
+| `NW_PUBLIC_PORT` | 两个 compose 文件、`deploy.sh` | `14399` | 前端映射到宿主机的端口 |
+| `NW_LISTEN_PORT` | 两个 compose 文件、`nginx.conf.template` | `80` | 容器内 nginx 监听端口 |
+| `NW_CLIENT_MAX_BODY_SIZE` | 两个 compose 文件、两个前端 Dockerfile、两份 `.env.example`、`nginx.conf.template` | `20m` | 前端 nginx 反代上传上限 |
+| `NW_RABBITMQ_USER` | 根 compose 的 `infra` profile、`deploy/podman/docker-compose.yml` | `admin`（podman） | 拼接 `NW_RABBITMQ_URL` / 初始化中间件 |
+| `NW_RABBITMQ_PASSWORD` | 同上 | 无 | 同上 |
+| `NW_NGINX_RESOLVER` | `deploy/podman/docker-compose.yml` | `10.89.0.1` | 渲染 nginx `resolver` |
+| `NW_API_UPSTREAM` | `deploy/podman/docker-compose.yml` | `http://backend.dns.podman:8080` | 渲染 nginx 上游 |
+| `NW_INFRA_NETWORK` | `deploy/podman/docker-compose.yml` | `novelworkbench_default` | 外部中间件网络名 |
+| `NW_BASE_IMAGE_PREFIX` | `deploy.sh` | `swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library` | 基础镜像仓库前缀 |
+| `NW_BACKEND_IMAGE` | `deploy.sh`、podman compose | `localhost/novel-workbench-backend:latest` | 后端运行镜像名 |
+| `NW_FRONTEND_IMAGE` | `deploy.sh`、podman compose | `localhost/novel-workbench-frontend:latest` | 前端运行镜像名 |
 
-### 3.2 jwt
+`deploy.sh` 另识别两个非 `NW_` 变量：`ENV_FILE`（默认 `.env`）、`COMPOSE_LOG`（默认 `/var/log/novelworkbench-compose.log`）。
 
-| 变量 | 必填 | 含义 | 占位值 |
-| --- | --- | --- | --- |
-| `NW_JWT_SECRET` | 是 | JWT 签名密钥；同时作为供应商 API Key 的封存材料（见 2.3） | `replace-with-a-long-random-secret` |
+### 5.3 必填项在编排层的体现
 
-`jwt.expire_hours` 默认 `168`（7 天），仓库内不通过环境变量覆盖。
+根 `docker-compose.yml` 对 `NW_JWT_SECRET`、`NW_POSTGRES_HOST`、`NW_POSTGRES_PASSWORD`、`NW_REDIS_ADDR`、`NW_REDIS_PASSWORD`、`NW_RABBITMQ_URL`、`NW_MINIO_ENDPOINT`、`NW_MINIO_ACCESS_KEY`、`NW_MINIO_SECRET_KEY`、`NW_MANTICORE_BASE_URL`、`NW_APP_ADMIN_PASSWORD` 使用 `${VAR:?}`，缺值即编排失败，不会启动半配置容器。
 
-### 3.3 postgres
+`deploy/podman/docker-compose.yml` 中中间件地址是固定服务名（`postgres`、`redis:6379`、`minio:9000`、`http://manticore:9308`），因此只有凭据类变量需要 `${VAR:?}` 校验：`NW_JWT_SECRET`、`NW_POSTGRES_PASSWORD`、`NW_REDIS_PASSWORD`、`NW_RABBITMQ_PASSWORD`、`NW_MINIO_ACCESS_KEY`、`NW_MINIO_SECRET_KEY`、`NW_APP_ADMIN_PASSWORD`；`NW_RABBITMQ_URL` 由 `${NW_RABBITMQ_USER:-admin}` 与口令在此文件内拼装。
 
-| 变量 | 必填 | 含义 | 占位值 |
-| --- | --- | --- | --- |
-| `NW_POSTGRES_HOST` | 是 | 数据库主机 | `postgres` |
-| `NW_POSTGRES_PORT` | 否 | 端口，缺省 `5432` | `5432` |
-| `NW_POSTGRES_USER` | 否 | 账号，缺省 `postgres`（根目录 Compose 的 `infra` profile 中为必填） | `postgres` |
-| `NW_POSTGRES_PASSWORD` | 是 | 口令 | `replace-with-db-password` |
-| `NW_POSTGRES_DBNAME` | 否 | 库名，缺省 `postgres`（根目录 Compose 的 `infra` profile 中为必填） | `postgres` |
+## 6. 启动初始化顺序与失败策略
 
-`postgres.sslmode`（缺省 `disable`）、`max_open_conns`（20）、`max_idle_conns`（5）、
-`conn_max_lifetime_min`（30）由 YAML 提供，无对应环境变量。
+`backend/cmd/server/main.go` 的 `main()`：
 
-### 3.4 redis
-
-| 变量 | 必填 | 含义 | 占位值 |
-| --- | --- | --- | --- |
-| `NW_REDIS_ADDR` | 是 | Redis 地址 `host:port`；为空则进程退出 | `redis:6379` |
-| `NW_REDIS_PASSWORD` | 是（编排层） | Redis 口令；代码层不校验，为空则连接被拒并降级 | `replace-with-redis-password` |
-
-`redis.db` 固定 `0`。
-
-### 3.5 rabbitmq
-
-| 变量 | 必填 | 含义 | 占位值 |
-| --- | --- | --- | --- |
-| `NW_RABBITMQ_URL` | 是 | AMQP 连接串 `amqp://user:pass@host:5672/` | `amqp://localdevuser:replace-with-rabbitmq-password@rabbitmq:5672/` |
-| `NW_RABBITMQ_USER` | 视编排而定 | RabbitMQ 账号：根目录 Compose 的 `infra` profile 中用于初始化中间件容器并为必填；Podman 编排中拼进 `NW_RABBITMQ_URL`，缺省 `admin` | `localdevuser` / `admin` |
-| `NW_RABBITMQ_PASSWORD` | 视编排而定 | RabbitMQ 口令：同上 | `replace-with-rabbitmq-password` |
-
-`rabbitmq.queue_doc_index` 固定 `nw_doc_index`。
-
-### 3.6 minio
-
-| 变量 | 必填 | 含义 | 占位值 |
-| --- | --- | --- | --- |
-| `NW_MINIO_ENDPOINT` | 是 | 对象存储地址 `host:port` | `minio:9000` |
-| `NW_MINIO_ACCESS_KEY` | 是 | AccessKey | `replace-with-minio-access-key` |
-| `NW_MINIO_SECRET_KEY` | 是 | SecretKey | `replace-with-minio-secret-key` |
-| `NW_MINIO_BUCKET` | 否 | 存储桶名，缺省 `novelworkbench`（根目录 Compose 支持覆盖；Podman 编排固定该值） | `novelworkbench` |
-
-`minio.use_ssl` 固定 `false`。
-
-### 3.7 manticore
-
-| 变量 | 必填 | 含义 | 占位值 |
-| --- | --- | --- | --- |
-| `NW_MANTICORE_BASE_URL` | 是 | 全文检索 HTTP SQL API 地址（形如 `http://host:9308`） | `http://manticore:9308` |
-
-`manticore.table_chunks` 固定 `nw_chunks`。
-
-### 3.8 ai（**仅用于一次性出厂默认供应商播种**）
-
-| 变量 | 必填 | 含义 | 占位值 |
-| --- | --- | --- | --- |
-| `NW_AI_PROTOCOL_CODE` | 否 | 协议：`openai` / `anthropic`，缺省 `openai` | `openai` |
-| `NW_AI_BASE_URL` | 否 | 模型网关地址；OpenAI 兼容需含 `/v1`，Anthropic 填根地址。留空则不播种默认供应商 | `https://model-gateway.example.com/v1` |
-| `NW_AI_API_KEY` | 否 | 模型网关密钥。留空则不播种默认供应商 | `replace-with-model-api-key` |
-| `NW_AI_CHAT_MODEL` | 否 | 对话模型名。留空则不播种默认供应商 | `replace-with-chat-model` |
-| `NW_AI_TEMPERATURE` | 否 | 采样温度，缺省 `0.7` | `0.7` |
-| `NW_AI_MAX_TOKENS` | 否 | 单次输出上限，缺省 `2048` | `2048` |
-| `NW_AI_TIMEOUT_SEC` | 否 | 单次模型调用超时（秒），缺省 `120`；≤0 时 main.go 兜底为 `60` | `120` |
-| `NW_AI_HISTORY_COUNT` | 否 | `@历史` 引用默认注入条数，缺省 `5` | `5` |
-
-> **作用域限制**：这一组变量只在 `model_providers` 表为空时写入一条「默认模型网关」记录
-> （`providerService.SeedDefault`）。播种后模型供应商由「模型供应商」页面维护
-> （多供应商、OpenAI 兼容 / Anthropic 双协议、连通性测试），配置文件不再参与。
-> 因此播种失败只会打印告警，不会阻断启动。
-
-### 3.9 app
-
-| 变量 | 必填 | 含义 | 占位值 |
-| --- | --- | --- | --- |
-| `NW_APP_UPLOAD_MAX_MB` | 否 | 知识库上传大小上限（MB），缺省 `20` | `20` |
-| `NW_APP_CHUNK_SIZE` | 否 | 知识库切片字符数，缺省 `800` | `800` |
-| `NW_APP_CHUNK_OVERLAP` | 否 | 知识库切片重叠字符数，缺省 `120` | `120` |
-| `NW_APP_RAG_TOP_K` | 否 | RAG 默认召回条数，缺省 `6` | `6` |
-| `NW_APP_ADMIN_PASSWORD` | 是 | 引导管理员初始密码，仅用户表为空时生效；代码兜底 `Admin@123456` | `replace-with-a-strong-admin-password` |
-| `NW_APP_BUILD_VERSION` | 否 | 运行状态页展示的构建版本，缺省 `dev` | `dev` |
-
-### 3.10 Podman 专用变量
-
-| 变量 | 必填 | 含义 | 占位值 |
-| --- | --- | --- | --- |
-| `NW_INFRA_NETWORK` | 否 | 既有中间件栈的外部网络名，缺省 `novelworkbench_default` | `novelworkbench_default` |
-| `NW_NGINX_RESOLVER` | 否 | 前端 nginx 的 resolver 地址，缺省 `10.89.0.1`（podman 网络网关） | `10.89.0.1` |
-| `NW_API_UPSTREAM` | 否 | 前端 nginx 的后端上游，缺省 `http://backend.dns.podman:8080` | `http://backend.dns.podman:8080` |
-| `NW_BASE_IMAGE_PREFIX` | 否 | 基础镜像仓库前缀，缺省 `swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library`（`deploy.sh` 使用） | `swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library` |
-| `NW_BACKEND_IMAGE` | 否 | 后端运行镜像名，缺省 `localhost/novel-workbench-backend:latest` | `localhost/novel-workbench-backend:latest` |
-| `NW_FRONTEND_IMAGE` | 否 | 前端运行镜像名，缺省 `localhost/novel-workbench-frontend:latest` | `localhost/novel-workbench-frontend:latest` |
-| `NW_PUBLIC_PORT` | 否 | 前端容器映射到宿主机的端口，缺省 `14399`（唯一对外入口） | `14399` |
-
-`deploy.sh` 另支持两个非 `NW_` 的可选变量：`ENV_FILE`（默认 `.env`）、
-`COMPOSE_LOG`（默认 `/var/log/novelworkbench-compose.log`）。
-
----
-
-## 4. 启动初始化行为
-
-`backend/cmd/server/main.go` 的 `main()` 顺序：
-
-| 序号 | 步骤 | 失败后果 |
+| 序号 | 步骤 | 失败策略 |
 | --- | --- | --- |
-| 1 | `pkg.SetLogger(zap.NewProduction())` 设定全局 JSON 日志 | — |
-| 2 | `infra.LoadConfig("")` 读 YAML + 应用 `NW_*` 覆盖 + `validate()` | **致命**：退出码 1，日志「加载配置失败」 |
-| 3 | `signal.NotifyContext` 注册 SIGINT/SIGTERM（供后续优雅关闭） | — |
-| 4 | `infra.NewPostgres` 建立连接 | **致命**：退出码 1，日志「Postgres 连接失败」 |
-| 5 | `db.AutoMigrate(...)` 建表（28 张表：`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelUsageStatDO`） | **致命**：退出码 1，日志「数据库迁移失败」 |
-| 6 | `infra.NewRedis` 连接并 Ping（5s 超时） | 地址为空 → **致命**（「Redis 配置无效」）；Ping 失败 → **降级告警**「令牌吊销降级」，仍返回可用客户端 |
-| 7 | `infra.NewRabbitMQ` 建立连接 | **降级告警**「异步任务降级」 |
-| 8 | `infra.NewMinIO` 构造客户端 + `BucketExists`（桶不存在时自动 `MakeBucket` 创建） | **降级告警**「对象存储降级」 |
-| 9 | `infra.NewManticore` 构造 + `Ping`（`SELECT 1`，HTTP 超时 5s） | **降级告警**「全文检索降级」 |
-| 10 | `pkg.NewJWTSigner(cfg.JWT.Secret, cfg.JWTExpireTTL())` | **致命**：退出码 1 |
-| 11 | 装配 repo / service / ai client（含 `aiTimeoutSec` ≤0 时兜底 `60`）；`providerService.SeedDefault` 播种默认供应商 | 播种失败 → **告警**「默认模型供应商播种失败，可在页面手工添加」 |
-| 12 | `skillService.SeedDefaults`（内置技能） | **致命**：退出码 1 |
-| 12.1 | `menuService.SeedDefaults`（内置菜单与权限登记） | **致命**：退出码 1 |
-| 13 | `settingService.SeedDefaults`（默认应用配置） | **致命**：退出码 1 |
-| 14 | `roleService.SeedDefaults`（内置角色 admin / user） | **致命**：退出码 1 |
-| 15 | `userAdminService.BootstrapAdmin(ctx, "admin", "admin@novelworkbench.local", cfg.App.AdminPassword)`（仅用户表为空时创建） | **致命**：退出码 1 |
-| 16 | 启动知识库索引 worker goroutine，消费 RabbitMQ 完成文档索引 | 异常退出 → **告警**「知识库索引 worker 异常退出」 |
-| 17 | 注册 Auth / Audit 中间件与全部路由，`http.Server`（`WriteTimeout: 0`，SSE 不受写超时限制）并 `ListenAndServe` | 监听失败 → 进入关闭流程并记录错误 |
+| 1 | `pkg.SetLogger(zap.Must(zap.NewProduction()))` | — |
+| 2 | `infra.LoadConfig("")`：读 YAML、应用 `NW_*`、`validate()` | 致命，退出码 1，日志「加载配置失败」 |
+| 3 | `signal.NotifyContext(SIGINT, SIGTERM)` | — |
+| 4 | `infra.NewPostgres`：DSN 连接 + 连接池 + `Ping` | 致命，退出码 1，日志「Postgres 连接失败」 |
+| 5 | `db.AutoMigrate` 建表 32 张（`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`） | 致命，退出码 1，日志「数据库迁移失败」 |
+| 6 | `infra.NewRedis`：构造客户端 + 5s `Ping` | 地址为空返回 `nil` 客户端 → 致命「Redis 配置无效」；Ping 失败 → 告警「令牌吊销降级」并继续 |
+| 7 | `infra.NewRabbitMQ` | 告警「异步任务降级」 |
+| 8 | `infra.NewMinIO`：构造客户端 + `BucketExists`，桶不存在则 `MakeBucket`；随后 `main` 再校验一次桶是否存在 | 告警「MinIO 初始化失败 / 桶健康检查失败 / 桶不存在，对象存储降级」 |
+| 9 | `infra.NewManticore` + `Ping`（`SELECT 1`，HTTP 超时 5s） | 告警「全文检索降级」 |
+| 10 | `pkg.NewJWTSigner(cfg.JWT.Secret, cfg.JWTExpireTTL())` | 致命，退出码 1 |
+| 11 | 装配 repo / service / `ai.NewClient`，`providerService.SeedDefault` 播种出厂供应商 | 播种失败 → 告警「默认模型供应商播种失败，可在页面手工添加」 |
+| 12 | `providerService.MigrateLegacyModels` 补齐模型目录 | 告警，不阻断 |
+| 13 | `skillService.SeedDefaults`（21 个内置技能） | 致命，退出码 1 |
+| 14 | `settingService.SeedDefaults`（默认应用配置） | 致命，退出码 1 |
+| 15 | `roleService.SeedDefaults`（内置角色与权限） | 致命，退出码 1 |
+| 16 | `menuService.SeedDefaults`（内置菜单与权限登记） | 致命，退出码 1 |
+| 17 | `userAdminService.BootstrapAdmin(ctx, "admin", "admin@novelworkbench.local", cfg.App.AdminPassword)`，仅用户表为空时创建 | 致命，退出码 1 |
+| 18 | 启动 `service.NewKnowledgeWorker` goroutine 消费索引队列 | 异常退出 → 告警「知识库索引 worker 异常退出」 |
+| 19 | 装配 Auth/Audit 中间件与路由，`http.Server{ReadTimeout, WriteTimeout}` 后 `ListenAndServe` | 监听失败 → 进入关闭流程并记错误 |
 
----
+优雅关闭：收到 SIGTERM/SIGINT 后 `server.Shutdown`（5s 超时）→ 等待 worker 退出（最多 5s）→ 依次关闭 Postgres 连接池、Redis、RabbitMQ。
 
-## 5. 本地 Docker Compose 部署
+降级语义：只有 PostgreSQL 与 JWT 是硬依赖；Redis 缺失使令牌吊销失效，RabbitMQ 缺失使索引任务不消费，MinIO 缺失使上传与原文读取失败，Manticore 缺失使检索无结果——服务仍可启动并提供其余功能。
 
-前置条件：Docker + Docker Compose 插件。
+## 7. 本地 Docker Compose
+
+前置条件：Docker + Compose 插件。
 
 ```bash
-# 1. 准备环境变量（.env 已在 .gitignore 中，切勿提交）
-cp .env.example .env
-# 编辑 .env，填入 NW_JWT_SECRET、数据库/缓存/队列/对象存储口令、模型网关信息
-
-# 2a. 仅应用容器（中间件指向已有实例或云服务器）
-docker compose up -d --build
-
-# 2b. 本地全栈（额外拉起 PostgreSQL/Redis/RabbitMQ/MinIO/Manticore）
-docker compose --profile infra up -d --build
-
-# 3. 健康检查（后端不映射宿主端口，只能经前端入口反代访问）
-curl http://127.0.0.1:14399/healthz         # 前端存活
-# 后端探针挂在根引擎（不在 /api/v1 下），nginx 未反代，只能进容器内查：
+cp .env.example .env            # 填入密钥与地址，.env 不入库
+docker compose up -d --build                          # 仅应用容器
+docker compose --profile infra up -d --build          # 额外拉起五个中间件
+curl http://127.0.0.1:14399/healthz                   # 前端存活
 docker compose exec backend wget -qO- http://127.0.0.1:8080/health
 docker compose exec backend wget -qO- http://127.0.0.1:8080/ready
-
-# 4. 日志与停止
 docker compose logs -f backend
-docker compose down                   # 加 -v 会删除 infra 数据卷
+docker compose down             # 加 -v 会删除 infra 数据卷
 ```
 
-### 5.1 `infra` profile 与应用共用同一组凭据
+`infra` profile 的中间件容器与应用容器读同一份 `.env`：
 
-`infra` profile 的中间件容器与应用容器读同一份 `.env`，避免两侧口令不一致：
-
-| 中间件容器 | 由哪个变量初始化 | 应用容器读哪个变量 |
+| 中间件 | 初始化变量 | 应用侧变量 |
 | --- | --- | --- |
 | `nw-postgres` | `NW_POSTGRES_USER` / `NW_POSTGRES_PASSWORD` / `NW_POSTGRES_DBNAME` | 同名三项 |
-| `nw-redis` | `NW_REDIS_PASSWORD`（`redis-server --requirepass`，`--maxmemory 256mb --maxmemory-policy allkeys-lru`） | `NW_REDIS_ADDR` + `NW_REDIS_PASSWORD` |
+| `nw-redis` | `NW_REDIS_PASSWORD`（`--requirepass`，另带 `--maxmemory 256mb --maxmemory-policy allkeys-lru`） | `NW_REDIS_ADDR` + `NW_REDIS_PASSWORD` |
 | `nw-rabbitmq` | `NW_RABBITMQ_USER` / `NW_RABBITMQ_PASSWORD` | `NW_RABBITMQ_URL` |
-| `nw-minio` | `NW_MINIO_ACCESS_KEY` / `NW_MINIO_SECRET_KEY`（`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`） | 同名两项 |
-| `nw-manticore` | 无凭据（无鉴权） | `NW_MANTICORE_BASE_URL` |
+| `nw-minio` | `NW_MINIO_ACCESS_KEY` / `NW_MINIO_SECRET_KEY`（映射为 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`） | 同名两项 |
+| `nw-manticore` | 无鉴权 | `NW_MANTICORE_BASE_URL` |
 
-对应地，本地全栈时 `.env` 中的地址必须写成**服务名**，与 `infra` profile 一致：
-`NW_POSTGRES_HOST=postgres`、`NW_REDIS_ADDR=redis:6379`、`NW_MINIO_ENDPOINT=minio:9000`、
-`NW_RABBITMQ_URL=amqp://<user>:<pass>@rabbitmq:5672/`、`NW_MANTICORE_BASE_URL=http://manticore:9308`。
+本地全栈时地址必须写服务名：`NW_POSTGRES_HOST=postgres`、`NW_REDIS_ADDR=redis:6379`、`NW_MINIO_ENDPOINT=minio:9000`、`NW_RABBITMQ_URL=amqp://<user>:<pass>@rabbitmq:5672/`、`NW_MANTICORE_BASE_URL=http://manticore:9308`。
 
-### 5.2 本地中间件说明
+容器健康检查：后端 `wget -qO- http://127.0.0.1:8080/health`，前端 `wget -qO- http://127.0.0.1/healthz`，均为 `interval 30s / timeout 5s / retries 3`。
 
-- 本地 PostgreSQL 用 `pgvector/pgvector:pg16` 镜像（自带 pgvector 扩展的官方派生镜像）；
-  全文检索能力由 Manticore（`nw_chunks` 表）提供，不依赖 Postgres 侧的全文索引。
-- 根目录 Compose 的后端健康检查为
-  `wget -qO- http://127.0.0.1:8080/health`，`interval 30s / timeout 5s / retries 3`；
-  前端健康检查为 `wget -qO- http://127.0.0.1/healthz`，参数同上。
-- 前端 `NGINX_RESOLVER=127.0.0.11`（Docker 内嵌 DNS），
-  `API_UPSTREAM=http://backend:8080`（内嵌 DNS 应答裸服务名）。
+## 8. 云主机 Podman
 
----
+目标主机运行 Podman + podman-compose，中间件已在宿主机运行并处于同一外部网络，服务别名为 `postgres` / `redis` / `manticore` / `minio` / `rabbitmq`。
 
-## 6. 云主机 Podman 部署
-
-目标主机运行 **Podman + podman-compose**（无 Docker），中间件栈已在宿主机运行，
-并处于一个外部网络中（例如 `novelworkbench_default`），
-服务别名为 `postgres` / `redis` / `manticore` / `minio` / `rabbitmq`。
-应用容器加入该网络直连中间件，不发布中间件端口。
-
-### 6.1 `deploy/podman/` 文件清单
+### 8.1 文件清单
 
 | 文件 | 作用 |
 | --- | --- |
-| `docker-compose.yml` | Podman 编排，仅 backend / frontend 两个服务；`infra` 网络 `external: true`，名称取 `NW_INFRA_NETWORK`；所有凭据由 `.env` 注入，文件内无任何可用默认值 |
-| `Dockerfile.backend` | 后端运行镜像：`ARG BASE_IMAGE`（默认 `docker.io/library/alpine:3.20`），拷贝 `ca-certificates.crt`、`nw-server`、`config.yaml`，创建非 root `appuser`(10001)，`EXPOSE 8080`，`ENTRYPOINT ["/app/nw-server"]` |
-| `Dockerfile.frontend` | 前端运行镜像：`ARG BASE_IMAGE`（默认 `docker.io/library/nginx:1.27-alpine`），拷贝 `dist` 与 `nginx.conf.template`，`EXPOSE 80` |
-| `deploy.sh` | 发布脚本：预检 → 组装构建上下文 → 构建镜像 → 清理陈旧 DNAT → 重建容器 → 健康自检 |
-| `.env.example` | 环境变量占位模板（复制为 `.env` 后填写） |
+| `deploy/podman/docker-compose.yml` | 仅 backend / frontend；`infra` 网络 `external: true`；后端 `expose: 8080`、`mem_limit: 384m`、`restart: always` |
+| `deploy/podman/Dockerfile.backend` | 运行镜像，只打包预构建二进制、配置与 CA bundle |
+| `deploy/podman/Dockerfile.frontend` | 运行镜像，只打包 `dist` 与 nginx 模板 |
+| `deploy/podman/deploy.sh` | 预检 → 组装上下文 → 构建镜像 → 清理 DNAT → 重建容器 → 健康自检 |
+| `deploy/podman/.env.example` | 环境变量模板 |
 
-Podman 编排的其余要点：
-
-- `NW_SERVER_MODE: "release"`；backend 只 `expose: 8080`（不映射宿主端口），
-  frontend 映射 `${NW_PUBLIC_PORT:-14399}:80`；`mem_limit: 384m`；`restart: always`。
-- backend 容器内健康检查 `wget -qO- http://127.0.0.1:8080/health`；frontend 健康检查
-  `wget -qO- http://127.0.0.1:80/healthz`；两者均为 `interval 30s / timeout 5s / retries 3`。
-- Podman 编排不映射后端宿主端口；发布脚本用 `podman exec nw-backend wget ...` 探活，
-  避免 rootless podman 重建后的陈旧 DNAT 规则导致宿主 8080 不可达。
-- Podman 编排中 `NW_POSTGRES_HOST/PORT`、`NW_REDIS_ADDR`、`NW_MINIO_ENDPOINT`、
-  `NW_MANTICORE_BASE_URL` 全部固定为中间件网络内的服务名，
-  不需要配置公网主机地址。
-
-### 6.2 开发机准备产物
+### 8.2 开发机准备产物
 
 ```bash
-# 后端：交叉编译 linux/amd64 静态二进制（禁 cgo）
 cd backend
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
   -tags "netgo osusergo" -ldflags="-s -w" \
   -o build/nw-server-linux-amd64 ./cmd/server
 
-# 前端：构建静态资源
 cd ../frontend
-npm ci
-npm run build
+npm ci && npm run build
 ```
 
-然后把整个仓库目录上传到云主机（例如 `/opt/novelworkbench`），产物路径需与
-`deploy.sh` 的期望一致：`backend/build/nw-server-linux-amd64`、`frontend/dist/index.html`、
-`frontend/nginx.conf.template`、`backend/configs/config.yaml`。
+上传后路径需与脚本期望一致：`backend/build/nw-server-linux-amd64`、`frontend/dist/index.html`、`frontend/nginx.conf.template`、`backend/configs/config.yaml`。
 
-### 6.3 云主机发布
+### 8.3 `deploy.sh` 流程
 
 ```bash
 cd /opt/novelworkbench/deploy/podman
-cp .env.example .env
-# 编辑 .env：填入密钥、模型网关信息；按实际网络名设置 NW_INFRA_NETWORK；
-# 确认 NW_PUBLIC_PORT=14399（唯一对外入口，云安全组需放行该端口）
+cp .env.example .env     # 填密钥；按 podman network ls 设置 NW_INFRA_NETWORK
 bash deploy.sh
 ```
 
-`deploy.sh` 逐步执行：
+```mermaid
+flowchart TD
+  A["预检产物与 .env"] -->|"缺项"| X["die 退出非 0"]
+  A --> B["导出 .env 为环境变量"]
+  B --> C["组装 deploy/podman/build 上下文"]
+  C --> D["podman build 后端 / 前端镜像"]
+  D --> E["清理陈旧 CNI DNAT"]
+  E --> F["podman-compose up -d --force-recreate"]
+  F -->|"失败"| Y["tail 日志后 die"]
+  F --> G["轮询 /health /ready /healthz"]
+  G -->|"通过"| H["打印 podman ps 并退出 0"]
+  G -->|"30 次超时"| X
+```
 
-1. **预检**：`backend/build/nw-server-linux-amd64`、`frontend/dist/index.html`、
-   `frontend/nginx.conf.template`、`backend/configs/config.yaml`、`.env` 必须存在，缺一即退出；
-   随后 `set -a; . ./.env; set +a` 把 `.env` 导出为环境变量
-   （`NW_BASE_IMAGE_PREFIX` / `NW_BACKEND_IMAGE` / `NW_FRONTEND_IMAGE` 在此生效）。
-2. **组装构建上下文**：清空并重建 `deploy/podman/build/`，
-   拷入后端二进制（重命名为 `nw-server`）、`config.yaml`、
-   **宿主机 CA bundle** `/etc/ssl/certs/ca-certificates.crt`（缺失即退出），
-   以及前端 `dist/` 与 `nginx.conf.template`。
-3. **构建运行镜像**：`podman build -f Dockerfile.backend --build-arg BASE_IMAGE=${NW_BASE_IMAGE_PREFIX:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library}/alpine:3.20`，
-   前端同理使用 `${BASE_PREFIX}/nginx:1.27-alpine`；镜像名取 `NW_BACKEND_IMAGE` /
-   `NW_FRONTEND_IMAGE`，缺省 `localhost/novel-workbench-{backend,frontend}:latest`。
-4. **清理陈旧 DNAT**：rootless podman 重建容器后残留的 `CNI-HOSTPORT-DNAT` 规则会导致
-   宿主端口不可达。`drop_stale_dnat()` 删除指向 `127.0.0.1` 的空规则；
-   `cleanup_port_dnat()` 在重建前删除 `NW_PUBLIC_PORT`（默认 14399）与 8080 的全部
-   `CNI-DN-*` 跳转规则，容器启动时 podman 只为新容器写入一条规则。无 `iptables` 命令时跳过。
-5. **重建容器**：`podman-compose -f docker-compose.yml up -d --force-recreate`，
-   输出重定向到服务器本地日志（默认 `/var/log/novelworkbench-compose.log`）。
-   之所以重定向：podman-compose 会把含明文口令的 `podman run` 命令打到 stdout；
-   之所以加 `--force-recreate`：podman-compose 1.x 不会因镜像 ID 变化自动重建容器。
-   失败时打印日志尾部 40 行并退出；成功后再次清理 DNAT。
-6. **健康自检**：最多 `30` 次、间隔 `2` 秒轮询
-   `podman exec nw-backend wget -qO- http://127.0.0.1:8080/health`、
-   `podman exec nw-backend wget -qO- http://127.0.0.1:8080/ready`、
-   `curl -fsS http://127.0.0.1:${NW_PUBLIC_PORT:-14399}/healthz`，
-   三者全部有响应且 `/healthz` 内容为 `ok` 即判定成功，
-   打印 `podman ps` 列表并退出 0；超时则打印容器状态与后端日志尾部（过滤 `password` 行）后退出非 0。
-
-### 6.4 DNS 差异（关键）
-
-| 环境 | DNS 行为 | `API_UPSTREAM` 写法 |
+| 步骤 | 行为 | 失败处理 |
 | --- | --- | --- |
-| Docker | 内嵌 DNS（`127.0.0.11`）应答裸服务名 | `http://backend:8080` |
-| Podman | aardvark/dnsname 只应答 `search` 域 FQDN（`resolv.conf` 的 `search dns.podman`），nginx resolver 不做后缀补全 | `http://backend.dns.podman:8080` |
+| 1 预检 | 校验后端二进制、`frontend/dist/index.html`、`nginx.conf.template`、`backend/configs/config.yaml`、`ENV_FILE`（默认 `.env`） | 任一缺失即 `die` 退出 |
+| 2 导出环境 | `set -a; . ./.env; set +a`，`NW_*` 全部进入环境 | — |
+| 3 组装上下文 | 清空 `deploy/podman/build/`，拷入 `nw-server`（加可执行位）、`config.yaml`、宿主机 `/etc/ssl/certs/ca-certificates.crt`、`dist/`、`nginx.conf.template` | 缺 CA bundle 即退出 |
+| 4 构建镜像 | `podman build -f Dockerfile.backend --build-arg BASE_IMAGE=${BASE_PREFIX}/alpine:3.20`，前端同理用 `nginx:1.27-alpine` | `set -e` 中止 |
+| 5 清理 DNAT | `drop_stale_dnat` 删除指向 `127.0.0.1` 的空规则；`cleanup_port_dnat` 删除 `NW_PUBLIC_PORT` 与 `8080` 的 `CNI-DN-*` 跳转 | 无 `iptables` 命令时跳过 |
+| 6 重建容器 | `podman-compose up -d --force-recreate`，输出重定向到 `COMPOSE_LOG` | 打印日志尾部 40 行后 `die` |
+| 7 健康自检 | 最多 30 次、间隔 2 秒，检查 `podman exec nw-backend ... /health`、`/ready`、`curl .../healthz` | 超时打印 `podman ps` 与后端日志尾部（过滤 `password` 行）后退出非 0 |
 
-因此 Podman 编排中 `API_UPSTREAM` 必须写完整域名 `backend.dns.podman`；
-写裸 `backend` 会导致 nginx 解析失败、`/api/` 返回 502。
+两处设计取舍：
 
----
+- 输出重定向：`podman-compose` 会把含明文口令的 `podman run` 命令打到 stdout，日志只落服务器本地文件。
+- `--force-recreate`：`podman-compose` 1.x 不会因镜像 ID 变化自动重建容器，必须显式指定。
 
-## 7. CI/CD
+### 8.4 DNAT 与 rootless Podman
 
-### 7.1 工作流总览
+rootless podman 在容器重建后可能残留旧容器的 `CNI-HOSTPORT-DNAT` 规则，导致宿主端口指向已失效的容器 IP。`deploy.sh` 在重建前后各清理一次：`drop_stale_dnat` 循环删除指向 `127.0.0.1` 的空跳转，`cleanup_port_dnat <port>` 按 `--dports` 找出 `CNI-DN-*` 链并逐条删除 `CNI-HOSTPORT-DNAT` 中的跳转，容器启动时 podman 只为新容器写入唯一规则。
 
-| 工作流 | 文件 | 触发 | Job | 内容 |
-| --- | --- | --- | --- | --- |
-| CI | `.github/workflows/ci.yml` | `push` 到 `main`；`pull_request` 目标 `main` | `backend` | `go vet ./...`；`CGO_ENABLED=0 go build -tags "netgo osusergo" ./...`；`CGO_ENABLED=0 go test -short -count=1 -shuffle=on ./...` |
-| CI | 同上 | 同上 | `frontend` | `npm ci`；`npm run test`；`npm run build`（`vue-tsc && vite build`） |
-| CI | 同上 | 同上 | `docker`（`needs: [backend, frontend]`） | `docker build -t novel-workbench-backend:ci ./backend`；`docker build -t novel-workbench-frontend:ci ./frontend` |
-| Release | `.github/workflows/release.yml` | 推送 `v*` tag | `release` | 归一镜像前缀 → 登录 GHCR → 构建并推送 backend / frontend 镜像（同时打 `:latest`） |
+由于后端不映射宿主端口，探活一律用 `podman exec` 进容器访问 `127.0.0.1:8080`，不受 DNAT 影响。
 
-CI 细节：
+### 8.5 DNS 差异
 
-- `backend` job 设 `GOTOOLCHAIN: local`（与 `backend/Dockerfile` 一致：go.mod 版本必须能被固定工具链直接构建）
-  与 `CGO_ENABLED: "0"`（全流水线静态构建，禁止 cgo）；`working-directory: backend`。
-- `setup-go` 用 `go-version: "1.24"`、`cache-dependency-path: backend/go.sum`。
-- `setup-node` 用 `node-version: "22"`、`cache: npm`、
-  **`cache-dependency-path: frontend/package-lock.json`**。
-  `setup-node` 的缓存依赖路径相对**仓库根**解析，而前端锁文件在 `frontend/` 下；
-  若缺省会直接报 `Dependencies lock file is not found` 并使整个 Frontend Check 失败。
-- Release job 需要 `permissions: contents: read` 与 `packages: write`。
+| 环境 | DNS 行为 | `API_UPSTREAM` |
+| --- | --- | --- |
+| Docker | 内嵌 DNS `127.0.0.11` 应答裸服务名 | `http://backend:8080` |
+| Podman | aardvark/dnsname 只应答 `search` 域 FQDN（`resolv.conf` 中为 `dns.podman`），nginx resolver 不做后缀补全 | `http://backend.dns.podman:8080` |
 
-### 7.2 GHCR 小写仓库名归一
+Podman 下写成裸 `backend` 会导致 nginx 解析失败、`/api/` 返回 502；`NGINX_RESOLVER` 必须是 podman 网络网关地址（默认 `10.89.0.1`）。
 
-GHCR 要求镜像仓库名全小写，而 GitHub 仓库名允许含大写字母。
-Release 工作流在 `Normalize image prefix` 步骤归一：
+## 9. CI/CD
+
+### 9.1 工作流
+
+| 工作流 | 触发 | Job | 内容 |
+| --- | --- | --- | --- |
+| `ci.yml` | `push` 到 `main`、`pull_request` 目标 `main` | `backend` | `go vet ./...`、`CGO_ENABLED=0 go build -tags "netgo osusergo" ./...`、`CGO_ENABLED=0 go test -short -count=1 -shuffle=on ./...` |
+| `ci.yml` | 同上 | `frontend` | `npm ci`、`npm run test`（`vitest run`）、`npm run build`（`vue-tsc && vite build`） |
+| `ci.yml` | 同上 | `docker`（`needs: [backend, frontend]`） | `docker build -t novel-workbench-backend:ci ./backend`、`docker build -t novel-workbench-frontend:ci ./frontend` |
+| `release.yml` | 推送 `v*` tag | `release` | 归一镜像前缀 → 登录 GHCR → 构建并推送 backend / frontend |
+
+CI 关键设置：
+
+| 项 | 值 | 原因 |
+| --- | --- | --- |
+| `GOTOOLCHAIN` | `local` | 与 `backend/Dockerfile` 一致，禁止构建期拉取其它 Go 版本 |
+| `CGO_ENABLED` | `0` | 全流水线静态构建 |
+| `go-version` | `1.24` | 与 `go.mod`、镜像构建层一致 |
+| `node-version` | `22` | 与 `frontend/Dockerfile` 构建层一致 |
+| `cache-dependency-path`（Go） | `backend/go.sum` | job 级 `working-directory: backend` |
+| `cache-dependency-path`（Node） | `frontend/package-lock.json` | `setup-node` 的缓存路径相对仓库根解析 |
+
+### 9.2 GHCR 小写归一
+
+GHCR 要求镜像仓库名全小写，GitHub 仓库名允许大写。`release.yml` 的 `Normalize image prefix` 步骤：
 
 ```bash
 echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 ```
 
-`${GITHUB_REPOSITORY,,}` 是 bash 小写展开。例如 `2132691342/NovelWorkbench`
-→ `ghcr.io/2132691342/novelworkbench`，两个镜像构建步骤共用该 `prefix` 输出：
+`${GITHUB_REPOSITORY,,}` 为 bash 小写展开，例如 `2132691342/NovelWorkbench` → `ghcr.io/2132691342/novelworkbench`。两个构建步骤共用该输出：
 
 | 镜像 | 标签 |
 | --- | --- |
-| `<prefix>/backend` | `${{ github.ref_name }}`（tag 名）与 `latest` |
-| `<prefix>/frontend` | `${{ github.ref_name }}`（tag 名）与 `latest` |
+| `<prefix>/backend` | `${{ github.ref_name }}` 与 `latest` |
+| `<prefix>/frontend` | `${{ github.ref_name }}` 与 `latest` |
 
-登录 GHCR 使用 `registry: ghcr.io`、`username: ${{ github.actor }}`、
-`password: ${{ secrets.GITHUB_TOKEN }}`。
+权限为 `contents: read` 与 `packages: write`；登录用 `github.actor` + `secrets.GITHUB_TOKEN`。
 
-### 7.3 Action 版本
+### 9.3 Action 版本
 
 | Action | 版本 |
 | --- | --- |
@@ -491,31 +402,110 @@ echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 | `docker/login-action` | v4 |
 | `docker/build-push-action` | v7 |
 
-### 7.4 发布与更新
+### 9.4 发布与回滚
 
 ```bash
-# 打 tag 触发 Release 工作流
-git tag v1.0.0 && git push origin v1.0.0
-
-# 使用 GHCR 镜像的主机拉取并滚动更新
-docker compose pull && docker compose up -d
-docker compose ps
+git tag v1.0.0 && git push origin v1.0.0     # 触发 Release，产出 GHCR 镜像
+docker compose pull && docker compose up -d  # 使用 GHCR 镜像的主机滚动更新
 ```
 
-Podman 主机不拉 GHCR，由 `deploy.sh` 从预构建产物本地构建运行镜像（见第 6 节）。
+Podman 主机不拉 GHCR，由 `deploy.sh` 从预构建产物本地构建。回滚方式：切回上一版本镜像 tag 后重建容器（`podman-compose up -d --force-recreate` 或 `docker compose up -d`）；`AutoMigrate` 只做增量建表，回滚旧二进制前需确认新增表不被旧代码依赖。
 
----
+## 10. 运维
 
-## 8. 运维要点
+### 10.1 健康检查
 
-| 事项 | 做法 |
+| 端点 | 语义 | 实现 | 期望 |
+| --- | --- | --- | --- |
+| `GET /health` | 进程存活，不查依赖 | `api.healthCheck` | 200，`data` 为 `{"status":"up"}` |
+| `GET /ready` | 依赖就绪 | `api.readyCheck`，Ping PostgreSQL（2s 超时） | 200，`data` 为 `{"status":"ready"}`；失败返回 `ERR_STORAGE`（HTTP 503） |
+| `GET /healthz`（前端） | nginx 存活 | `return 200 "ok"` | 文本 `ok` |
+| `GET /api/v1/system/status` | 逐项探测五个中间件并返回 `NW_APP_BUILD_VERSION` | `service.SystemStatusService` | 需权限码 `system:status:read` |
+
+`/health` 与 `/ready` 挂在根引擎，不在 `/api/v1` 下，nginx 未反代，只能进容器内访问。
+
+### 10.2 日常巡检
+
+| 周期 | 检查项 |
 | --- | --- |
-| 健康检查 | 后端 `/health` 只回存活（`{"status":"up"}`）；后端 `/ready` Ping PostgreSQL（2s 超时），失败返回「依赖未就绪」；前端 `/healthz` 恒回 `ok`，不依赖后端；nginx 上游不可达时 `/api/` 返回 502 |
-| 容器健康探针 | 编排中 backend 用容器内 `wget -qO- http://127.0.0.1:8080/health`，frontend 用 `wget -qO- http://127.0.0.1/healthz`（Podman 为 `:80/healthz`），均为 30s 间隔 / 5s 超时 / 3 次重试；发布脚本同样用 `podman exec` 探后端 |
-| 日志 | 后端输出 zap 生产级 JSON 到 stdout；`docker compose logs -f backend` / `podman logs -f nw-backend` 查看；`podman-compose` 的编排输出落在服务器本地日志 `/var/log/novelworkbench-compose.log`（含明文口令，不要外传） |
-| 优雅关闭 | 收到 SIGTERM/SIGINT 后：HTTP Server `Shutdown`（5s 超时）→ 等待知识库索引 worker 退出（5s 超时）→ 依次关闭 Postgres、Redis、RabbitMQ 连接 |
-| 配置变更 | 修改 `NW_*` 环境变量后重建容器（`docker compose up -d` 或 `bash deploy.sh`）；凭据只放 `.env`，不要写回 `backend/configs/config.yaml`；YAML 中敏感项保持空值 |
-| 密钥轮换 | 轮换 `NW_JWT_SECRET` 会使已签发 JWT 全部失效，并导致数据库中封存的供应商 API Key 无法解密；**必须在「模型供应商」页面重新填写各供应商 API Key**（见 2.3） |
-| 中间件凭据变更 | 变更 PostgreSQL / Redis / RabbitMQ / MinIO 口令时，需同步更新 `.env` 中对应的**中间件初始化变量与应用连接变量**（如 RabbitMQ 需同时改 `NW_RABBITMQ_USER`/`NW_RABBITMQ_PASSWORD`/`NW_RABBITMQ_URL`），否则应用与中间件将使用不同凭据 |
-| 备份 | 按中间件方案执行：PostgreSQL 定期 dump（`nw_pg_data` 或 `pg_dump`）、MinIO 桶数据备份（`nw_minio_data`）、Manticore 索引可由数据库切片重建 |
-| 状态页 | 应用内「运行状态」接口（`service.NewSystemStatusService`）会逐项探测 PostgreSQL / Redis / RabbitMQ / MinIO / Manticore 并展示 `NW_APP_BUILD_VERSION`，可用于确认当前部署版本与依赖健康 |
+| 每日 | `podman ps` / `docker compose ps` 全部 Up（healthy）；`/health`、`/ready` 返回 200；后端日志无连续 `unhandled_error` 与「连接失败」；任务中心无持续增长的 failed；登录日志无异常 IP 批量失败 |
+| 每周 | 磁盘占用（PostgreSQL 数据、MinIO、Manticore、容器日志）；模型用量与失败率；通知中心未处理的任务失败；抽查审计日志中的高危操作 |
+
+值班命令（后端不映射宿主端口，探活一律进容器；中间件容器名按实际栈调整——`infra` profile 为 `nw-postgres` / `nw-redis` / `nw-rabbitmq`，云主机既有栈为宿主上的既有名称）：
+
+```bash
+podman ps --format '{{.Names}} | {{.Status}} | {{.Ports}}'
+curl -fsS http://127.0.0.1:14399/healthz
+podman exec nw-backend wget -qO- http://127.0.0.1:8080/health
+podman exec nw-backend wget -qO- http://127.0.0.1:8080/ready
+podman logs --tail 200 nw-backend
+podman exec nw-rabbitmq rabbitmqctl list_queues name messages consumers
+podman exec nw-redis redis-cli -a "$NW_REDIS_PASSWORD" ping
+podman exec nw-postgres psql -U postgres -c 'select count(*) from users;'
+curl -sS 'http://127.0.0.1:9308/sql?mode=raw&query=SHOW+TABLES'
+```
+
+### 10.3 常见故障
+
+| 现象 | 排查 | 处理 |
+| --- | --- | --- |
+| 登录后立刻掉线 | 后端日志 401 峰值；Redis 是否可用；账号是否被禁用 | 恢复 Redis；重新登录（密钥轮换后旧令牌全部失效）；启用账号 |
+| 文档长期 `pending` | 任务中心状态；RabbitMQ 队列消费者数；worker 日志 | 恢复 RabbitMQ；任务中心「重试」会把文档重置为 `pending` 并重新投递；`maxIndexRetryCount=3` 后需人工重试 |
+| 文档索引 `failed` | 任务的 `error_message` | 常见为文档为空、格式不支持、MinIO 读取失败；修复后重试 |
+| 搜索无结果 | 文档状态是否为 `indexed`；`nw_chunks` 表是否存在；日志「Manticore 同步失败」 | 索引可重建；关键词过短或全为停用词也会无召回 |
+| AI 调用失败 | 模型供应商页连通性测试；Base URL 协议；密钥是否被轮换 | OpenAI 兼容需含 `/v1`，Anthropic 填根地址；密钥轮换后需在页面重填 |
+| 前端 502 / 白屏 | `podman logs nw-frontend` 看上游解析；`API_UPSTREAM` 与 `NGINX_RESOLVER` | Docker 用 `backend:8080`，Podman 用 `backend.dns.podman:8080`；确认 `nw-backend` healthy |
+| 静态资源 404 | 镜像内 `dist` 是否完整 | 重新构建前端镜像 |
+| 14399 不通 | `podman port nw-frontend` 应为 `0.0.0.0:14399 -> 80/tcp`；云安全组；`iptables -t nat -L CNI-HOSTPORT-DNAT` | 放行安全组；重跑 `deploy.sh` 触发 DNAT 清理 |
+| 编排启动即失败 | `NW_*` 必填项是否缺失（`${VAR:?}`） | 补齐 `.env` 后重建 |
+
+### 10.4 备份与恢复
+
+| 数据 | 方式 | 频率 | 说明 |
+| --- | --- | --- | --- |
+| PostgreSQL | `pg_dump -Fc` | 每日 | 权威数据，必须备份 |
+| MinIO | `mc mirror` 到备份桶 | 每日 | 知识库原文 |
+| Manticore | 无需备份 | — | 索引可由 PostgreSQL 切片重建（`ensureManticoreSchema` + `rebuildManticoreIndex`） |
+| `.env` | 密码管理器 / 加密备份 | 变更时 | 含全部凭据与封存材料来源 |
+
+```bash
+podman exec nw-postgres pg_dump -U postgres -Fc postgres > nw-$(date +%F).dump
+mc mirror --overwrite local/novelworkbench backup/novelworkbench
+```
+
+恢复顺序：停止后端 → `pg_restore` 恢复数据库 → `mc mirror` 恢复桶 → 启动后端（`AutoMigrate` 补齐表结构）→ 任务中心重试失败任务 → 登录验证项目、章节、知识库与通知。
+
+### 10.5 容量与性能
+
+| 资源 | 当前约束 | 扩容方向 |
+| --- | --- | --- |
+| 后端内存 | podman 编排 `mem_limit: 384m` | 高并发或大文档索引时提升到 768m 以上 |
+| PostgreSQL 连接 | `max_open_conns=20`、`max_idle_conns=5`、`conn_max_lifetime_min=30` | 多实例时按实例下调 |
+| Redis | `infra` profile 中 `maxmemory 256mb`、`allkeys-lru` | 仅存令牌黑名单，容量需求低 |
+| RabbitMQ | 单队列 `nw_doc_index` 持久化 | 索引吞吐不足时增加 worker 实例 |
+| Manticore | 单表 `nw_chunks`（CJK ngram） | 按项目分区或分片需改检索层 |
+| 上传 | 后端按 `NW_APP_UPLOAD_MAX_MB=20` 校验（`KnowledgeIndexConfig.UploadMaxMB`）；反代上限由 `NW_CLIENT_MAX_BODY_SIZE` 控制，缺省 `20m` | 两者需保持一致；调大时同时改 `NW_CLIENT_MAX_BODY_SIZE` 与 `NW_APP_UPLOAD_MAX_MB`，只改一处会出现反代 413 或后端拒绝 |
+| 索引重连 | `consumeReconnectInterval = 5s` | 队列抖动时自动重连 |
+
+### 10.6 日志与排障
+
+| 日志 | 位置 | 用途 |
+| --- | --- | --- |
+| 后端结构化日志 | `podman logs nw-backend` / `docker compose logs backend` | 请求、错误、降级、worker；zap production JSON 输出到 stdout |
+| 前端 nginx | `podman logs nw-frontend` | 上游解析、静态资源、代理错误 |
+| 编排日志 | `/var/log/novelworkbench-compose.log`（`COMPOSE_LOG` 可覆盖） | 发布失败现场；含明文口令，禁止外传 |
+| 审计日志 | `audit_logs` 表 / 管理页 | 写操作追溯 |
+| 登录日志 | `login_logs` 表 / 管理页 | 登录安全 |
+| 任务中心 | 管理页 | 索引任务状态与失败原因 |
+
+日志字段：`RequestIDMiddleware` 为每条请求分配 `request_id`（透传 `X-Request-ID`），`LoggerMiddleware` 输出 `http_request` 含 `method`、`path`、`status`、`latency_ms`；响应包络的 `trace_id` 与之一致，报错时提供给用户即可定位。
+
+### 10.7 变更操作
+
+| 操作 | 做法 |
+| --- | --- |
+| 修改配置 | 改 `.env` 后重建容器（`docker compose up -d` 或 `bash deploy.sh`）；不要回写 `backend/configs/config.yaml` |
+| 轮换 `NW_JWT_SECRET` | 所有 JWT 失效 + 供应商 API Key 需在页面重填（见 4.3） |
+| 变更中间件口令 | 同步更新 `.env` 中中间件初始化变量与应用连接变量（RabbitMQ 需同时改 `NW_RABBITMQ_USER` / `NW_RABBITMQ_PASSWORD` / `NW_RABBITMQ_URL`） |
+| 引导管理员密码 | 仅在用户表为空时生效；已有数据时改配置不会重置密码 |
+| 增加索引吞吐 | 新增消费同一队列的 worker 实例（需保证部署形态支持多副本） |

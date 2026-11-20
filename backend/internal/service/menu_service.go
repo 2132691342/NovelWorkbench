@@ -405,21 +405,6 @@ func buildPermCatalog(dos []domain.MenuDO) []domain.PermGroupVO {
 	return result
 }
 
-// PermCodeList 全部权限码清单（角色保存时校验用）。
-func (s *MenuService) PermCodeList(ctx context.Context) ([]string, error) {
-	groups, err := s.PermissionCatalog(ctx)
-	if err != nil {
-		return nil, err
-	}
-	codes := make([]string, 0, 16)
-	for i := range groups {
-		for j := range groups[i].PermList {
-			codes = append(codes, groups[i].PermList[j].PermCode)
-		}
-	}
-	return codes, nil
-}
-
 // menuDescOf 生成权限条目说明（动作节点标注为动作）。
 func menuDescOf(do *domain.MenuDO, selfName map[string]string) string {
 	if do.MenuTypeCode == domain.MenuTypeAction {

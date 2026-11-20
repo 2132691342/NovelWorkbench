@@ -159,12 +159,3 @@ type SkillResolveDTO struct {
 	MissingList   []string          `json:"missing_list"`   // 缺失的必填变量
 	RefTextList   []string          `json:"ref_text_list"`  // 命中的参考资料正文
 }
-
-// SkillRenderDTO 技能提示词渲染结果（供对话链路装配指令）。
-type SkillRenderDTO struct {
-	SkillCode    string            `json:"skill_code"`    // 技能编码
-	SkillName    string            `json:"skill_name"`    // 技能名称
-	RenderedText string            `json:"rendered_text"` // 渲染后的提示词
-	VariableMap  map[string]string `json:"variable_map"`  // 变量取值
-	RefTextList  []string          `json:"ref_text_list"` // 参考资料正文
-}

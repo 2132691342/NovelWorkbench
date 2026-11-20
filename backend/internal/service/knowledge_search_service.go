@@ -101,7 +101,7 @@ func (s *KnowledgeService) maybeRerank(ctx context.Context, query string, hits [
 		trace.RerankNote = "未配置重排模型，按检索得分排序"
 		return trimHits(hits, topK)
 	}
-	spec, err := s.providerSvc.ChatSpec(ctx)
+	spec, err := s.providerSvc.DefaultChatSpec(ctx)
 	if err != nil {
 		trace.RerankNote = "重排跳过：" + err.Error()
 		return trimHits(hits, topK)

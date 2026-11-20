@@ -21,7 +21,7 @@ func NewSystemStatusAPI(s *service.SystemStatusService) *SystemStatusAPI {
 
 // Status 查询系统运行状态（GET /system/status，依赖探测并发执行）。
 func (a *SystemStatusAPI) Status(c *gin.Context) {
-	vo, err := a.svc.Status(c.Request.Context())
+	vo, err := a.svc.Status(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID))
 	if err != nil {
 		respondErr(c, "system.status", err)
 		return

@@ -260,3 +260,32 @@
   color: var(--text-placeholder);
   font-size: 10.5px;
 }
+
+/* 模型选项：名称 + 供应商副标题两行，避免长模型名挤断 */
+.ai-panel__model-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-panel__model-option-name {
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.ai-panel__model-option-meta {
+  font-size: 11px;
+  color: var(--text-placeholder);
+}
+
+/* 协议徽标：提示当前模型的调用协议 */
+.ai-panel__model-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--primary-soft);
+  color: var(--primary-active);
+  font-size: 10px;
+  text-transform: uppercase;
+}

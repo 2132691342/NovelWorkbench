@@ -1,4 +1,4 @@
-// 本文件实现模型供应商模块的 HTTP 处理器：供应商 CRUD、连通性测试与默认切换。
+// 本文件实现模型生态模块的 HTTP 处理器：供应商、模型目录、角色分配、连通性测试与能力探测。
 
 package api
 
@@ -10,19 +10,19 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/service"
 )
 
-// ModelProviderAPI 模型供应商模块 HTTP 处理器（协议、密钥、默认切换、连通性测试）。
+// ModelProviderAPI 模型生态模块 HTTP 处理器。
 type ModelProviderAPI struct {
 	svc *service.ModelProviderService
 }
 
-// NewModelProviderAPI 构造模型供应商处理器。
+// NewModelProviderAPI 构造模型生态处理器。
 func NewModelProviderAPI(s *service.ModelProviderService) *ModelProviderAPI {
 	return &ModelProviderAPI{svc: s}
 }
 
-// List 查询供应商列表（POST /model/provider/list，密钥仅回显掩码）。
-func (a *ModelProviderAPI) List(c *gin.Context) {
-	vos, err := a.svc.List(c.Request.Context())
+// ProviderList 查询供应商列表（POST /model/provider/list，密钥仅回显掩码）。
+func (a *ModelProviderAPI) ProviderList(c *gin.Context) {
+	vos, err := a.svc.ListProviders(c.Request.Context())
 	if err != nil {
 		respondErr(c, "model.provider.list", err)
 		return
@@ -30,14 +30,14 @@ func (a *ModelProviderAPI) List(c *gin.Context) {
 	pkg.Ok(c, vos)
 }
 
-// Save 新建/更新供应商（POST /model/provider/save）。
-func (a *ModelProviderAPI) Save(c *gin.Context) {
+// ProviderSave 新建/更新供应商（POST /model/provider/save）。
+func (a *ModelProviderAPI) ProviderSave(c *gin.Context) {
 	var req domain.ModelProviderREQ
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondErr(c, "model.provider.save", bindErr(err))
 		return
 	}
-	vo, err := a.svc.Save(c.Request.Context(), &req)
+	vo, err := a.svc.SaveProvider(c.Request.Context(), &req)
 	if err != nil {
 		respondErr(c, "model.provider.save", err)
 		return
@@ -45,28 +45,28 @@ func (a *ModelProviderAPI) Save(c *gin.Context) {
 	pkg.Ok(c, vo)
 }
 
-// Delete 删除供应商（POST /model/provider/delete，默认供应商需先切换）。
-func (a *ModelProviderAPI) Delete(c *gin.Context) {
+// ProviderDelete 删除供应商（POST /model/provider/delete，其下仍有模型时拒绝）。
+func (a *ModelProviderAPI) ProviderDelete(c *gin.Context) {
 	var req domain.ModelProviderDeleteREQ
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondErr(c, "model.provider.delete", bindErr(err))
 		return
 	}
-	if err := a.svc.Delete(c.Request.Context(), &req); err != nil {
+	if err := a.svc.DeleteProvider(c.Request.Context(), &req); err != nil {
 		respondErr(c, "model.provider.delete", err)
 		return
 	}
 	pkg.Ok(c, nil)
 }
 
-// Test 连通性测试（POST /model/provider/test，结果回写供应商记录）。
-func (a *ModelProviderAPI) Test(c *gin.Context) {
+// ProviderTest 供应商连通性测试（POST /model/provider/test）。
+func (a *ModelProviderAPI) ProviderTest(c *gin.Context) {
 	var req domain.ModelProviderTestREQ
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondErr(c, "model.provider.test", bindErr(err))
 		return
 	}
-	dto, err := a.svc.Test(c.Request.Context(), &req)
+	dto, err := a.svc.TestProvider(c.Request.Context(), &req)
 	if err != nil {
 		respondErr(c, "model.provider.test", err)
 		return
@@ -74,27 +74,99 @@ func (a *ModelProviderAPI) Test(c *gin.Context) {
 	pkg.Ok(c, dto)
 }
 
-// Capability 查询当前 AI 能力（GET /model/capability，前端据此提示可用性）。
-func (a *ModelProviderAPI) Capability(c *gin.Context) {
-	vo, err := a.svc.Capability(c.Request.Context())
+// ModelList 查询模型目录（POST /model/catalog/list，provider_ulid 可空）。
+func (a *ModelProviderAPI) ModelList(c *gin.Context) {
+	var req domain.ModelCatalogListREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "model.catalog.list", bindErr(err))
+		return
+	}
+	vos, err := a.svc.ListModels(c.Request.Context(), req.ProviderULID)
 	if err != nil {
-		respondErr(c, "model.capability", err)
+		respondErr(c, "model.catalog.list", err)
+		return
+	}
+	pkg.Ok(c, vos)
+}
+
+// ModelSave 新建/更新模型（POST /model/catalog/save，含角色授权整体覆盖）。
+func (a *ModelProviderAPI) ModelSave(c *gin.Context) {
+	var req domain.ModelCatalogREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "model.catalog.save", bindErr(err))
+		return
+	}
+	vo, err := a.svc.SaveModel(c.Request.Context(), &req)
+	if err != nil {
+		respondErr(c, "model.catalog.save", err)
 		return
 	}
 	pkg.Ok(c, vo)
 }
 
-// ChatOptions 查询可选对话供应商（GET /model/chat_options，AI 面板模型选择器消费）。
-func (a *ModelProviderAPI) ChatOptions(c *gin.Context) {
-	vo, err := a.svc.Capability(c.Request.Context())
-	if err != nil {
-		respondErr(c, "model.chat_options", err)
+// ModelDelete 删除模型（POST /model/catalog/delete）。
+func (a *ModelProviderAPI) ModelDelete(c *gin.Context) {
+	var req domain.ModelCatalogDeleteREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "model.catalog.delete", bindErr(err))
 		return
 	}
-	options, err := a.svc.List(c.Request.Context())
-	if err != nil {
-		respondErr(c, "model.chat_options", err)
+	if err := a.svc.DeleteModel(c.Request.Context(), &req); err != nil {
+		respondErr(c, "model.catalog.delete", err)
 		return
 	}
-	pkg.Ok(c, gin.H{"capability_vo": vo, "provider_list": options})
+	pkg.Ok(c, nil)
+}
+
+// ModelTest 模型连通性测试（POST /model/catalog/test）。
+func (a *ModelProviderAPI) ModelTest(c *gin.Context) {
+	var req domain.ModelCatalogTestREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "model.catalog.test", bindErr(err))
+		return
+	}
+	dto, err := a.svc.TestModel(c.Request.Context(), &req)
+	if err != nil {
+		respondErr(c, "model.catalog.test", err)
+		return
+	}
+	pkg.Ok(c, dto)
+}
+
+// ModelSetDefault 设为系统默认模型（POST /model/catalog/set_default）。
+func (a *ModelProviderAPI) ModelSetDefault(c *gin.Context) {
+	var req domain.ModelCatalogTestREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "model.catalog.set_default", bindErr(err))
+		return
+	}
+	if err := a.svc.SetDefaultModel(c.Request.Context(), &req); err != nil {
+		respondErr(c, "model.catalog.set_default", err)
+		return
+	}
+	pkg.Ok(c, nil)
+}
+
+// ModelGrant 整体覆盖模型的角色授权（POST /model/catalog/grant）。
+func (a *ModelProviderAPI) ModelGrant(c *gin.Context) {
+	var req domain.ModelGrantREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "model.catalog.grant", bindErr(err))
+		return
+	}
+	if err := a.svc.GrantModel(c.Request.Context(), &req); err != nil {
+		respondErr(c, "model.catalog.grant", err)
+		return
+	}
+	pkg.Ok(c, nil)
+}
+
+// Capability 查询当前用户的 AI 能力（GET /model/capability）。
+func (a *ModelProviderAPI) Capability(c *gin.Context) {
+	vo, err := a.svc.Capability(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID))
+	if err != nil {
+		respondErr(c, "model.capability", err)
+		return
+	}
+	pkg.Ok(c, vo)
 }

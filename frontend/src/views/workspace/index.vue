@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { getChapterDetail } from '@/api/chapter'
 import { getProjectTree } from '@/api/project'
@@ -187,6 +187,25 @@ function handleInsertToChapter(contentText: string): void {
   ElMessage.success(t('workspace.insertSuccess'))
 }
 
+/** AI 回复替换整章正文（二次确认后走编辑器同一自动保存通道） */
+async function handleReplaceChapter(contentText: string): Promise<void> {
+  if (!currentChapterDetail.value) {
+    ElMessage.warning(t('workspace.insertNoChapter'))
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      t('workspace.ai.replaceChapterConfirm'),
+      t('workspace.ai.replaceChapter'),
+      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') },
+    )
+  } catch {
+    return
+  }
+  editorRef.value?.replaceContent(contentText)
+  ElMessage.success(t('workspace.ai.replaceChapterSuccess'))
+}
+
 /** 快照入口：打开前先落盘，保证留档/回滚基于最新正文 */
 async function handleOpenSnapshot(): Promise<void> {
   if (!currentChapterDetail.value) {
@@ -327,6 +346,7 @@ onMounted(() => {
           :current-chapter-ulid="currentChapterDetail?.chapter_ulid ?? ''"
           :current-chapter-name="currentChapterName"
           @insert-to-chapter="handleInsertToChapter"
+          @replace-chapter="handleReplaceChapter"
         />
       </aside>
     </div>

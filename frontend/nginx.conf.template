@@ -10,6 +10,9 @@ server {
     # 容器网络 DNS（docker 内嵌 DNS 127.0.0.11；podman 为网络网关），每次请求重解析上游
     resolver ${NGINX_RESOLVER} valid=10s;
 
+    # 上传体积上限：与后端 NW_APP_UPLOAD_MAX_MB 对齐，避免反代先于后端返回 413
+    client_max_body_size ${NW_CLIENT_MAX_BODY_SIZE};
+
     # 容器健康探针（不依赖后端）
     location = /healthz {
         access_log off;

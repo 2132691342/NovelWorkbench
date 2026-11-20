@@ -62,6 +62,7 @@ services:
       NGINX_RESOLVER: ${NW_NGINX_RESOLVER:-10.89.0.1}
       API_UPSTREAM: ${NW_API_UPSTREAM:-http://backend.dns.podman:8080}
       NW_LISTEN_PORT: "80"
+      NW_CLIENT_MAX_BODY_SIZE: ${NW_CLIENT_MAX_BODY_SIZE:-20m}
     ports:
       - "${NW_PUBLIC_PORT:-14399}:80"
     healthcheck:

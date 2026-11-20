@@ -1,0 +1,62 @@
+/* 模型表单抽屉：两列栅格，全宽字段跨列；窄屏自动单列。 */
+.model-form-drawer :deep(.el-drawer__body) {
+  padding: 20px 24px 8px;
+}
+
+.model-form {
+  height: 100%;
+}
+
+.model-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 24px;
+}
+
+.model-form__span {
+  grid-column: 1 / -1;
+}
+
+.model-form__hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.model-form__inline-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.model-form__provider {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: var(--radius-base);
+  background-color: var(--bg-page);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.model-form__provider strong {
+  color: var(--text-main);
+}
+
+.model-form__roles {
+  width: 100%;
+}
+
+/* 表单控件统一圆角与过渡，与全站五态按钮同一套节奏 */
+.model-form :deep(.el-input__wrapper),
+.model-form :deep(.el-textarea__inner),
+.model-form :deep(.el-select__wrapper) {
+  border-radius: var(--radius-base);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+@media (max-width: 900px) {
+  .model-form__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -11,7 +11,8 @@
   width: 100%;
   max-width: var(--layout-content-max-width);
   margin: 0 auto;
-  animation: nw-page-enter 0.28s ease both;
+  /* 不保留填充态：动画结束后不得残留 transform，否则会成为 fixed 定位子元素（抽屉/弹窗）的包含块 */
+  animation: nw-page-enter 0.28s ease;
 }
 
 @keyframes nw-page-enter {

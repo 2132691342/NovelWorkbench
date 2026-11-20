@@ -1,632 +1,583 @@
 # 数据存储设计
 
-本文描述 NovelWorkbench 当前的存储分工、表结构、枚举取值、索引与一致性策略。
-所有表名、列名、类型均取自 `backend/internal/domain/*.go` 的 GORM 标签，经 GORM 命名策略
-（`backend/internal/infra/postgres.go` 的 `ULIDNamingStrategy`）归一后与实际 DDL 一致。
+本文描述 NovelWorkbench 的存储分工与降级行为、命名约定、32 张表的列结构、枚举取值、非关系存储、启动播种、事务与一致性边界、索引约束、迁移策略与备份恢复要点。
+事实来源为 `backend/internal/domain/*.go` 的 GORM 标签、`backend/cmd/server/main.go` 的装配与 `AutoMigrate` 列表、`backend/internal/repo/` 与 `backend/internal/service/` 的读写路径、`backend/configs/config.yaml` 的存储参数。
 
-数据库结构由 `cmd/server/main.go` 的 `db.AutoMigrate(...)` 一次性声明 30 张表，
-**没有 SQL 迁移文件**，也没有外键、软删除与数据库级级联。
+## 1. 存储分工与降级
 
-## 1. 存储分工
-
-| 存储 | 职责 | 权威级别 | 缺失时行为 |
+| 存储 | 承载内容 | 权威级别 | 缺失或故障时的行为 |
 | --- | --- | --- | --- |
-| PostgreSQL 16 | 业务主数据、权限、审计、统计、任务留痕 | 权威源 | 启动即退出（`main.go` 中 Postgres 连接失败 `os.Exit(1)`） |
-| MinIO | 知识库文档原文二进制 | 权威源（文件内容） | 降级：上传/读取报 `ERR_STORAGE` |
-| Manticore | 知识切片全文索引 | 可重建投影 | 降级：keyword 通道不可用，检索走其他通道 |
-| Redis 7 | 登出令牌黑名单 | 易失缓存 | 降级：吊销校验放行，日志兜底 |
-| RabbitMQ 4 | 知识库索引任务投递 | 传输通道（非权威） | 降级：异步任务不可用 |
+| PostgreSQL | 业务主数据、权限、审计、统计、任务留痕 | 权威源 | 启动即退出（`cmd/server/main.go` 中 `infra.NewPostgres` 失败 `os.Exit(1)`） |
+| MinIO | 知识库文档原文二进制 | 文件内容权威源 | 上传/读取返回 `ERR_STORAGE`；服务启动继续 |
+| Manticore | 知识库切片全文索引 | 可重建投影（非权威） | keyword 模式检索直接报错；hybrid 模式单通道失败降级到另一通道，两通道都失败才报错；服务启动继续 |
+| Redis | 登出令牌黑名单 | 易失缓存 | 吊销校验视为未吊销（`TokenRepo.IsRevoked` 返回 false），服务启动继续 |
+| RabbitMQ | 知识库索引任务投递 | 传输通道（非权威） | 索引任务投递失败，文档置 `failed`；服务启动继续 |
 
-各依赖在 `cmd/server/main.go` 中的初始化顺序为：Postgres → AutoMigrate → Redis → RabbitMQ →
-MinIO → Manticore → JWT 签名器。Redis / RabbitMQ / MinIO / Manticore 的连接失败只打印告警并降级，
-不阻断启动。
+```mermaid
+flowchart LR
+  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>32 张表)]
+  SVC -->|PutObject/GetObject| MINIO[(MinIO<br/>novelworkbench)]
+  SVC -->|HTTP SQL| MC[(Manticore<br/>nw_chunks)]
+  REPO[repo 层] -->|SET/EXISTS| REDIS[(Redis<br/>nw:token:blacklist:*)]
+  REPO -->|Publish/Consume| MQ[(RabbitMQ<br/>nw_doc_index)]
+  MQ --> WORKER[knowledge worker]
+  WORKER --> PG
+  WORKER --> MC
+  WORKER --> MINIO
+```
+
+`cmd/server/main.go` 的初始化顺序为：配置 → Postgres → `AutoMigrate` → Redis → RabbitMQ → MinIO（含桶检查）→ Manticore → JWT 签名器 → 仓储与服务装配 → 启动播种 → HTTP 监听。
+
+- Postgres 连接或迁移失败：`os.Exit(1)`。
+- Redis 配置非法（`NewRedis` 返回 nil 客户端）：`os.Exit(1)`；连接探活失败仅告警。
+- RabbitMQ、MinIO、Manticore 连接失败：仅 `Warnw` 告警，对应能力降级。
+- 播种失败（技能、配置、角色、菜单、引导管理员）：`os.Exit(1)`；默认供应商播种失败仅告警。
+
+运行状态页的依赖探测（`backend/internal/service/system_status_service.go` 的 `SystemStatusService.Status`）对 postgres 标记为必需，其余四项为可选：必需依赖失败记为 `down`，可选依赖失败记为 `degraded`。
 
 ## 2. 命名约定
 
+### 2.1 表名与列名
+
 | 对象 | 约定 | 示例 |
 | --- | --- | --- |
-| 表名 | snake_case 复数，由 `TableName()` 显式指定 | `projects`、`knowledge_chunks`、`lore_settings` |
-| 主键 | 业务前缀 + 26 位大写 ULID | `PRJ_01HZX...`、`CHP_01HZX...` |
-| 引用列 | `_ulid` 结尾 | `project_ulid`、`chapter_ulid` |
-| 状态/枚举列 | `_code` 结尾 | `chapter_status`、`fact_status_code`、`call_type_code` |
-| 计数字段 | `_count` 结尾 | `word_count`、`chunk_count`、`call_count` |
-| 文本正文列 | `_text` 结尾 | `content_text`、`title_text` |
-| 布尔字段 | `_flag` 结尾 | `enabled_flag`、`default_flag`、`builtin_flag` |
-| VO 中的时间戳 | `_ms` 结尾（毫秒） | `created_at_ms`、`updated_at_ms` |
-| 长文本列 | `type:text` | `chapters.content_text`、`roles.perm_codes_json` |
+| 表名 | snake_case 复数，由各 DO 的 `TableName()` 显式指定 | `projects`、`knowledge_chunks`、`lore_settings` |
+| 主键 | `<业务>_ulid`，值 = 前缀 + 26 位大写 ULID（`pkg.NewULID`） | `PRJ_01J...`、`CHP_01J...` |
+| 引用列 | `_ulid` 结尾 | `project_ulid`、`chapter_ulid`、`source_chapter_ulid` |
+| 状态/枚举列 | 多数以 `_code` 结尾；`projects.project_status`、`chapters.chapter_status`、`chapter_snapshots.snapshot_type` 三个列不带该后缀 | `fact_status_code`、`call_type_code`、`chapter_status` |
+| 计数列 | `_count` 结尾 | `word_count`、`chunk_count`、`call_count` |
+| 正文/长文本列 | `_text` 结尾且 `type:text` | `content_text`、`chunk_text`、`note_text` |
+| 布尔列 | `_flag` 结尾 | `enabled_flag`、`default_flag`、`builtin_flag`、`read_flag` |
+| 毫秒时间戳列 | `_ms` 结尾，`bigint` | `model_providers.last_test_at_ms`、`model_catalogs.last_test_at_ms` |
+| 视图对象中的时间戳 | `_ms` 结尾（毫秒），由 `time.Time` 转换而来，不落库 | `created_at_ms`、`updated_at_ms` |
 
-GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`ULIDNamingStrategy.ColumnName` 把以 `_ul_id` 结尾的
-推导名改写为 `_ulid`（`backend/internal/infra/postgres.go`）。
+GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`infra.ULIDNamingStrategy.ColumnName`（`backend/internal/infra/postgres.go`）把以 `_ul_id` 结尾的推导名改写为 `_ulid`；因此索引名仍保留 GORM 原推导结果（如 `idx_projects_user_ul_id`），列名统一为 `user_ulid`。
 
-### 2.1 ULID 业务前缀
+### 2.2 ULID 业务前缀（全表）
 
-前缀常量定义在 `backend/internal/domain/common.go`、`continuity.go`、`outline.go`。
+前缀常量定义在 `domain/common.go`、`domain/continuity.go`、`domain/outline.go`。
 
-| 前缀 | 含义 | 常量 |
+| 前缀 | 常量 | 对应表 / 用途 |
 | --- | --- | --- |
-| `USR_` | 用户 | `IDPrefixUser` |
-| `REQ_` | 请求链路 ID | `IDPrefixRequest` |
-| `PRJ_` | 小说项目 | `IDPrefixProject` |
-| `VOL_` | 卷 | `IDPrefixVolume` |
-| `CHP_` | 章节 | `IDPrefixChapter` |
-| `SNP_` | 章节快照 | `IDPrefixChapterSnapshot` |
-| `CHR_` | 角色 | `IDPrefixCharacter` |
-| `RLT_` | 角色关系 | `IDPrefixRelation` |
-| `LOR_` | 世界观设定 | `IDPrefixLore` |
-| `DOC_` | 知识库文档 | `IDPrefixDocument` |
-| `CHK_` | 知识库切片 | `IDPrefixChunk` |
-| `SES_` | 会话 | `IDPrefixSession` |
-| `MSG_` | 消息 | `IDPrefixMessage` |
-| `SKL_` | 技能 | `IDPrefixSkill` |
-| `SKR_` | 技能参考资料 | `IDPrefixSkillReference` |
-| `MNU_` | 菜单 | `IDPrefixMenu` |
-| `JOB_` | 异步任务 | `IDPrefixJob` |
-| `SET_` | 应用配置 | `IDPrefixSetting` |
-| `WCS_` | 字数统计 | `IDPrefixWordStat` |
-| `ROL_` | 角色（权限） | `IDPrefixRole` |
-| `URO_` | 用户-角色关联 | `IDPrefixUserRole` |
-| `AUD_` | 审计日志 | `IDPrefixAudit` |
-| `MPR_` | 模型供应商 | `IDPrefixModelProvider` |
-| `MUS_` | 模型用量统计 | `IDPrefixModelUsage` |
-| `NTF_` | 站内通知 | `IDPrefixNotification` |
-| `LGL_` | 登录日志 | `IDPrefixLoginLog` |
-| `OUT_` | 大纲节点 | `IDPrefixOutline` |
-| `SCN_` | 详细场景卡片 | `IDPrefixScene` |
-| `FCT_` | 时间事实 | `IDPrefixTemporalFact` |
-| `HOK_` | 伏笔钩子 | `IDPrefixForeshadowHook` |
-| `CSM_` | 章节摘要 | `IDPrefixChapterSummary` |
+| `USR_` | `IDPrefixUser` | `users` |
+| `REQ_` | `IDPrefixRequest` | 请求链路 ID（不落库） |
+| `PRJ_` | `IDPrefixProject` | `projects` |
+| `VOL_` | `IDPrefixVolume` | `volumes` |
+| `CHP_` | `IDPrefixChapter` | `chapters` |
+| `SNP_` | `IDPrefixChapterSnapshot` | `chapter_snapshots` |
+| `CHR_` | `IDPrefixCharacter` | `characters` |
+| `RLT_` | `IDPrefixRelation` | `character_relations` |
+| `LOR_` | `IDPrefixLore` | `lore_settings` |
+| `OUT_` | `IDPrefixOutline` | `outline_nodes` |
+| `SCN_` | `IDPrefixScene` | `detailed_scenes` |
+| `FCT_` | `IDPrefixTemporalFact` | `temporal_facts` |
+| `HOK_` | `IDPrefixForeshadowHook` | `foreshadow_hooks` |
+| `CSM_` | `IDPrefixChapterSummary` | `chapter_summaries` |
+| `DOC_` | `IDPrefixDocument` | `knowledge_documents`（同时作为 MinIO 对象键） |
+| `CHK_` | `IDPrefixChunk` | `knowledge_chunks` |
+| `SES_` | `IDPrefixSession` | `chat_sessions` |
+| `MSG_` | `IDPrefixMessage` | `chat_messages` |
+| `SKL_` | `IDPrefixSkill` | `skills` |
+| `SKR_` | `IDPrefixSkillReference` | `skill_references` |
+| `MNU_` | `IDPrefixMenu` | `menus` |
+| `ROL_` | `IDPrefixRole` | `roles` |
+| `URO_` | `IDPrefixUserRole` | `user_roles` |
+| `AUD_` | `IDPrefixAudit` | `audit_logs` |
+| `LGL_` | `IDPrefixLoginLog` | `login_logs` |
+| `NTF_` | `IDPrefixNotification` | `notifications` |
+| `MPR_` | `IDPrefixModelProvider` | `model_providers` |
+| `MDL_` | `IDPrefixModelCatalog` | `model_catalogs` |
+| `MGR_` | `IDPrefixModelGrant` | `model_role_grants` |
+| `MUS_` | `IDPrefixModelUsage` | `model_usage_stats` |
+| `JOB_` | `IDPrefixJob` | `jobs` |
+| `SET_` | `IDPrefixSetting` | `app_settings` |
+| `WCS_` | `IDPrefixWordStat` | `word_count_stats` |
+
+### 2.3 列类型映射
+
+| Go 类型 / 标签 | PostgreSQL 类型 |
+| --- | --- |
+| `string` + `size:N` | `varchar(N)` |
+| `string` + `type:text` | `text` |
+| `int`、`int64` | `bigint` |
+| `bool` | `boolean` |
+| `float64` | `decimal` |
+| `time.Time`（`BaseDO`） | `timestamptz` |
+
+GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都没有该标签，因此 DDL 中只有主键列隐含非空（`PRIMARY KEY` 约束），其余列均可空；带 `default:` 的列只在建表时写入 `DEFAULT` 值，不改变可空性。非空语义由请求校验与写入路径保证。
 
 ## 3. 表结构
 
-所有表统一含 `created_at timestamptz`（`autoCreateTime`）与 `updated_at timestamptz`（`autoUpdateTime`），
-来自 `domain.BaseDO`。除显式标注外，所有列均为 `NOT NULL`。
+`AutoMigrate` 一次性声明 32 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）与 `updated_at timestamptz`（`autoUpdateTime`），来自 `domain.BaseDO`，下表不再重复列出。
 
-### 3.1 用户、权限与审计
+### 3.1 用户、权限与审计（7 张）
 
 #### users
 
-用户账号。密码只存 bcrypt 哈希，`password_hash` 不出现在任何 VO。
-
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `user_ulid` | `varchar(40)` | PK |
-| `user_name` | `varchar(64)` | UNIQUE |
-| `user_email` | `varchar(128)` | UNIQUE |
-| `password_hash` | `varchar(128)` | |
-| `avatar_url` | `varchar(256)` | |
-| `remark_text` | `varchar(256)` | |
-| `user_status_code` | `varchar(16)` | `DEFAULT 'active'`，索引 |
-
-索引：`idx_users_user_name`(UNIQUE)、`idx_users_user_email`(UNIQUE)、`idx_users_user_status_code`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `user_ulid` | `varchar(40)` | PK | 用户 ULID（`USR_`） |
+| `user_name` | `varchar(64)` | UNIQUE `idx_users_user_name` | 登录名 |
+| `user_email` | `varchar(128)` | UNIQUE `idx_users_user_email` | 邮箱 |
+| `password_hash` | `varchar(128)` | | bcrypt 哈希，`json:"-"` 不出参 |
+| `avatar_url` | `varchar(256)` | | 头像地址 |
+| `remark_text` | `varchar(256)` | | 备注 |
+| `user_status_code` | `varchar(16)` | `DEFAULT 'active'`，`idx_users_user_status_code` | `active` / `disabled` |
 
 #### roles
 
-角色与权限码集合。`perm_codes_json` 存 JSON 数组，`"*"` 表示全部权限。
-
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `role_ulid` | `varchar(40)` | PK |
-| `role_code` | `varchar(64)` | UNIQUE |
-| `role_name` | `varchar(64)` | |
-| `remark_text` | `varchar(256)` | |
-| `perm_codes_json` | `text` | JSON 数组，空列表存 `"[]"` |
-| `builtin_flag` | `boolean` | `DEFAULT false`，内置角色为 true 且不可删除 |
-
-索引：`idx_roles_role_code`(UNIQUE)。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `role_ulid` | `varchar(40)` | PK | 角色 ULID（`ROL_`） |
+| `role_code` | `varchar(64)` | UNIQUE `idx_roles_role_code` | 角色编码 |
+| `role_name` | `varchar(64)` | | 角色名称 |
+| `remark_text` | `varchar(256)` | | 备注 |
+| `perm_codes_json` | `text` | | 权限码 JSON 数组，`["*"]` 表示全部 |
+| `builtin_flag` | `boolean` | `DEFAULT false` | 内置角色不可删除 |
 
 #### user_roles
 
-用户-角色关联，无唯一约束（同一人同一角色可重复写入）。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `user_role_ulid` | `varchar(40)` | PK | 关联 ULID（`URO_`） |
+| `user_ulid` | `varchar(40)` | `idx_user_roles_user_ul_id` | 用户 |
+| `role_ulid` | `varchar(40)` | `idx_user_roles_role_ul_id` | 角色 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `user_role_ulid` | `varchar(40)` | PK |
-| `user_ulid` | `varchar(40)` | 索引 |
-| `role_ulid` | `varchar(40)` | 索引 |
-
-索引：`idx_user_roles_user_ul_id`、`idx_user_roles_role_ul_id`。
-关联写入走 `RoleRepo.ReplaceUserRoles`（先删后插，单事务）。
+`(user_ulid, role_ulid)` 无唯一约束；写入统一走 `RoleRepo.ReplaceUserRoles`（事务内先删后插），因此不会产生重复行。
 
 #### menus
 
-菜单表，同时是权限码登记处。`page` 行承载页面权限码，`action` 行只登记动作权限码（不进导航）。
+菜单与权限码登记表：`page` 行承载页面权限，`action` 行只登记动作权限码、不进导航。
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `menu_ulid` | `varchar(40)` | PK |
-| `parent_ulid` | `varchar(40)` | 索引，空为根节点 |
-| `menu_code` | `varchar(64)` | UNIQUE |
-| `menu_name` | `varchar(64)` | |
-| `menu_type_code` | `varchar(16)` | group / page / action |
-| `scope_code` | `varchar(16)` | global / project，索引 |
-| `route_path` | `varchar(128)` | 项目内以 `:project_ulid` 结尾 |
-| `icon_code` | `varchar(32)` | 前端图标表键 |
-| `perm_code` | `varchar(64)` | 索引，空表示登录可见 |
-| `visible_flag` | `boolean` | `DEFAULT true` |
-| `enabled_flag` | `boolean` | `DEFAULT true` |
-| `sort_order` | `bigint` | 同级升序 |
-| `remark_text` | `varchar(256)` | |
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `menu_ulid` | `varchar(40)` | PK | 菜单 ULID（`MNU_`） |
+| `parent_ulid` | `varchar(40)` | `idx_menus_parent_ul_id` | 上级菜单，空为根 |
+| `menu_code` | `varchar(64)` | UNIQUE `idx_menus_menu_code` | 菜单编码 |
+| `menu_name` | `varchar(64)` | | 菜单名称 |
+| `menu_type_code` | `varchar(16)` | | `group` / `page` / `action` |
+| `scope_code` | `varchar(16)` | `idx_menus_scope_code` | `global` / `project` |
+| `route_path` | `varchar(128)` | | 前端路由，项目内以 `:project_ulid` 结尾 |
+| `icon_code` | `varchar(32)` | | 图标键 |
+| `perm_code` | `varchar(64)` | `idx_menus_perm_code` | 权限码，空表示登录可见 |
+| `visible_flag` | `boolean` | `DEFAULT true` | 是否进导航 |
+| `enabled_flag` | `boolean` | `DEFAULT true` | 是否启用 |
+| `sort_order` | `bigint` | | 同级升序 |
+| `remark_text` | `varchar(256)` | | 备注 |
 
-索引：`idx_menus_menu_code`(UNIQUE)、`idx_menus_parent_ul_id`、`idx_menus_scope_code`、`idx_menus_perm_code`。
-服务层保证 `perm_code` 全局唯一（同一权限码只能登记一次），数据库不做唯一约束以允许空值多行。
+`perm_code` 的全局唯一性由 `MenuService.Save` 调用 `MenuRepo.CountByPermCode` 校验（冲突返回 `ERR_CONFLICT`），数据库不建唯一索引以允许多行空值。
 
 #### audit_logs
 
-写操作审计记录。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `audit_ulid` | `varchar(40)` | PK | 审计 ULID（`AUD_`） |
+| `user_ulid` | `varchar(40)` | `idx_audit_logs_user_ul_id` | 操作者，未登录为空串 |
+| `user_name` | `varchar(64)` | `idx_audit_logs_user_name` | 操作者登录名快照 |
+| `action_code` | `varchar(128)` | `idx_audit_logs_action_code` | 接口路径去 `/api/v1/` 前缀 |
+| `target_type` | `varchar(32)` | | 目标类型 |
+| `target_ulid` | `varchar(40)` | `idx_audit_logs_target_ul_id` | 目标 ULID |
+| `detail_text` | `varchar(512)` | | 补充信息（如 `status=200`） |
+| `ip_addr` | `varchar(64)` | | 客户端 IP |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `audit_ulid` | `varchar(40)` | PK |
-| `user_ulid` | `varchar(40)` | 索引（未登录为空串） |
-| `user_name` | `varchar(64)` | 索引 |
-| `action_code` | `varchar(128)` | 索引，接口路径去前缀 |
-| `target_type` | `varchar(32)` | |
-| `target_ulid` | `varchar(40)` | 索引 |
-| `detail_text` | `varchar(512)` | |
-| `ip_addr` | `varchar(64)` | |
-
-索引：`idx_audit_logs_user_ul_id`、`idx_audit_logs_user_name`、`idx_audit_logs_action_code`、
-`idx_audit_logs_target_ul_id`。审计表**只增不删**，没有清理路径。
-
-#### notifications
-
-站内通知（账号安全、异步任务、系统消息）。
-
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `notification_ulid` | `varchar(40)` | PK |
-| `user_ulid` | `varchar(40)` | 索引，接收人 |
-| `notification_type_code` | `varchar(16)` | 索引，`system` / `task` / `account` |
-| `notification_title_text` | `varchar(128)` | |
-| `notification_body_text` | `varchar(512)` | |
-| `read_flag` | `boolean` | 索引，默认 false |
-| `link_url` | `varchar(256)` | 前端路由 |
-| `ref_type_code` | `varchar(32)` | 关联业务类型 |
-| `ref_ulid` | `varchar(40)` | 关联业务 ULID |
-
-索引：`idx_notifications_user_ul_id`、`idx_notifications_notification_type_code`、
-`idx_notifications_read_flag`。查询始终带 `user_ulid`，用户只能操作本人通知。
+写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`；落库失败只告警，不阻断业务。`AuditRepo` 只有 `Create` 与 `ListPage`，无删除路径。
 
 #### login_logs
 
-登录尝试日志（成功 / 失败 / 禁用）。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `login_log_ulid` | `varchar(40)` | PK | 日志 ULID（`LGL_`） |
+| `user_ulid` | `varchar(40)` | `idx_login_logs_user_ul_id` | 命中的用户，失败时为空 |
+| `login_account_text` | `varchar(128)` | `idx_login_logs_login_account_text` | 登录名或邮箱 |
+| `login_result_code` | `varchar(16)` | `idx_login_logs_login_result_code` | `success` / `failed` / `disabled` |
+| `fail_reason_text` | `varchar(256)` | | 失败原因 |
+| `ip_addr` | `varchar(64)` | | 客户端 IP |
+| `user_agent_text` | `varchar(512)` | | 客户端 UA |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `login_log_ulid` | `varchar(40)` | PK |
-| `user_ulid` | `varchar(40)` | 索引，失败时可为空 |
-| `login_account_text` | `varchar(128)` | 索引，登录名或邮箱 |
-| `login_result_code` | `varchar(16)` | 索引，`success` / `failed` / `disabled` |
-| `fail_reason_text` | `varchar(256)` | |
-| `ip_addr` | `varchar(64)` | 客户端 IP |
-| `user_agent_text` | `varchar(512)` | 客户端 UA |
+#### notifications
 
-索引：`idx_login_logs_user_ul_id`、`idx_login_logs_login_account_text`、
-`idx_login_logs_login_result_code`。日志只增不删，按时间倒序分页。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `notification_ulid` | `varchar(40)` | PK | 通知 ULID（`NTF_`） |
+| `user_ulid` | `varchar(40)` | `idx_notifications_user_ul_id` | 接收人 |
+| `notification_type_code` | `varchar(16)` | `idx_notifications_notification_type_code` | `system` / `task` / `account` |
+| `notification_title_text` | `varchar(128)` | | 标题 |
+| `notification_body_text` | `varchar(512)` | | 正文 |
+| `read_flag` | `boolean` | `DEFAULT false`，`idx_notifications_read_flag` | 是否已读 |
+| `link_url` | `varchar(256)` | | 前端跳转路由 |
+| `ref_type_code` | `varchar(32)` | | 关联业务类型 |
+| `ref_ulid` | `varchar(40)` | | 关联业务 ULID |
 
-### 3.2 创作主数据
+所有查询都带 `user_ulid`；用户删除时由 `UserAdminService.Delete` 调用 `NotificationRepo.DeleteByUser` 清理。
+
+### 3.2 创作主数据（7 张）
 
 #### projects
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `project_ulid` | `varchar(40)` | PK |
-| `user_ulid` | `varchar(40)` | 索引，归属用户 |
-| `project_name` | `varchar(128)` | |
-| `genre_code` | `varchar(32)` | 题材编码，无白名单校验 |
-| `style_text` | `varchar(1024)` | |
-| `synopsis_text` | `varchar(4096)` | |
-| `project_status` | `varchar(16)` | 索引 |
-| `total_word_count` | `bigint` | 由章节字数差增减维护 |
-
-索引：`idx_projects_user_ul_id`、`idx_projects_project_status`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `project_ulid` | `varchar(40)` | PK | 项目 ULID（`PRJ_`） |
+| `user_ulid` | `varchar(40)` | `idx_projects_user_ul_id` | 归属用户 |
+| `project_name` | `varchar(128)` | | 书名 |
+| `genre_code` | `varchar(32)` | | 题材编码，无白名单 |
+| `style_text` | `varchar(1024)` | | 文风提示词 |
+| `synopsis_text` | `varchar(4096)` | | 简介 |
+| `project_status` | `varchar(16)` | `idx_projects_project_status` | `draft` / `serial` / `completed` |
+| `total_word_count` | `bigint` | | 累计字数，由章节字数差增减 |
 
 #### volumes
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `volume_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `volume_name` | `varchar(128)` | |
-| `volume_order` | `bigint` | 排序号 |
-| `summary_text` | `varchar(2048)` | |
-
-索引：`idx_volumes_project_ul_id`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `volume_ulid` | `varchar(40)` | PK | 卷 ULID（`VOL_`） |
+| `project_ulid` | `varchar(40)` | `idx_volumes_project_ul_id` | 所属项目 |
+| `volume_name` | `varchar(128)` | | 卷名 |
+| `volume_order` | `bigint` | | 排序号 |
+| `summary_text` | `varchar(2048)` | | 卷概要 |
 
 #### chapters
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `chapter_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `volume_ulid` | `varchar(40)` | 索引 |
-| `chapter_name` | `varchar(128)` | |
-| `chapter_order` | `bigint` | 索引，项目内最大值 +1 |
-| `content_text` | `text` | 正文 |
-| `summary_text` | `varchar(2048)` | |
-| `word_count` | `bigint` | 正文计数（`pkg.CountWords`） |
-| `chapter_status` | `varchar(16)` | |
-
-索引：`idx_chapters_project_ul_id`、`idx_chapters_volume_ul_id`、`idx_chapters_chapter_order`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `chapter_ulid` | `varchar(40)` | PK | 章节 ULID（`CHP_`） |
+| `project_ulid` | `varchar(40)` | `idx_chapters_project_ul_id` | 所属项目 |
+| `volume_ulid` | `varchar(40)` | `idx_chapters_volume_ul_id` | 所属卷 |
+| `chapter_name` | `varchar(128)` | | 章节名 |
+| `chapter_order` | `bigint` | `idx_chapters_chapter_order` | 项目内排序号，创建时取最大值 +1 |
+| `content_text` | `text` | | 正文 |
+| `summary_text` | `varchar(2048)` | | 章节梗概 |
+| `word_count` | `bigint` | | 正文字数（`pkg.CountWords`） |
+| `chapter_status` | `varchar(16)` | | `draft` / `revised` / `locked` |
 
 #### chapter_snapshots
 
-章节历史留档，可回滚。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `snapshot_ulid` | `varchar(40)` | PK | 快照 ULID（`SNP_`） |
+| `chapter_ulid` | `varchar(40)` | `idx_chapter_snapshots_chapter_ul_id` | 所属章节 |
+| `content_text` | `text` | | 快照正文 |
+| `snapshot_type` | `varchar(16)` | | 当前只写入 `manual` |
+| `change_note` | `varchar(256)` | | 变更说明 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `snapshot_ulid` | `varchar(40)` | PK |
-| `chapter_ulid` | `varchar(40)` | 索引 |
-| `content_text` | `text` | 快照正文 |
-| `snapshot_type` | `varchar(16)` | 代码中只会写入 `"manual"` |
-| `change_note` | `varchar(256)` | |
-
-索引：`idx_chapter_snapshots_chapter_ul_id`。
-
-> `snapshot_type` 的领域注释列出 `manual/ai_before/ai_after`，但当前代码只有
-> `ChapterService.SnapshotCreate` 与 `SnapshotRestore` 写 `"manual"`，不存在写入 AI 前后快照的路径。
+写入路径只有 `ChapterService.SnapshotCreate` 与 `ChapterService.SnapshotRestore`（回滚前自动留档，`change_note = "restore 自动留档"`），两者都写 `manual`。
 
 #### characters
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `character_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `character_name` | `varchar(64)` | |
-| `alias_text` | `varchar(128)` | |
-| `role_type_code` | `varchar(16)` | |
-| `personality_text` | `varchar(2048)` | |
-| `background_text` | `varchar(4096)` | |
-| `appearance_text` | `varchar(2048)` | |
-| `goal_text` | `varchar(2048)` | |
-
-索引：`idx_characters_project_ul_id`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `character_ulid` | `varchar(40)` | PK | 角色 ULID（`CHR_`） |
+| `project_ulid` | `varchar(40)` | `idx_characters_project_ul_id` | 所属项目 |
+| `character_name` | `varchar(64)` | | 姓名 |
+| `alias_text` | `varchar(128)` | | 别名 |
+| `role_type_code` | `varchar(16)` | | `protagonist` / `antagonist` / `supporting` / `minor` |
+| `personality_text` | `varchar(2048)` | | 性格 |
+| `background_text` | `varchar(4096)` | | 背景经历 |
+| `appearance_text` | `varchar(2048)` | | 外貌 |
+| `goal_text` | `varchar(2048)` | | 目标动机 |
 
 #### character_relations
 
-角色关系边（图谱数据）。
-
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `relation_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `from_character_ulid` | `varchar(40)` | 索引 |
-| `to_character_ulid` | `varchar(40)` | 索引 |
-| `relation_type_code` | `varchar(32)` | 自由文本，无白名单 |
-| `relation_note` | `varchar(256)` | |
-
-索引：`idx_character_relations_project_ul_id`、`idx_character_relations_from_character_ul_id`、
-`idx_character_relations_to_character_ul_id`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `relation_ulid` | `varchar(40)` | PK | 关系 ULID（`RLT_`） |
+| `project_ulid` | `varchar(40)` | `idx_character_relations_project_ul_id` | 所属项目 |
+| `from_character_ulid` | `varchar(40)` | `idx_character_relations_from_character_ul_id` | 起点角色 |
+| `to_character_ulid` | `varchar(40)` | `idx_character_relations_to_character_ul_id` | 终点角色 |
+| `relation_type_code` | `varchar(32)` | | 自由文本（注释示例 `friend`/`enemy`/`lover`/`kin`/`teacher`） |
+| `relation_note` | `varchar(256)` | | 关系说明 |
 
 #### lore_settings
 
 世界观设定与创作笔记共用一张表，`lore_type_code = 'note'` 表示创作笔记。
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `lore_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `lore_name` | `varchar(128)` | |
-| `lore_type_code` | `varchar(16)` | 索引 |
-| `content_text` | `text` | |
-| `content_mode_code` | `varchar(16)` | 缺省 `rich`；`rich`=富文本 HTML，`markdown`=Markdown 原文 |
-| `sort_order` | `bigint` | |
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `lore_ulid` | `varchar(40)` | PK | 设定 ULID（`LOR_`） |
+| `project_ulid` | `varchar(40)` | `idx_lore_settings_project_ul_id` | 所属项目 |
+| `lore_name` | `varchar(128)` | | 设定名 |
+| `lore_type_code` | `varchar(16)` | `idx_lore_settings_lore_type_code` | `world` / `rule` / `item` / `place` / `event` / `note` |
+| `content_text` | `text` | | 设定内容 |
+| `content_mode_code` | `varchar(16)` | `DEFAULT 'rich'` | `rich`（富文本 HTML）/ `markdown` |
+| `sort_order` | `bigint` | | 排序号 |
 
-索引：`idx_lore_settings_project_ul_id`、`idx_lore_settings_lore_type_code`。
-
-### 3.3 创作规划与连续性
+### 3.3 规划与连续性（5 张）
 
 #### outline_nodes
 
-树形大纲节点（卷/篇章/情节块/章节）。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `outline_ulid` | `varchar(40)` | PK | 节点 ULID（`OUT_`） |
+| `project_ulid` | `varchar(40)` | `idx_outline_nodes_project_ul_id` | 所属项目 |
+| `parent_outline_ulid` | `varchar(40)` | `DEFAULT ''`，`idx_outline_nodes_parent_outline_ul_id` | 父节点，根为空串 |
+| `node_type_code` | `varchar(32)` | `idx_outline_nodes_node_type_code` | `volume` / `arc` / `storyBlock` / `chapter` |
+| `title_text` | `varchar(128)` | | 节点标题 |
+| `summary_text` | `varchar(4096)` | | 节点概要 |
+| `node_status_code` | `varchar(16)` | `idx_outline_nodes_node_status_code` | `draft` / `planning` / `ready` / `done` |
+| `sort_order` | `bigint` | `idx_outline_nodes_sort_order` | 同级升序 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `outline_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `parent_outline_ulid` | `varchar(40)` | 索引，根节点为空串（`DEFAULT ''`） |
-| `node_type_code` | `varchar(32)` | 索引 |
-| `title_text` | `varchar(128)` | |
-| `summary_text` | `varchar(4096)` | |
-| `node_status_code` | `varchar(16)` | 索引，新建缺省 `draft` |
-| `sort_order` | `bigint` | 索引，同级升序 |
-
-索引：`idx_outline_nodes_project_ul_id`、`idx_outline_nodes_parent_outline_ul_id`、
-`idx_outline_nodes_node_type_code`、`idx_outline_nodes_node_status_code`、`idx_outline_nodes_sort_order`。
+`OutlineService.SaveNode` 在 `node_status_code` 为空时写 `draft`，`sort_order` 为 0 时取同级最大值 +1；`OutlineService.DeleteNode` 在子节点数 > 0 时返回 `ERR_CONFLICT`，不级联删子节点，也不删挂在其下的场景卡片。
 
 #### detailed_scenes
 
-挂靠在大纲节点下的场景卡片。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `scene_ulid` | `varchar(40)` | PK | 场景 ULID（`SCN_`） |
+| `project_ulid` | `varchar(40)` | `idx_detailed_scenes_project_ul_id` | 所属项目 |
+| `outline_ulid` | `varchar(40)` | `idx_detailed_scenes_outline_ul_id` | 所属大纲节点 |
+| `character_ulid_list` | `text` | | 出场角色 ULID JSON 数组 |
+| `location_text` | `varchar(256)` | | 场景地点 |
+| `conflict_text` | `text` | | 核心冲突 |
+| `pace_code` | `varchar(16)` | `idx_detailed_scenes_pace_code` | `slow` / `medium` / `fast` / `climax` |
+| `estimated_words` | `bigint` | | 预计字数 |
+| `entry_state_text` | `text` | | 入场状态 |
+| `goal_text` | `text` | | 角色目标 |
+| `key_choice_text` | `text` | | 关键选择 |
+| `outcome_text` | `text` | | 场景结果 |
+| `exit_state_text` | `text` | | 出场状态 |
+| `sort_order` | `bigint` | `idx_detailed_scenes_sort_order` | 节点内升序 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `scene_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `outline_ulid` | `varchar(40)` | 索引 |
-| `character_ulid_list` | `text` | 出场角色 ULID 的 JSON 数组 |
-| `location_text` | `varchar(256)` | |
-| `conflict_text` | `text` | |
-| `pace_code` | `varchar(16)` | 索引 |
-| `estimated_words` | `bigint` | |
-| `entry_state_text` | `text` | |
-| `goal_text` | `text` | |
-| `key_choice_text` | `text` | |
-| `outcome_text` | `text` | |
-| `exit_state_text` | `text` | |
-| `sort_order` | `bigint` | 索引 |
-
-索引：`idx_detailed_scenes_project_ul_id`、`idx_detailed_scenes_outline_ul_id`、
-`idx_detailed_scenes_pace_code`、`idx_detailed_scenes_sort_order`。
+`OutlineService.SaveScene` 在 `sort_order` 为 0 时取同一大纲节点下的最大值 +1；`pace_code` 直接取自请求，无缺省值；`character_ulid_list` 由 `encodeCharacterULIDs` 序列化为 JSON 数组字符串。删除场景只删该行（`OutlineRepo.DeleteScene`），不校验是否被其他数据引用。
 
 #### temporal_facts
 
-带有效区间的时序事实。
-
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `fact_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `subject_text` | `varchar(128)` | 主体 |
-| `predicate_code` | `varchar(64)` | 索引 |
-| `object_text` | `varchar(256)` | 客体 |
-| `fact_status_code` | `varchar(16)` | 索引 |
-| `valid_from_chapter_ulid` | `varchar(40)` | 生效起始章节 |
-| `valid_until_chapter_ulid` | `varchar(40)` | 生效截止章节 |
-| `source_chapter_ulid` | `varchar(40)` | 索引，证据来源章节 |
-| `source_quote_text` | `text` | 原文证据 |
-| `note_text` | `text` | |
-
-索引：`idx_temporal_facts_project_ul_id`、`idx_temporal_facts_predicate_code`、
-`idx_temporal_facts_fact_status_code`、`idx_temporal_facts_source_chapter_ul_id`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `fact_ulid` | `varchar(40)` | PK | 事实 ULID（`FCT_`） |
+| `project_ulid` | `varchar(40)` | `idx_temporal_facts_project_ul_id` | 所属项目 |
+| `subject_text` | `varchar(128)` | | 主体 |
+| `predicate_code` | `varchar(64)` | `idx_temporal_facts_predicate_code` | 谓词编码 |
+| `object_text` | `varchar(256)` | | 客体 |
+| `fact_status_code` | `varchar(16)` | `idx_temporal_facts_fact_status_code` | 事实状态 |
+| `valid_from_chapter_ulid` | `varchar(40)` | | 生效起始章节 |
+| `valid_until_chapter_ulid` | `varchar(40)` | | 生效截止章节 |
+| `source_chapter_ulid` | `varchar(40)` | `idx_temporal_facts_source_chapter_ul_id` | 证据来源章节 |
+| `source_quote_text` | `text` | | 原文证据 |
+| `note_text` | `text` | | 备注 |
 
 #### foreshadow_hooks
 
-伏笔钩子全过程跟踪。
-
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `hook_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `hook_status_code` | `varchar(16)` | 索引 |
-| `description_text` | `text` | |
-| `expected_payoff_text` | `text` | |
-| `setup_chapter_ulid` | `varchar(40)` | 索引 |
-| `payoff_chapter_ulid` | `varchar(40)` | 索引 |
-| `importance_code` | `varchar(16)` | 索引 |
-| `note_text` | `text` | |
-
-索引：`idx_foreshadow_hooks_project_ul_id`、`idx_foreshadow_hooks_hook_status_code`、
-`idx_foreshadow_hooks_setup_chapter_ul_id`、`idx_foreshadow_hooks_payoff_chapter_ul_id`、
-`idx_foreshadow_hooks_importance_code`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `hook_ulid` | `varchar(40)` | PK | 钩子 ULID（`HOK_`） |
+| `project_ulid` | `varchar(40)` | `idx_foreshadow_hooks_project_ul_id` | 所属项目 |
+| `hook_status_code` | `varchar(16)` | `idx_foreshadow_hooks_hook_status_code` | 钩子状态 |
+| `description_text` | `text` | | 伏笔描述 |
+| `expected_payoff_text` | `text` | | 预期回收方式 |
+| `setup_chapter_ulid` | `varchar(40)` | `idx_foreshadow_hooks_setup_chapter_ul_id` | 埋设章节 |
+| `payoff_chapter_ulid` | `varchar(40)` | `idx_foreshadow_hooks_payoff_chapter_ul_id` | 回收章节 |
+| `importance_code` | `varchar(16)` | `idx_foreshadow_hooks_importance_code` | 重要程度 |
+| `note_text` | `text` | | 备注 |
 
 #### chapter_summaries
 
-章节级摘要，供连续性核对。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `summary_ulid` | `varchar(40)` | PK | 摘要 ULID（`CSM_`） |
+| `project_ulid` | `varchar(40)` | `idx_chapter_summaries_project_ul_id` | 所属项目 |
+| `chapter_ulid` | `varchar(40)` | `idx_chapter_summaries_chapter_ul_id` | 所属章节 |
+| `summary_text` | `text` | | 摘要正文 |
+| `source_hash_text` | `varchar(128)` | | 生成时的正文指纹 |
+| `summary_status_code` | `varchar(16)` | `idx_chapter_summaries_summary_status_code` | 摘要状态 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `summary_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `chapter_ulid` | `varchar(40)` | 索引 |
-| `summary_text` | `text` | |
-| `source_hash_text` | `varchar(128)` | 正文指纹 |
-| `summary_status_code` | `varchar(16)` | 索引 |
+`(project_ulid, chapter_ulid)` 无唯一约束；`ContinuityService.SaveSummary` 先按章节查询，存在则更新、否则插入。
 
-索引：`idx_chapter_summaries_project_ul_id`、`idx_chapter_summaries_chapter_ul_id`、
-`idx_chapter_summaries_summary_status_code`。
-
-### 3.4 知识库
+### 3.4 知识库（2 张）
 
 #### knowledge_documents
 
-文档元数据；原文存 MinIO，索引存 PG 与 Manticore。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `doc_ulid` | `varchar(40)` | PK | 文档 ULID（`DOC_`） |
+| `project_ulid` | `varchar(40)` | `idx_knowledge_documents_project_ul_id` | 所属项目；域注释约定 `0` 表示全局库 |
+| `doc_name` | `varchar(128)` | | 文档名 |
+| `doc_type_code` | `varchar(16)` | | `txt` / `md` / `docx` / `pdf`（由扩展名白名单推导） |
+| `object_key` | `varchar(256)` | | MinIO 对象键，等于 `doc_ulid` |
+| `doc_status_code` | `varchar(16)` | `idx_knowledge_documents_doc_status_code` | `pending` / `indexing` / `indexed` / `failed` |
+| `chunk_count` | `bigint` | | 切片数量（索引完成后回写） |
+| `total_token_count` | `bigint` | | 切片 token 合计 |
+| `error_message` | `varchar(512)` | | 失败原因，截断到 500 字符 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `doc_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引，`"0"` 表示全局库 |
-| `doc_name` | `varchar(128)` | |
-| `doc_type_code` | `varchar(16)` | 由文件扩展名推导 |
-| `object_key` | `varchar(256)` | MinIO 对象键，等于 `doc_ulid` |
-| `doc_status_code` | `varchar(16)` | 索引 |
-| `chunk_count` | `bigint` | 切片数量 |
-| `total_token_count` | `bigint` | 估算 token 总量 |
-| `error_message` | `varchar(512)` | 失败原因 |
-
-索引：`idx_knowledge_documents_project_ul_id`、`idx_knowledge_documents_doc_status_code`。
+`KnowledgeService.mustOwnDoc` 在 `project_ulid` 为空或 `"0"` 时跳过归属校验；当前上传路径（`KnowledgeService.Upload`）始终写入请求中的 `project_ulid`。
 
 #### knowledge_chunks
 
-文档切片原文与内容哈希。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `chunk_ulid` | `varchar(40)` | PK | 切片 ULID（`CHK_`） |
+| `doc_ulid` | `varchar(40)` | `idx_knowledge_chunks_doc_ul_id` | 所属文档 |
+| `project_ulid` | `varchar(40)` | `idx_knowledge_chunks_project_ul_id` | 所属项目（冗余，供按项目检索与删除） |
+| `chunk_index` | `bigint` | | 文档内升序序号 |
+| `chunk_text` | `text` | | 切片文本 |
+| `token_count` | `bigint` | | 切片 token 估算 |
+| `content_hash` | `varchar(64)` | `idx_knowledge_chunks_content_hash` | 切片文本 SHA-256 十六进制 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `chunk_ulid` | `varchar(40)` | PK |
-| `doc_ulid` | `varchar(40)` | 索引 |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `chunk_index` | `bigint` | 文档内升序序号 |
-| `chunk_text` | `text` | 切片文本 |
-| `token_count` | `bigint` | 估算 token 数 |
-| `content_hash` | `varchar(64)` | 索引，SHA-256 十六进制 |
+切片由 `KnowledgeWorker.indexDocument` 生成：按 `app.chunk_size` / `app.chunk_overlap` 滑窗切分，命中既有同哈希切片时复用其 `chunk_ulid`，否则新建；同一文档的切片在同一事务内先删后插。
 
-索引：`idx_knowledge_chunks_doc_ul_id`、`idx_knowledge_chunks_project_ul_id`、
-`idx_knowledge_chunks_content_hash`。
-
-切片算法（`KnowledgeWorker.chunkText`，参数来自 `app.chunk_size` / `app.chunk_overlap`，
-默认 800 / 120）：
-
-| 步骤 | 行为 |
-| --- | --- |
-| 预处理 | `TrimSpace`；空文本返回 nil（触发「文档内容为空」错误） |
-| 窗口 | 按 rune 滑窗，窗口长度 `chunkSize` 字符 |
-| 边界 | 窗口内若存在换行或 `。！？；!?;` 且位置 > `chunkSize/2`，则在最后一个边界处切分 |
-| 步进 | 下一窗口起点 = `end - overlap`（`overlap >= chunkSize` 时收敛为 `chunkSize-1`） |
-| 哈希 | `content_hash = hex(sha256(切片文本))` |
-| ULID 复用 | 新切片哈希命中该文档既有切片的 `content_hash` 且未被占用时，沿用旧 `chunk_ulid`；否则新生成 `CHK_` ULID |
-
-文本提取（`extractDocumentText`）：`txt`/`md` 直读并剥除 UTF-8 BOM；`docx` 解析 zip 内
-`word/document.xml`（段落标记转行、去标签、还原 XML 实体）；`pdf` 用 `ledongthuc/pdf` 取纯文本；
-其他类型返回错误。
-
-### 3.5 对话与技能
+### 3.5 对话与技能（4 张）
 
 #### chat_sessions
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `session_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `user_ulid` | `varchar(40)` | 索引 |
-| `session_name` | `varchar(128)` | 默认取首条消息摘要 |
-
-索引：`idx_chat_sessions_project_ul_id`、`idx_chat_sessions_user_ul_id`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `session_ulid` | `varchar(40)` | PK | 会话 ULID（`SES_`） |
+| `project_ulid` | `varchar(40)` | `idx_chat_sessions_project_ul_id` | 所属项目 |
+| `user_ulid` | `varchar(40)` | `idx_chat_sessions_user_ul_id` | 所属用户 |
+| `session_name` | `varchar(128)` | | 会话名，首条消息发送时以正文前若干字符回填 |
 
 #### chat_messages
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `message_ulid` | `varchar(40)` | PK |
-| `session_ulid` | `varchar(40)` | 索引 |
-| `role_code` | `varchar(16)` | user/assistant/system |
-| `content_text` | `text` | |
-| `skill_code` | `varchar(32)` | 命中的技能编码，空为自由对话 |
-| `ref_doc_json` | `text` | @引用文档 ULID JSON 数组 |
-| `ref_chapter_json` | `text` | @引用章节 ULID JSON 数组 |
-| `ref_message_json` | `text` | 显式引用历史消息 ULID JSON 数组 |
-| `token_used_count` | `bigint` | 估算 token |
-
-索引：`idx_chat_messages_session_ul_id`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `message_ulid` | `varchar(40)` | PK | 消息 ULID（`MSG_`） |
+| `session_ulid` | `varchar(40)` | `idx_chat_messages_session_ul_id` | 所属会话 |
+| `role_code` | `varchar(16)` | | `user` / `assistant` / `system` |
+| `content_text` | `text` | | 消息正文 |
+| `skill_code` | `varchar(32)` | | 命中的斜杠命令编码，空为自由对话 |
+| `ref_doc_json` | `text` | | `@` 引用文档 ULID JSON 数组 |
+| `ref_chapter_json` | `text` | | `@` 引用章节 ULID JSON 数组 |
+| `ref_message_json` | `text` | | 显式引用历史消息 ULID JSON 数组 |
+| `token_used_count` | `bigint` | | 本条估算 token |
 
 #### skills
 
-技能资产：带作用域的提示词模板。全局技能（`scope_code=global`）与项目技能（`scope_code=project`）
-共存，同编码项目技能覆盖全局技能。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `skill_ulid` | `varchar(40)` | PK | 技能 ULID（`SKL_`） |
+| `skill_code` | `varchar(32)` | `idx_skills_skill_code` | 技能编码，对话中以 `/code` 触发 |
+| `skill_name` | `varchar(64)` | | 技能名称 |
+| `scope_code` | `varchar(16)` | `DEFAULT 'global'`，`idx_skills_scope_code` | `global` / `project` |
+| `project_ulid` | `varchar(40)` | `idx_skills_project_ul_id` | 所属项目，全局技能为空串 |
+| `category_code` | `varchar(16)` | | `write` / `revise` / `outline` / `setting` / `review` / `other` |
+| `description_text` | `varchar(256)` | | 一句话说明 |
+| `prompt_template` | `text` | | 提示词模板，含 `{{变量}}` |
+| `variable_spec_json` | `text` | | 变量声明 JSON 数组，无变量为 `[]` |
+| `enabled_flag` | `boolean` | `DEFAULT true` | 是否启用 |
+| `builtin_flag` | `boolean` | `DEFAULT false` | 内置技能不可删除 |
+| `sort_order` | `bigint` | | 排序号 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `skill_ulid` | `varchar(40)` | PK（`SKL_` 前缀） |
-| `skill_code` | `varchar(32)` | 索引，作用域内唯一 |
-| `skill_name` | `varchar(64)` | |
-| `scope_code` | `varchar(16)` | global / project，索引，默认 global |
-| `project_ulid` | `varchar(40)` | 索引，全局技能为空串 |
-| `category_code` | `varchar(16)` | write / revise / outline / setting / review / other |
-| `description_text` | `varchar(256)` | |
-| `prompt_template` | `text` | `{{占位符}}` 模板 |
-| `variable_spec_json` | `text` | 变量声明 JSON 数组，空为 `"[]"` |
-| `enabled_flag` | `boolean` | `DEFAULT true` |
-| `builtin_flag` | `boolean` | `DEFAULT false`，内置不可删 |
-| `sort_order` | `bigint` | |
-
-索引：`idx_skills_skill_code`、`idx_skills_scope_code`、`idx_skills_project_ul_id`。
-作用域内编码唯一由服务层保证（查询 `(scope_code, project_ulid, skill_code)` 后再写）。
+作用域内编码唯一（`scope_code` + `project_ulid` + `skill_code`）由 `SkillRepo.GetByCode` 查重后写入保证，无数据库唯一索引；同编码时由 `backend/internal/service/skill_service.go` 的 `pickSkillByScope` 决定命中项——启用中的项目技能优先，其次启用中的全局技能（`SkillRepo.List` 按 `scope_code DESC, sort_order ASC, created_at ASC` 排序，仅影响列表展示顺序）。
 
 #### skill_references
 
-技能参考资料：技能命中后按关键词挑选注入上下文，空关键词表示总是注入。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `ref_ulid` | `varchar(40)` | PK | 资料 ULID（`SKR_`） |
+| `skill_ulid` | `varchar(40)` | `idx_skill_references_skill_ul_id` | 所属技能 |
+| `ref_name` | `varchar(64)` | | 资料名 |
+| `ref_text` | `text` | | 资料正文 |
+| `keyword_list` | `varchar(256)` | | 触发关键词（逗号分隔），空表示总是注入 |
+| `sort_order` | `bigint` | | 注入顺序 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `ref_ulid` | `varchar(40)` | PK（`SKR_` 前缀） |
-| `skill_ulid` | `varchar(40)` | 索引 |
-| `ref_name` | `varchar(64)` | |
-| `ref_text` | `text` | |
-| `keyword_list` | `varchar(256)` | 逗号分隔，空表示总是注入 |
-| `sort_order` | `bigint` | 注入顺序 |
+技能删除时 `SkillService.Delete` 先调 `SkillRepo.DeleteReferencesBySkill` 再删技能行（非同一事务）。
 
-索引：`idx_skill_references_skill_ul_id`。技能删除时级联清理（`SkillRepo.DeleteReferencesBySkill`）。
-
-### 3.6 模型供应商与用量
+### 3.6 模型与用量（4 张）
 
 #### model_providers
 
-一个供应商 = 一套网关地址 + 凭据 + 对话模型名。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `provider_ulid` | `varchar(40)` | PK | 供应商 ULID（`MPR_`） |
+| `provider_name` | `varchar(64)` | | 供应商名称 |
+| `protocol_code` | `varchar(16)` | `idx_model_providers_protocol_code` | `openai` / `anthropic` |
+| `base_url` | `varchar(256)` | | 网关地址（OpenAI 需含 `/v1`） |
+| `api_key_cipher` | `varchar(512)` | | AES-256-GCM 密文，`json:"-"` 不出参 |
+| `enabled_flag` | `boolean` | `DEFAULT true` | 停用则其下模型不可用 |
+| `sort_order` | `bigint` | | 排序号 |
+| `remark_text` | `varchar(256)` | | 备注 |
+| `last_test_status_code` | `varchar(16)` | | `untested` / `success` / `failed` |
+| `last_test_message` | `varchar(512)` | | 最近测试结论 |
+| `last_test_at_ms` | `bigint` | | 最近测试时间（毫秒） |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `provider_ulid` | `varchar(40)` | PK |
-| `provider_name` | `varchar(64)` | |
-| `protocol_code` | `varchar(16)` | 索引 |
-| `base_url` | `varchar(256)` | |
-| `api_key_cipher` | `varchar(512)` | AES-256-GCM 密文，不返回给前端 |
-| `chat_model_name` | `varchar(128)` | |
-| `temperature` | `decimal` | 采样温度 |
-| `max_tokens` | `bigint` | |
-| `enabled_flag` | `boolean` | `DEFAULT true` |
-| `default_flag` | `boolean` | `DEFAULT false`，索引；全局唯一由服务层保证 |
-| `sort_order` | `bigint` | |
-| `remark_text` | `varchar(256)` | |
-| `last_test_status_code` | `varchar(16)` | |
-| `last_test_message` | `varchar(512)` | |
-| `last_test_at_ms` | `bigint` | 毫秒时间戳 |
+供应商下仍有模型时 `ModelProviderService.DeleteProvider` 返回 `ERR_BIZ_FAILED`，不级联删模型。
 
-索引：`idx_model_providers_protocol_code`、`idx_model_providers_default_flag`。
+#### model_catalogs
+
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `model_ulid` | `varchar(40)` | PK | 模型 ULID（`MDL_`） |
+| `provider_ulid` | `varchar(40)` | `idx_model_catalogs_provider_ul_id` | 所属供应商 |
+| `model_name` | `varchar(128)` | | 请求体 `model` 字段 |
+| `model_label` | `varchar(64)` | | 展示名，空则回填 `model_name` |
+| `temperature` | `decimal` | | 采样温度 |
+| `max_tokens` | `bigint` | | 单次输出上限 |
+| `context_window_count` | `bigint` | | 上下文窗口，0 表示未知 |
+| `enabled_flag` | `boolean` | `DEFAULT true` | 是否启用 |
+| `default_flag` | `boolean` | `DEFAULT false`，`idx_model_catalogs_default_flag` | 系统默认模型 |
+| `sort_order` | `bigint` | | 排序号 |
+| `remark_text` | `varchar(256)` | | 备注 |
+| `last_test_status_code` | `varchar(16)` | | `untested` / `success` / `failed` |
+| `last_test_message` | `varchar(512)` | | 最近测试结论 |
+| `last_test_at_ms` | `bigint` | | 最近测试时间（毫秒） |
+
+`default_flag` 的全局唯一由服务层保证：`ModelProviderService.SaveModel` / `SetDefaultModel` 先调 `ModelProviderRepo.ClearDefaultModel` 清零再置位。默认模型不可删除（`DeleteModel` 返回 `ERR_BIZ_FAILED`）。
+
+#### model_role_grants
+
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `grant_ulid` | `varchar(40)` | PK | 授权 ULID（`MGR_`） |
+| `model_ulid` | `varchar(40)` | `idx_model_role_grants_model_ul_id` | 模型 |
+| `role_ulid` | `varchar(40)` | `idx_model_role_grants_role_ul_id` | 角色 |
+
+授权整体覆盖：`ModelProviderRepo.ReplaceGrants` 在同一事务内先删后插。删除模型前先 `DeleteGrantsByModel`。无授权行时仅管理员可用；可用模型 = 模型启用 ∧ 供应商启用 ∧（管理员 ∨ 命中角色授权）。
 
 #### model_usage_stats
 
-按日聚合的模型用量。唯一维度为 `(stat_date, provider_ulid, model_name, call_type_code)`。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `usage_stat_ulid` | `varchar(40)` | PK | 统计 ULID（`MUS_`） |
+| `stat_date` | `varchar(10)` | UNIQUE `uk_mus_dim` | 统计日期 `YYYY-MM-DD` |
+| `provider_ulid` | `varchar(40)` | UNIQUE `uk_mus_dim` | 供应商 |
+| `provider_name` | `varchar(64)` | | 供应商名称快照 |
+| `model_name` | `varchar(128)` | UNIQUE `uk_mus_dim` | 模型名 |
+| `call_type_code` | `varchar(16)` | UNIQUE `uk_mus_dim` | 调用类型，当前只有 `chat` |
+| `call_count` | `bigint` | | 调用次数 |
+| `success_count` | `bigint` | | 成功次数 |
+| `fail_count` | `bigint` | | 失败次数 |
+| `prompt_tokens` | `bigint` | | 输入 token 合计 |
+| `completion_tokens` | `bigint` | | 输出 token 合计 |
+| `total_tokens` | `bigint` | | 总 token 合计 |
+| `latency_ms_sum` | `bigint` | | 耗时合计（毫秒），均值 = 合计 / `call_count` |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `usage_stat_ulid` | `varchar(40)` | PK |
-| `stat_date` | `varchar(10)` | UNIQUE 组合列，`YYYY-MM-DD` |
-| `provider_ulid` | `varchar(40)` | UNIQUE 组合列 |
-| `provider_name` | `varchar(64)` | 供应商名称快照 |
-| `model_name` | `varchar(128)` | UNIQUE 组合列 |
-| `call_type_code` | `varchar(16)` | UNIQUE 组合列 |
-| `call_count` | `bigint` | |
-| `success_count` | `bigint` | |
-| `fail_count` | `bigint` | |
-| `prompt_tokens` | `bigint` | |
-| `completion_tokens` | `bigint` | |
-| `total_tokens` | `bigint` | |
-| `latency_ms_sum` | `bigint` | 耗时合计，算均值用 |
+唯一维度 `(stat_date, provider_ulid, model_name, call_type_code)`；写入用 `ModelUsageRepo.UpsertIncrement` 的 `ON CONFLICT ... DO UPDATE` 累加计数与 token，并刷新 `provider_name`。
 
-索引：`uk_mus_dim`(UNIQUE, 四列组合)。
-
-### 3.7 运维
+### 3.7 运维（3 张）
 
 #### jobs
 
-RabbitMQ 消费的落库凭据。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `job_ulid` | `varchar(40)` | PK | 任务 ULID（`JOB_`） |
+| `job_type_code` | `varchar(32)` | `idx_jobs_job_type_code` | `doc_index` / `doc_reindex` |
+| `payload_json` | `text` | | `KnowledgeIndexJobDTO` 序列化（`{"doc_ulid":"DOC_..."}`） |
+| `job_status_code` | `varchar(16)` | `idx_jobs_job_status_code` | `queued` / `running` / `success` / `failed` |
+| `retry_count` | `bigint` | | 已重试次数 |
+| `error_message` | `varchar(512)` | | 失败原因 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `job_ulid` | `varchar(40)` | PK |
-| `job_type_code` | `varchar(32)` | 索引 |
-| `payload_json` | `text` | `KnowledgeIndexJobDTO` 序列化 |
-| `job_status_code` | `varchar(16)` | 索引 |
-| `retry_count` | `bigint` | |
-| `error_message` | `varchar(512)` | |
+写入路径只产生 `queued`、`success`、`failed`；`running` 不出现在任何写入中，只用于 `JobRepo.GetPendingByDoc` 的「未完成任务」查询条件（`job_status_code IN ('queued','running')`）与 `JobService.Stats` 的状态计数。
 
-索引：`idx_jobs_job_type_code`、`idx_jobs_job_status_code`。
+状态流转：`KnowledgeService.enqueueIndexJob` 插入 `queued` → worker 消费后写 `success` 或 `failed`；`JobService.Retry` 仅接受 `failed` 行，把它重置为 `queued`（`retry_count=0`、清空 `error_message`），同时把文档置回 `pending`，再重新投递队列；投递失败则写回 `failed`。
 
 #### app_settings
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `setting_ulid` | `varchar(40)` | PK |
-| `setting_key` | `varchar(64)` | UNIQUE |
-| `setting_value` | `varchar(512)` | |
-| `setting_desc` | `varchar(256)` | |
-
-索引：`idx_app_settings_setting_key`(UNIQUE)。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `setting_ulid` | `varchar(40)` | PK | 配置 ULID（`SET_`） |
+| `setting_key` | `varchar(64)` | UNIQUE `idx_app_settings_setting_key` | 配置键（白名单） |
+| `setting_value` | `varchar(512)` | | 配置值（正整数字符串） |
+| `setting_desc` | `varchar(256)` | | 说明，启动时与内置说明同步 |
 
 #### word_count_stats
 
-每日字数统计。
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `word_stat_ulid` | `varchar(40)` | PK | 统计 ULID（`WCS_`） |
+| `project_ulid` | `varchar(40)` | `idx_word_count_stats_project_ul_id` | 所属项目 |
+| `stat_date` | `varchar(10)` | `idx_word_count_stats_stat_date` | 统计日期 `YYYY-MM-DD` |
+| `word_delta` | `bigint` | | 当日人工净增字数 |
+| `ai_word_delta` | `bigint` | | 当日 AI 生成字数 |
 
-| 列 | 类型 | 约束 |
-| --- | --- | --- |
-| `word_stat_ulid` | `varchar(40)` | PK |
-| `project_ulid` | `varchar(40)` | 索引 |
-| `stat_date` | `varchar(10)` | 索引，`YYYY-MM-DD` |
-| `word_delta` | `bigint` | 人工净增字数 |
-| `ai_word_delta` | `bigint` | AI 生成字数 |
-
-索引：`idx_word_count_stats_project_ul_id`、`idx_word_count_stats_stat_date`。
-
-> `(project_ulid, stat_date)` **没有唯一约束**。写入路径 `ProjectRepo.UpsertWordDelta` /
-> `ChatRepo.UpsertAIWordDelta` 采用「先查后写再累加」，并发下可能插入重复行。
+`(project_ulid, stat_date)` 无唯一约束；`ProjectRepo.UpsertWordDelta` 与 `ChatRepo.UpsertAIWordDelta` 采用「先查后写」的累加方式，并发下可能插入同日重复行，统计查询以 `SUM` 聚合（重复行会被重复累加）。
 
 ## 4. 枚举与状态码
 
@@ -635,102 +586,117 @@ RabbitMQ 消费的落库凭据。
 | 字段 | 取值 | 常量 |
 | --- | --- | --- |
 | `users.user_status_code` | `active` / `disabled` | `UserStatusActive` / `UserStatusDisabled` |
-| `roles.role_code` | `admin` / `user`（内置两种，自定义角色不限） | `RoleCodeAdmin` / `RoleCodeUser` |
-| `roles.perm_codes_json` | `*` | `PermAdminAll` |
-| | `system:user:manage` | `PermUserManage` |
-| | `system:role:manage` | `PermRoleManage` |
-| | `system:audit:read` | `PermAuditRead` |
-| | `system:loginlog:read` | `PermLoginLogRead` |
-| | `system:job:manage` | `PermJobManage` |
-| | `system:model:manage` | `PermModelManage` |
-| | `system:usage:read` | `PermUsageRead` |
-| | `system:status:read` | `PermSystemRead` |
-| | `system:setting:manage` | `PermSettingManage` |
-| | `skill:manage` | `PermSkillManage` |
-| | `project:delete` | `PermProjectDelete` |
+| `roles.role_code`（内置） | `admin` / `user` | `RoleCodeAdmin` / `RoleCodeUser` |
+| `menus.menu_type_code` | `group` / `page` / `action` | `MenuTypeGroup` / `MenuTypePage` / `MenuTypeAction` |
+| `menus.scope_code` | `global` / `project` | `MenuScopeGlobal` / `MenuScopeProject` |
+| `login_logs.login_result_code` | `success` / `failed` / `disabled` | `LoginResultSuccess` / `LoginResultFailed` / `LoginResultDisabled` |
+| `notifications.notification_type_code` | `system` / `task` / `account` | `NotificationTypeSystem` / `NotificationTypeTask` / `NotificationTypeAccount` |
+
+权限码常量共 13 个，全部定义在 `domain/role.go`，以 JSON 数组存于 `roles.perm_codes_json`，并由 `menus.perm_code` 登记到权限目录。其中 `*` 是通配符，不由菜单登记；其余 12 个各对应一条内置菜单行。
+
+| 权限码 | 常量 | 含义 |
+| --- | --- | --- |
+| `*` | `PermAdminAll` | 全部权限 |
+| `system:user:manage` | `PermUserManage` | 用户管理 |
+| `system:role:manage` | `PermRoleManage` | 角色管理 |
+| `system:menu:manage` | `PermMenuManage` | 菜单管理（含权限码登记） |
+| `system:perm:read` | `PermPermissionRead` | 权限目录查看 |
+| `system:audit:read` | `PermAuditRead` | 审计日志查看 |
+| `system:model:manage` | `PermModelManage` | 模型供应商管理 |
+| `system:usage:read` | `PermUsageRead` | 用量分析查看 |
+| `system:status:read` | `PermSystemRead` | 运行状态查看 |
+| `system:setting:manage` | `PermSettingManage` | 运行时配置维护 |
+| `system:loginlog:read` | `PermLoginLogRead` | 登录日志查看 |
+| `system:job:manage` | `PermJobManage` | 异步任务查看与重试 |
+| `skill:manage` | `PermSkillManage` | 技能资产管理 |
 
 ### 4.2 创作
 
-| 字段 | 取值 |
-| --- | --- |
-| `projects.project_status` | `draft` / `serial` / `completed`（创建时固定 `draft`） |
-| `chapters.chapter_status` | `draft` / `revised` / `locked`（创建时固定 `draft`） |
-| `chapter_snapshots.snapshot_type` | 代码中仅写入 `manual` |
-| `characters.role_type_code` | `protagonist` / `antagonist` / `supporting` / `minor` |
-| `character_relations.relation_type_code` | 自由文本（示例注释：friend/enemy/lover/kin/teacher） |
-| `lore_settings.lore_type_code` | `world` / `rule` / `item` / `place` / `event` / `note` |
-| `outline_nodes.node_type_code` | `volume` / `arc` / `storyBlock` / `chapter` |
-| `outline_nodes.node_status_code` | `draft` / `planning` / `ready` / `done`（缺省 `draft`） |
-| `detailed_scenes.pace_code` | `slow` / `medium` / `fast` / `climax` |
+| 字段 | 取值 | 缺省 |
+| --- | --- | --- |
+| `projects.project_status` | `draft` / `serial` / `completed` | 创建时固定 `draft` |
+| `chapters.chapter_status` | `draft` / `revised` / `locked` | 创建时固定 `draft` |
+| `chapter_snapshots.snapshot_type` | `manual` | 两条写入路径都写 `manual` |
+| `characters.role_type_code` | `protagonist` / `antagonist` / `supporting` / `minor` | 无 |
+| `character_relations.relation_type_code` | 自由文本 | 无 |
+| `lore_settings.lore_type_code` | `world` / `rule` / `item` / `place` / `event` / `note` | 无 |
+| `lore_settings.content_mode_code` | `rich` / `markdown` | 列默认 `rich` |
+| `outline_nodes.node_type_code` | `volume` / `arc` / `storyBlock` / `chapter` | 无 |
+| `outline_nodes.node_status_code` | `draft` / `planning` / `ready` / `done` | 空值写 `draft` |
+| `detailed_scenes.pace_code` | `slow` / `medium` / `fast` / `climax` | 无 |
 
 ### 4.3 连续性
 
+| 字段 | 取值 | 常量 | 缺省 |
+| --- | --- | --- | --- |
+| `temporal_facts.fact_status_code` | `candidate` / `confirmed` / `superseded` / `stale` | `FactStatusCodeCandidate` 等 | 空值写 `candidate` |
+| `foreshadow_hooks.hook_status_code` | `planned` / `planted` / `echoed` / `resolved` / `abandoned` | `HookStatusCodePlanned` 等 | 由请求决定 |
+| `foreshadow_hooks.importance_code` | `high` / `medium` / `low` | `ImportanceCodeHigh` 等 | 空值写 `medium` |
+| `chapter_summaries.summary_status_code` | `pending` / `verified` / `stale` | `SummaryStatusCodePending` 等 | 空值写 `pending` |
+
+### 4.4 知识库、对话与技能
+
 | 字段 | 取值 | 常量 |
 | --- | --- | --- |
-| `temporal_facts.fact_status_code` | `candidate` / `confirmed` / `superseded` / `stale`（缺省 `candidate`） | `FactStatusCode*` |
-| `foreshadow_hooks.hook_status_code` | `planned` / `planted` / `echoed` / `resolved` / `abandoned` | `HookStatusCode*` |
-| `foreshadow_hooks.importance_code` | `high` / `medium` / `low`（缺省 `medium`） | `ImportanceCode*` |
-| `chapter_summaries.summary_status_code` | `pending` / `verified` / `stale`（缺省 `pending`） | `SummaryStatusCode*` |
+| `knowledge_documents.doc_type_code` | `txt` / `md` / `docx` / `pdf` | 由 `docTypeOfFileName` 白名单推导，其他扩展名拒绝上传 |
+| `knowledge_documents.doc_status_code` | `pending` / `indexing` / `indexed` / `failed` | 字面量写入（`KnowledgeService` / `KnowledgeWorker`） |
+| `chat_messages.role_code` | `user` / `assistant` / `system` | `ChatRoleUser` / `ChatRoleAssistant` / `ChatRoleSystem` |
+| `skills.scope_code` | `global` / `project` | `SkillScopeGlobal` / `SkillScopeProject` |
+| `skills.category_code` | `write` / `revise` / `outline` / `setting` / `review` / `other` | `SkillCategoryWrite` 等 |
 
-### 4.4 知识库与对话
+文档索引状态机（`KnowledgeService` 与 `KnowledgeWorker`）：
 
-| 字段 | 取值 |
-| --- | --- |
-| `knowledge_documents.doc_type_code` | `txt` / `md` / `docx` / `pdf`（由扩展名白名单推导） |
-| `knowledge_documents.doc_status_code` | `pending` / `indexing` / `indexed` / `failed` |
-| `chat_messages.role_code` | `user` / `assistant` / `system` |
-| `skills.category_code` | `write` / `revise` / `outline` / `setting` / `review` / `other` |
-| `skills.scope_code` | `global` / `project` |
-| `menus.menu_type_code` | `group` / `page` / `action` |
-| `menus.scope_code` | `global` / `project` |
-| 检索模式（请求参数，非列） | `keyword` / `hybrid`（默认 hybrid，其他值按 keyword 处理） |
+```mermaid
+stateDiagram-v2
+  [*] --> pending: Upload 落库
+  pending --> indexing: worker 取到任务
+  indexing --> indexed: 切片入库并同步 Manticore
+  indexing --> failed: 重试 3 次后仍失败
+  pending --> failed: 队列投递失败
+  indexed --> pending: Reindex 重投
+  failed --> pending: Reindex 重投
+```
 
-### 4.5 运维
+### 4.5 模型与运维
 
-| 字段 | 取值 |
-| --- | --- |
-| `jobs.job_type_code` | `doc_index` / `doc_reindex` |
-| `jobs.job_status_code` | `queued` / `running` / `success` / `failed`；代码实际写入 `queued`、`success`、`failed`（`running` 仅出现在 `JobRepo.GetPendingByDoc` 的查询条件中） |
-| `model_providers.protocol_code` | `openai` / `anthropic` |
-| `model_providers.last_test_status_code` | `untested` / `success` / `failed` |
-| `model_usage_stats.call_type_code` | `chat` |
-| `notifications.notification_type_code` | `system` / `task` / `account` |
-| `notifications.read_flag` | `true` / `false` |
-| `login_logs.login_result_code` | `success` / `failed` / `disabled` |
+| 字段 | 取值 | 常量 |
+| --- | --- | --- |
+| `model_providers.protocol_code` | `openai` / `anthropic` | `ProtocolCodeOpenAI` / `ProtocolCodeAnthropic` |
+| `model_providers.last_test_status_code`、`model_catalogs.last_test_status_code` | `untested` / `success` / `failed` | `ProviderTestStatusUntested` / `ProviderTestStatusSuccess` / `ProviderTestStatusFailed` |
+| `model_usage_stats.call_type_code` | `chat` | `ModelCallTypeChat` |
+| `jobs.job_type_code` | `doc_index` / `doc_reindex` | `JobTypeDocIndex` / `JobTypeDocReindex` |
+| `jobs.job_status_code` | `queued` / `running` / `success` / `failed` | `JobStatusQueued` 等 |
+| 检索模式（请求参数，非列） | `keyword` / `hybrid` | `SearchModeKeyword` / `SearchModeHybrid`（默认 hybrid） |
 
 ## 5. 非关系存储
 
 ### 5.1 MinIO
 
-| 项 | 值 | 来源 |
+| 项 | 值 | 位置 |
 | --- | --- | --- |
-| 桶名 | `novelworkbench`（`minio.bucket` 配置项） | `backend/configs/config.yaml` |
-| 对象键 | 等于文档 ULID（`DOC_...`） | `KnowledgeService.Upload`：`ObjectKey: docULID` |
-| 桶初始化 | 启动时检查，不存在则创建 | `infra.NewMinIO` |
+| 桶名 | `novelworkbench`（`minio.bucket`） | `configs/config.yaml` |
+| 桶初始化 | `infra.NewMinIO` 检查桶，不存在则创建；启动后再做一次健康检查，失败只告警 | `backend/internal/infra/minio.go`、`cmd/server/main.go` |
+| 对象键 | 文档 ULID（`DOC_...`），即 `knowledge_documents.object_key` | `KnowledgeService.Upload` |
+| 上传 Content-Type | `application/octet-stream` | `KnowledgeService.Upload` |
 
 上传顺序（`KnowledgeService.Upload`）：
 
-1. 校验项目归属、扩展名白名单、大小上限；
-2. `PutObject(bucket, docULID, ...)` 写原文；
-3. 插入 `knowledge_documents` 行（`doc_status_code = 'pending'`）；
-4. 若第 3 步失败 → **回滚**：`RemoveObject(docULID)` 删掉已上传对象；
-5. 投递索引任务（先建 `jobs` 留痕 `queued`，再发 RabbitMQ）；投递失败则把文档置 `failed`，
-   并把任务留痕置 `failed`。
+1. 校验项目归属、扩展名白名单、`upload_max_mb` 大小上限；
+2. `ObjectRepo.PutObject` 写原文，失败抛 `ERR_STORAGE`；
+3. 插入 `knowledge_documents` 行（`doc_status_code = 'pending'`）；失败则 `RemoveObject` 回滚已上传对象（回滚失败只告警）；
+4. `enqueueIndexJob`：先插 `jobs` 行（`queued`），再投递 RabbitMQ；投递失败把任务行置 `failed` 并返回 `ERR_STORAGE`，同时把文档置 `failed`。
 
-删除顺序（`KnowledgeService.Delete`）：
-
-1. `RemoveObject(doc.ObjectKey)` 删原文（失败即中断，抛 `ERR_STORAGE`）；
-2. `DELETE FROM nw_chunks WHERE doc_ulid = ...` 删全文索引行（失败只告警，降级）；
-3. 单事务内删 `knowledge_chunks` 行，再删 `knowledge_documents` 行。
-
-项目删除时的外部清理在**数据库事务提交之后**执行（`ProjectService.cleanupKnowledgeExternal`），
-先删 MinIO 对象再删 Manticore 行，失败只打告警日志，不回滚数据库。
+删除顺序（`KnowledgeService.Delete`）：先 `RemoveObject`（失败即中断，抛 `ERR_STORAGE`）→ 删 Manticore 行（失败只告警）→ 事务内删 `knowledge_chunks` 与 `knowledge_documents`。
 
 ### 5.2 Manticore
 
-表名默认 `nw_chunks`（`manticore.table_chunks` 配置项，`manticoreTableName` 为空时也回落到此名）。
+| 项 | 值 |
+| --- | --- |
+| 表名 | `nw_chunks`（`manticore.table_chunks`）；`manticoreTableName` 在配置为空时回落到同名默认值 |
+| 客户端 | `infra.ManticoreClient`，`POST {base_url}/sql?mode=raw`，HTTP 超时 5s |
+| 表结构 | `chunk_ulid string, doc_ulid string, project_ulid string, chunk_text text` |
 
-建表 DDL（`ensureManticoreSchema`）：
+建表语句（`ensureManticoreSchema`）：
 
 ```sql
 CREATE TABLE IF NOT EXISTS nw_chunks(
@@ -741,209 +707,205 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 ) charset_table='non_cjk,0..9,A..Z->a..z,a..z' ngram_len='1' ngram_chars='cjk'
 ```
 
-- `charset_table`：非 CJK 字符集，小写化映射；
-- `ngram_len='1'`：单字粒度；
-- `ngram_chars='cjk'`：CJK 单字切分。
+- `ngram_len='1'` + `ngram_chars='cjk'`：中文按单字切分；
+- `charset_table`：非 CJK 字符小写映射。
 
-启动期迁移与回灌（`KnowledgeWorker.Run`）：
+worker 启动时的结构校验（`KnowledgeWorker.Run`）：执行 `CREATE TABLE IF NOT EXISTS`，再 `SHOW CREATE TABLE nw_chunks`；若结果不含 `ngram_len` 则 `DROP TABLE` 重建，并从 PG 全量回灌（`rebuildManticoreIndex` 读 `ListAllChunksForIndex`，按文档分组调用 `syncManticoreChunks`）。
 
-1. 执行 `CREATE TABLE IF NOT EXISTS`；
-2. `SHOW CREATE TABLE nw_chunks`，若结果中**不含 `ngram_len`**，说明是旧结构 → `DROP TABLE` → 重新建表，
-   返回 `rebuilt = true`；
-3. `rebuilt` 为 true 时执行 `rebuildManticoreIndex`：从 PG `knowledge_chunks` 读全部切片
-   （`ListAllChunksForIndex`，按 `doc_ulid, chunk_index` 排序），按文档分组，逐文档调用
-   `syncManticoreChunks` 回灌。
-
-单文档同步 `syncManticoreChunks` 为**先删后插**：`DELETE FROM nw_chunks WHERE doc_ulid = '...'`
-之后逐条 `INSERT`。
+单文档同步 `syncManticoreChunks` 为「先删后插」：`DELETE FROM nw_chunks WHERE doc_ulid = '...'` 后逐条 `INSERT`。字符串转义由 `escapeManticoreString` 处理（`\`、`'`、`"`）。
 
 检索（`queryManticoreHits`）：
 
 ```sql
 SELECT chunk_ulid, WEIGHT() AS score FROM nw_chunks
-WHERE MATCH('@chunk_text <expr>') AND project_ulid = '...'
+WHERE MATCH('@chunk_text <expr>') AND project_ulid = '<PRJ_...>'
   [AND doc_ulid IN (...)]
 ORDER BY score DESC LIMIT <topK>
 ```
 
-- `<expr>`：keyword 通道为整串引号包裹；term 通道为逐词引号后用 ` | ` 连接的 OR 表达式；
-- 字符串转义由 `escapeManticoreString` 处理（`\`、`'`、`"`）。
+- `expr`：term 通道为逐词引号后用 ` | ` 连接的 OR 表达式，phrase 通道为整串引号包裹；
+- 命中结果按 `chunk_ulid` 回表 `knowledge_chunks`（`KnowledgeRepo.GetChunksByULIDs` 联 `knowledge_documents` 取文档名）；
+- hybrid 模式对 term / phrase 两路命中做 RRF 融合（`score = Σ 1/(60+rank)`），再交默认模型重排（重排失败 fail-open 保留原顺序）。
 
 ### 5.3 Redis
 
-只用于登出令牌黑名单。
-
 | 项 | 值 |
 | --- | --- |
-| 键格式 | `nw:token:blacklist:<sha256hex(token)>`（`repo/token_repo.go`） |
+| 键格式 | `nw:token:blacklist:<sha256hex(token)>` |
 | 值 | `"1"` |
-| TTL | 令牌剩余有效期（`expires_at - issued_at`），到期自然清除 |
-| 读语义 | `IsRevoked` 在 Redis 异常时返回 false（视为未吊销，放行） |
+| TTL | 令牌签发有效期（`expires_at - issued_at`），到期键自动清除 |
+| 读语义 | `TokenRepo.IsRevoked` 在 Redis 异常时返回 false（视为未吊销） |
+| 写入点 | `AuthService.Logout` → `TokenRepo.Revoke` |
 
 ### 5.4 RabbitMQ
 
 | 项 | 值 |
 | --- | --- |
-| 队列名 | `nw_doc_index`（`rabbitmq.queue_doc_index` 配置项） |
-| 声明 | `QueueDeclare(name, durable=true, autoDelete=false, exclusive=false, noWait=false)` |
-| 投递 | `PublishWithContext`，`DeliveryMode = Persistent`，`Content-Type = application/json` |
-| 消息体 | `{"doc_ulid": "DOC_..."}`（`KnowledgeIndexJobDTO`） |
+| 队列名 | `nw_doc_index`（`rabbitmq.queue_doc_index`） |
+| 声明 | `QueueDeclare(name, durable=true, autoDelete=false, exclusive=false, noWait=false)`，投递与消费前各声明一次（幂等） |
+| 投递 | `PublishWithContext`，`DeliveryMode=Persistent`，`ContentType=application/json` |
+| 消息体 | `{"doc_ulid":"DOC_..."}` |
 
 消费确认语义（`MQRepo.ConsumeIndexJobs`）：
 
 | 情况 | 动作 |
 | --- | --- |
-| 载荷 JSON 非法 | `Nack(requeue=false)`，丢弃毒消息 |
+| 载荷 JSON 非法 | `Nack(requeue=false)`，丢弃 |
 | handler 返回 nil（成功，或已在内部落库为失败） | `Ack` |
-| handler 返回 error（如关停中断、查询异常） | `Nack(requeue=true)`，重投 |
+| handler 返回 error（查询异常、关停中断） | `Nack(requeue=true)`，重投 |
+| 通道关闭或 ctx 取消 | 消费循环退出 |
 
-worker 内部对单个文档最多重试 3 次（`maxIndexRetryCount`），退避为 `attempt` 秒；
-最终失败则把文档置 `failed` 并返回 nil（ack，不再重投）。
+消费循环中断后按 5s 间隔重连（`consumeReconnectInterval`）。`KnowledgeWorker.handleIndexJob` 对单文档最多重试 3 次（`maxIndexRetryCount`），退避 `attempt` 秒；最终失败写入 `jobs` 与 `knowledge_documents` 的失败信息，并向项目主人发 `task` 类型通知后返回 nil（不重投）。
 
 ## 6. 启动播种
 
-播种顺序见 `cmd/server/main.go`，全部在 AutoMigrate 之后、HTTP 监听之前执行。
+全部播种在 `AutoMigrate` 之后、HTTP 监听之前执行（`cmd/server/main.go`）。所有播种都按业务键查缺补插，重复启动不产生重复行。
 
-| 顺序 | 动作 | 条件 | 失败处理 |
+| 顺序 | 动作 | 触发条件 | 失败处理 |
 | --- | --- | --- | --- |
-| 1 | `providerService.SeedDefault` 播种默认模型供应商 | 已配置 `ai.base_url` 与 `ai.chat_model` 且表为空（`Count()==0`） | 仅告警（`Warnw`），继续启动 |
-| 2 | `skillService.SeedDefaults` 播种内置技能 | 按 `(global, "", skill_code)` 查缺补插 | 致命：`os.Exit(1)` |
-| 3 | `settingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插 | 致命：`os.Exit(1)` |
-| 4 | `roleService.SeedDefaults` 播种内置角色 | 按 `role_code` 查缺补插 | 致命：`os.Exit(1)` |
-| 5 | `menuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插（父级编码先行解析） | 致命：`os.Exit(1)` |
-| 6 | `userAdminService.BootstrapAdmin` 引导管理员 | `users` 表为空（`Count()==0`） | 致命：`os.Exit(1)` |
+| 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model` 且 `model_providers` 为空 | 告警，继续启动 |
+| 2 | `ModelProviderService.MigrateLegacyModels` 把 `model_providers.chat_model_name` 非空的行转成 `model_catalogs` 行 | `model_catalogs` 为空 | 告警，继续启动 |
+| 3 | `SkillService.SeedDefaults` 播种 21 个内置全局技能 | 按 `(global, "", skill_code)` 查缺补插 | `os.Exit(1)` |
+| 4 | `SettingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插；已存在时仅同步 `setting_desc` | `os.Exit(1)` |
+| 5 | `RoleService.SeedDefaults` 播种内置角色 | 按 `role_code` 查缺补插 | `os.Exit(1)` |
+| 6 | `MenuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插，父级编码先解析 | `os.Exit(1)` |
+| 7 | `UserAdminService.BootstrapAdmin` 引导管理员 | `users` 为空 | `os.Exit(1)` |
 
 播种内容：
 
-- **供应商**：名称固定「默认模型网关」，`enabled_flag=true`、`default_flag=true`、
-  `last_test_status_code='untested'`，API Key 用 JWT 密钥派生的材料做 AES-256-GCM 封存。
-- **技能**：来源 `ai.BuiltinSkills()`，共 9 条内置全局技能
-  （`continue`/`outline`/`polish`/`expand`/`condense`/`summary`/`review`/`name`/`setting`），
-  `scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`；已存在的不覆盖（保留作者改动）。
-- **菜单**：来源 `menuSeedList`，共 22 行：3 个分组（创作/平台/系统）、18 个页面与 1 个动作权限
-  （`action_model_write`）。页面含仪表盘、系统设置、7 个项目内页（写作台/创作规划/连续性/
-  角色/世界观/知识库/素材笔记）、模型供应商、技能管理与 7 个管理页（用户/角色/菜单/权限目录/
-  审计/用量/运行状态）；`perm_code` 非空的页面即权限登记处。
-- **应用配置**：`chat_history_count=5`、`rag_top_k=6`、`daily_word_goal=2000`。配置键为白名单，值必须为整数并落在各自区间；内置配置说明会在启动时同步更新。
-- **权限码**：`system:*`（用户/角色/菜单/权限目录/审计/设置/模型/用量/状态）与 `skill:manage`，
-  全部由内置菜单登记；`*` 为通配全部权限。
-- **角色**：`admin`（`perm_codes_json = ["*"]`）、`user`（`perm_codes_json = "[]"`），
-  `builtin_flag=true`；已存在不覆盖。
-- **管理员**：登录名 `admin`，邮箱 `admin@novelworkbench.local`，密码取 `app.admin_password`
-  配置项（缺省 `Admin@123456`），挂载 `admin` 角色。
+| 对象 | 内容 |
+| --- | --- |
+| 供应商 | 名称「默认模型网关」，`enabled_flag=true`，`last_test_status_code='untested'`，API Key 用 JWT 密钥派生材料做 AES-256-GCM 封存（`pkg.SealSecret`） |
+| 默认模型 | 取 `ai.chat_model`，`default_flag=true`，`model_label` 回填模型名；播种后 `grantToBuiltinRoles` 授权给全部内置角色 |
+| 内置技能 | 来源 `ai.BuiltinSkills()`，共 21 个：`continue`、`outline`、`polish`、`expand`、`condense`、`summary`、`review`、`name`、`setting`、`deconstruct`、`deai`、`golden3`、`foreshadow`、`arc`、`chaptercheck`、`architect`、`hook`、`dialogue`、`pacing`、`worldrule`、`mainline`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`、`variable_spec_json='[]'`，已存在不覆盖 |
+| 应用配置 | `chat_history_count=5`、`rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
+| 内置角色 | `admin`（`perm_codes_json=["*"]`）、`user`（`perm_codes_json="[]"`），`builtin_flag=true`，已存在不覆盖 |
+| 内置菜单 | 来源 `menuSeedList`，共 25 行：3 个分组（创作 / 平台 / 系统）、21 个页面、1 个动作权限（`action_model_write`） |
+| 管理员 | 登录名 `admin`，邮箱 `admin@novelworkbench.local`，密码取 `app.admin_password`（缺省 `Admin@123456`），挂载 `admin` 角色 |
+
+内置菜单承载的权限码登记：`skills`（`skill:manage`）、`admin_users`（`system:user:manage`）、`admin_roles`（`system:role:manage`）、`admin_menus`（`system:menu:manage`）、`admin_perms`（`system:perm:read`）、`admin_audit`（`system:audit:read`）、`admin_login_log`（`system:loginlog:read`）、`admin_usage`（`system:usage:read`）、`admin_jobs`（`system:job:manage`）、`admin_status`（`system:status:read`）、`settings`（`system:setting:manage`）、`action_model_write`（`system:model:manage`）。
 
 ## 7. 事务与一致性
 
-事务封装只有一种：`repo.WithTx(db, fn)`（`repo/tx.go`，即 `db.Transaction`）。
-仓储层内另有两处自建事务：`ChatRepo.DeleteSessionWithMessages` 与
-`RoleRepo.ReplaceUserRoles`。
+事务封装统一为 `repo.WithTx(db, fn)`（`backend/internal/repo/tx.go`，即 `db.Transaction`）。仓储层内另有三处自建事务：`ChatRepo.DeleteSessionWithMessages`、`RoleRepo.ReplaceUserRoles`、`ModelProviderRepo.ReplaceGrants`。
 
 ### 7.1 有事务边界的操作
 
 | 操作 | 事务内覆盖范围 | 位置 |
 | --- | --- | --- |
 | 项目删除 | 章节快照 → 章节 → 卷 → 角色关系与角色 → 世界观设定 → 会话消息与会话 → 知识切片 → 知识文档 → 字数统计 → 项目行 | `ProjectService.Delete` |
-| 卷删除 | 章节快照 → 章节 → 卷 → 项目字数回补 | `VolumeService.Delete` |
+| 卷删除 | 汇总卷内字数 → 章节快照 → 章节 → 卷 → 项目字数回补 | `VolumeService.Delete` |
 | 章节更新 | 章节字段更新 + 项目累计字数增减 + 当日字数统计 | `ChapterService.Update` |
 | 章节删除 | 章节快照 → 章节 → 项目字数回补 | `ChapterService.Delete` |
 | 快照回滚 | 自动留档 → 章节正文与字数更新 → 项目字数增减 | `ChapterService.SnapshotRestore` |
 | 角色删除 | 关系边 → 角色卡 | `CharacterService.Delete` |
 | 知识文档删除 | 切片行 → 文档行 | `KnowledgeService.Delete` |
-| 切片重建 | 先删该文档旧切片 → 逐条插入新切片 | `KnowledgeWorker.indexDocument` |
-| AI 回复落库 | assistant 消息 → 当日 AI 字数统计 | `ChatService` |
+| 切片重建 | 删该文档既有切片 → 逐条插入新切片 | `KnowledgeWorker.indexDocument` |
+| AI 回复落库 | assistant 消息 → 当日 AI 字数统计 | `ChatService.Send` |
+| 用户角色覆盖 | 清空用户全部关联 → 逐条插入 | `RoleRepo.ReplaceUserRoles` |
+| 模型授权覆盖 | 清空模型全部授权 → 逐条插入 | `ModelProviderRepo.ReplaceGrants` |
+| 会话删除 | 消息 → 会话 | `ChatRepo.DeleteSessionWithMessages` |
 
-字数账目维护（`applyWordDelta`）在事务内做两件事：
+字数账目维护 `applyWordDelta`（`chapter_service.go`）在事务内做两件事：
 
-- `ProjectRepo.AdjustTotalWordCount`：`total_word_count = total_word_count + delta`（表达式增减，防并发覆盖）；
+- `ProjectRepo.AdjustTotalWordCount`：`total_word_count = total_word_count + delta`（表达式增减，避免读改写覆盖）；
 - `ProjectRepo.UpsertWordDelta`：当日 `word_count_stats` 累加 `word_delta`。
 
-### 7.2 不在事务内的操作
+### 7.2 项目删除的级联覆盖面
 
-以下跨存储写操作无法纳入同一个数据库事务，只能靠应用层编排 + 告警降级：
+```mermaid
+flowchart TD
+  P[projects] --> V[volumes]
+  V --> C[chapters]
+  C --> S[chapter_snapshots]
+  P --> CH[characters]
+  CH --> CR[character_relations]
+  P --> L[lore_settings]
+  P --> CS[chat_sessions]
+  CS --> CM[chat_messages]
+  P --> KD[knowledge_documents]
+  KD --> KC[knowledge_chunks]
+  P --> W[word_count_stats]
+```
 
-| 操作 | 顺序 | 失败后果 |
-| --- | --- | --- |
-| 知识库上传 | MinIO 写入 → PG 文档行 → RabbitMQ 投递 | PG 行失败 → 回滚删 MinIO 对象；投递失败 → 文档置 `failed` |
-| 知识库删除 | MinIO 删原文 → Manticore 删行 → PG 事务 | Manticore 失败只告警，索引残留 |
-| 索引同步 | PG 切片事务 → Manticore 同步 → 文档置 `indexed` | Manticore 失败只告警，keyword 通道降级 |
-| 项目删除的外部清理 | DB 事务提交后 → MinIO 删对象 → Manticore 删行 | 失败只告警，DB 一致性已保证 |
+图中箭头表示归属关系；删除顺序与箭头相反（先删子行）。`ProjectService.Delete` 在单个事务内按下列顺序显式删除（无数据库级联）：
 
-### 7.3 项目删除的级联覆盖面（重要）
+`chapter_snapshots` → `chapters` → `volumes` → `character_relations` + `characters` → `lore_settings` → `chat_messages` + `chat_sessions` → `knowledge_chunks` → `knowledge_documents` → `word_count_stats` → `projects`。
 
-`ProjectService.Delete` 在单个事务内**显式删除**下列数据：
+事务提交后执行 `cleanupKnowledgeExternal`：逐文档删 MinIO 对象与 Manticore 行，失败只告警，不回滚数据库。
 
-`chapter_snapshots` → `chapters` → `volumes` → `character_relations` → `characters` →
-`lore_settings` → `chat_messages` → `chat_sessions` → `knowledge_chunks` →
-`knowledge_documents` → `word_count_stats` → `projects`
-
-**以下表没有删除路径，删除项目后其数据仍然保留（成为孤儿数据）：**
+以下表没有按项目删除的路径，项目删除后其行保留：
 
 | 表 | 原因 |
 | --- | --- |
-| `outline_nodes` | `OutlineRepo` 只有 `DeleteNode`（按项目 + 节点 ULID），无按项目批量删除方法 |
-| `detailed_scenes` | `OutlineRepo.DeleteScene` 同上，无按项目批量删除方法 |
-| `temporal_facts` | `ContinuityRepo` 只有 Create/Update/Get/List，无任何 Delete 方法 |
+| `outline_nodes` | `OutlineRepo` 只有按「项目 + 节点 ULID」的 `DeleteNode`，无按项目批量删除方法 |
+| `detailed_scenes` | 同上，只有 `DeleteScene` |
+| `temporal_facts` | `ContinuityRepo` 只有 Create / Update / Get / List，无 Delete |
 | `foreshadow_hooks` | 同上 |
 | `chapter_summaries` | 同上 |
-| `jobs` | `JobRepo` 只有 Create/Update/Get，无删除方法；任务留痕永久保留 |
-| `audit_logs` | `AuditRepo` 只增不删，无任何 Delete 方法 |
+| `jobs` | `JobRepo` 只有 Create / Update / Get / List，任务留痕永久保留 |
+| `audit_logs`、`login_logs` | 只有 Create / ListPage，日志只增不删 |
 
-其他不随项目删除清理的数据：`model_providers`、`model_usage_stats`、`skills`（全局行）、`menus`、
-`app_settings`、`roles`、`user_roles`、`users`（均为全局数据，与项目无关联）。
+其余表为全局数据，与项目无归属关系：`users`、`roles`、`user_roles`、`menus`、`app_settings`、`skills`（全局行）、`model_providers`、`model_catalogs`、`model_role_grants`、`model_usage_stats`、`notifications`（按用户而非项目清理）。
 
-另外，删除大纲节点前需先删除其子节点（`OutlineService.DeleteNode` 校验子节点数为 0），
-删除父节点不会级联删除子节点，也不会删除挂在其下的 `detailed_scenes`。
+### 7.3 跨存储写操作
+
+这些操作无法纳入同一个数据库事务，只能靠应用层编排与告警降级：
+
+| 操作 | 顺序 | 失败后果 |
+| --- | --- | --- |
+| 知识库上传 | MinIO 写 → PG 文档行 → PG 任务行 → RabbitMQ 投递 | PG 行失败回滚删 MinIO 对象；投递失败把文档与任务置 `failed` |
+| 知识库删除 | MinIO 删原文 → Manticore 删行 → PG 事务 | MinIO 失败即中断；Manticore 失败只告警，索引残留 |
+| 索引同步 | PG 切片事务 → Manticore 先删后插 → 回写文档状态 | Manticore 失败只告警，keyword 通道降级 |
+| 项目删除的外部清理 | PG 事务提交后 → MinIO 删对象 → Manticore 删行 | 失败只告警，PG 一致性已保证 |
+| 技能删除 | 删参考资料 → 删技能行 | 两步非同一事务，中途失败会残留参考资料 |
+| 用户删除 | 删角色关联 → 删通知（失败只告警）→ 删用户行 | 通知清理失败会残留通知 |
+| 模型用量统计 | 内存缓冲累加 → 每 5s `Flush` 批量 upsert | 落库失败丢弃该批缓冲（只告警），统计可能少计 |
+
+`ModelUsageService` 的缓冲是唯一的最终一致路径：`RecordUsage` 只写内存，`flushLoop` 每 5s（`usageFlushInterval`）批量写库，进程退出时再 flush 一次。
 
 ## 8. 索引与查询约束
 
 | 约束 | 说明 |
 | --- | --- |
-| 无外键 | 所有 DO 结构体没有 `gorm:"foreignKey"` 标签，AutoMigrate 不生成 `FOREIGN KEY` |
-| 无软删除 | 没有 `gorm.DeletedAt` 字段，所有删除都是物理 `DELETE` |
-| 无数据库级联 | `ON DELETE CASCADE` 不存在，级联全部由服务层显式编排 |
-| 唯一约束共 7 处 | `users.user_name`、`users.user_email`、`roles.role_code`、`menus.menu_code`、`app_settings.setting_key`（均为单列唯一索引），`model_usage_stats.uk_mus_dim`（`stat_date`+`provider_ulid`+`model_name`+`call_type_code` 四列组合唯一索引），以及 `skills` 作用域内编码（由服务层保证，无数据库唯一索引以允许空值多行） |
-| 归属校验在服务层 | `mustOwnProject` / `mustOwnChapter` 等函数比对 `projects.user_ulid`，不是数据库约束 |
-| 跨表关联用 JOIN | 例如 `RoleRepo.ListRolesByUserULID` 用 `JOIN user_roles ON user_roles.role_ulid = roles.role_ulid` |
-| 分页 | `PageREQ.Normalize` 归一为 `page_num >= 1`、`page_size` 默认 20、上限 100 |
-| 统计聚合在 SQL 内 | `model_usage_stats` 的按日 / 按供应商 / 按模型聚合由 `ModelUsageRepo` 的 `GROUP BY` 完成，缺日由服务层补零 |
-| 大文本不进索引 | `content_text`、`chunk_text` 等 `text` 列不建索引；正文检索依赖 Manticore |
+| 无外键 | 所有 DO 没有 `foreignKey` 标签，`AutoMigrate` 不生成 `FOREIGN KEY` |
+| 无软删除 | 没有 `gorm.DeletedAt` 字段，删除均为物理 `DELETE` |
+| 无数据库级联 | 不存在 `ON DELETE CASCADE`，级联全部由服务层编排 |
+| 数据库唯一约束 6 处 | `users.user_name`、`users.user_email`、`roles.role_code`、`menus.menu_code`、`app_settings.setting_key`、`model_usage_stats.uk_mus_dim`（`stat_date` + `provider_ulid` + `model_name` + `call_type_code` 四列组合） |
+| 服务层唯一语义 | `menus.perm_code`（`MenuRepo.CountByPermCode`）、`model_catalogs.default_flag`（`ClearDefaultModel` 后置位）、`skills` 的 `(scope_code, project_ulid, skill_code)`（`GetByCode` 查重）、`chapter_summaries` 的 `(project_ulid, chapter_ulid)`（先查后写）、`word_count_stats` 的 `(project_ulid, stat_date)`（先查后写） |
+| 归属校验在服务层 | `mustOwnProject` / `mustOwnChapter` / `mustOwnDoc` 比对 `projects.user_ulid`，不是数据库约束 |
+| 跨表关联用 JOIN | 如 `RoleRepo.ListRolesByUserULID`（`JOIN user_roles`）、`KnowledgeRepo.GetChunksByULIDs`（`JOIN knowledge_documents`）、`StatsRepo`（`word_count_stats w` 联 `projects`） |
+| 分页 | `PageREQ.Normalize`：`page_num < 1` 归一为 1；`page_size` 缺省 20、超过 100 归一为 20 |
+| 排序约定 | 时间倒序（`created_at DESC`）用于日志/任务/通知/项目；`sort_order ASC, created_at ASC` 用于菜单/设定/技能/参考资料；`chapter_order ASC`、`chunk_index ASC`、`sort_order ASC, outline_ulid ASC` 用于章节/切片/大纲 |
+| 聚合在 SQL 内 | `model_usage_stats` 的按日/按供应商/按模型聚合由 `ModelUsageRepo` 的 `GROUP BY` 完成，缺日由服务层补零；`word_count_stats` 的区间汇总由 `StatsRepo` 完成 |
+| 大文本不建索引 | `content_text`、`chunk_text`、`prompt_template`、`ref_text` 等 `text` 列不建索引，正文检索依赖 Manticore |
+| 排序号来源 | 章节取项目内 `MAX(chapter_order)+1`；卷在请求值 ≤ 0 时取项目内最大值 +1；大纲节点与场景在请求值为 0 时取同级最大值 +1 |
 
-## 9. 数据迁移
+## 9. 迁移策略
 
-- 迁移唯一入口是 `cmd/server/main.go` 的 `db.AutoMigrate(...)`，一次性声明 26 个 DO：
-  `UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、
-  `CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、
-  `DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、
-  `SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、
-  `UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelUsageStatDO`。
-- 仓库内**没有 `.sql` 文件，也没有 migrations 目录**。
-- AutoMigrate 语义：表不存在则 `CREATE TABLE`；表已存在则逐列比对并补列、补索引。
-  它**不做**破坏性变更——不删列、不改列类型、不删索引。
-  因此删除字段或修改字段宽度必须手工执行 DDL。
-- AutoMigrate 失败（连接失败或 DDL 出错）时 `main.go` 直接 `os.Exit(1)`。
-- Manticore 侧的"迁移"是自实现的：`ensureManticoreSchema` 检测 `ngram_len` 缺失时
-  drop + recreate + 从 PG 回灌，属于唯一支持的结构升级路径。
+- 唯一迁移入口是 `cmd/server/main.go` 的 `db.AutoMigrate(...)`，声明 32 个 DO：`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`。
+- 仓库内没有 `.sql` 文件，也没有 migrations 目录。
+- AutoMigrate 语义：表不存在则建表；表已存在则补缺失的列与索引。它不做破坏性变更——不删列、不改列类型、不删索引；删除字段或调整列宽必须手工执行 DDL。
+- AutoMigrate 失败（连接失败或 DDL 出错）时 `os.Exit(1)`，服务不会带半迁移状态启动。
+- 数据层幂等补丁在启动期以业务键判空执行：`SeedDefault`（供应商表为空）、`MigrateLegacyModels`（模型表为空）、四个 `SeedDefaults`（按编码/键查缺补插）、`BootstrapAdmin`（用户表为空）。
+- Manticore 侧的结构管理由 `ensureManticoreSchema` 自实现：表不存在则按 CJK ngram 结构建表；已存在但 `SHOW CREATE TABLE` 结果缺少 `ngram_len` 时 drop 重建，并从 PG 回灌全部切片。这是唯一支持的结构变更路径。
+- Redis 与 RabbitMQ 无结构迁移：键按 TTL 自然过期，队列在每次投递/消费前 `QueueDeclare` 幂等声明。
 
 ## 10. 备份与恢复
 
 | 数据 | 备份对象 | 恢复要点 |
 | --- | --- | --- |
-| PostgreSQL | 整库（`pg_dump`） | 恢复后重启服务，AutoMigrate 幂等补齐缺失的表/列/索引 |
-| MinIO | 桶 `novelworkbench` | 对象键即文档 ULID，恢复后与 PG `knowledge_documents.object_key` 一一对应 |
-| Manticore | **无需备份** | 索引是投影；恢复 PG 后重启服务，`ensureManticoreSchema` 会建表，
-  但只有检测到旧结构才回灌。要强制重建，可先 drop `nw_chunks` 表再启动，
-  或对每个文档调用重投索引接口 |
-| Redis | **无需备份** | 仅存令牌黑名单，重启后失效即允许旧令牌（按 JWT 有效期自然过期） |
-| RabbitMQ | **无需备份** | 仅传输通道；队列为 durable + persistent 消息，重启后未消费消息自动重投 |
+| PostgreSQL | 整库逻辑备份（如 `pg_dump`） | 恢复后启动服务，`AutoMigrate` 幂等补齐缺失的表、列与索引；播种逻辑补回内置角色、菜单、配置、技能与管理员 |
+| MinIO | 桶 `novelworkbench` | 对象键即文档 ULID，与 `knowledge_documents.object_key` 一一对应；缺对象时 `KnowledgeService.GetContent` 返回 `ERR_STORAGE`，索引任务在 `KnowledgeWorker.indexDocument` 读取原文失败后把文档置 `failed` |
+| Manticore | 无需备份 | 索引是投影；恢复 PG 后重启服务即可建表，`SHOW CREATE TABLE` 通过时不会自动回灌，需重建时可先 drop `nw_chunks` 再启动，或对每个文档调 `KnowledgeService.Reindex` 重投任务 |
+| Redis | 无需备份 | 只存令牌黑名单，丢失后已签发令牌在 JWT 有效期内仍可用（默认 168 小时） |
+| RabbitMQ | 无需备份 | 仅传输通道；队列 durable、消息 persistent，未消费消息在重启后重投；丢失的任务可用 `Reindex` 重新投递 |
 
-恢复顺序建议：PostgreSQL → MinIO → 重启服务（触发 AutoMigrate 与 Manticore 建表）→
-按需触发知识库重索引。
+恢复顺序：PostgreSQL → MinIO → 重启服务（触发 AutoMigrate、播种与 Manticore 建表）→ 按需重投知识库索引。
 
 一致性注意：
 
-- PG 与 MinIO 之间没有分布式事务。上传是「MinIO 先写、PG 后写、PG 失败删 MinIO」，
-  删除是「MinIO 先删、PG 后删」，两者之间存在短暂不一致窗口。
-- PG 与 Manticore 之间同理：切片先落 PG 再同步 Manticore，Manticore 同步失败只降级，
-  不会回滚 PG。
-- `word_count_stats` 的 `(project_ulid, stat_date)` 无唯一约束，并发写入可能产生重复行；
-  统计查询使用 `SUM` 聚合，重复行的数值会重复累加。
+- PG 与 MinIO 之间无分布式事务。上传是「MinIO 先写、PG 后写、PG 失败删 MinIO」，删除是「MinIO 先删、PG 后删」，两者之间存在短暂不一致窗口。
+- PG 与 Manticore 之间同理：切片先落 PG 再同步 Manticore，同步失败只降级，不回滚 PG。
+- `word_count_stats` 的 `(project_ulid, stat_date)` 无唯一约束，并发写入可能产生重复行，统计以 `SUM` 聚合时会被重复累加。
+- `model_usage_stats` 有 5s 内存缓冲，进程异常退出会丢失最近一个刷新周期的用量。

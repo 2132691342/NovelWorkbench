@@ -86,18 +86,23 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	return router
 }
 
-// registerModelRoutes 注册模型生态路由（供应商管理与能力探测对所有登录用户开放，写操作收口到管理权限）。
+// registerModelRoutes 注册模型生态路由（能力探测对所有登录用户开放，写操作收口到管理权限）。
 func registerModelRoutes(rg *gin.RouterGroup, deps RouterDeps) {
 	modelGroup := rg.Group("/model")
 	modelGroup.GET("/capability", deps.ProviderAPI.Capability)
-	modelGroup.GET("/chat_options", deps.ProviderAPI.ChatOptions)
-	modelGroup.POST("/provider/list", deps.ProviderAPI.List)
-	providerWrite := modelGroup.Group("/provider")
-	providerWrite.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermModelManage))
+	adminGroup := modelGroup.Group("")
+	adminGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermModelManage))
 	{
-		providerWrite.POST("/save", deps.ProviderAPI.Save)
-		providerWrite.POST("/delete", deps.ProviderAPI.Delete)
-		providerWrite.POST("/test", deps.ProviderAPI.Test)
+		adminGroup.POST("/provider/list", deps.ProviderAPI.ProviderList)
+		adminGroup.POST("/provider/save", deps.ProviderAPI.ProviderSave)
+		adminGroup.POST("/provider/delete", deps.ProviderAPI.ProviderDelete)
+		adminGroup.POST("/provider/test", deps.ProviderAPI.ProviderTest)
+		adminGroup.POST("/catalog/list", deps.ProviderAPI.ModelList)
+		adminGroup.POST("/catalog/save", deps.ProviderAPI.ModelSave)
+		adminGroup.POST("/catalog/delete", deps.ProviderAPI.ModelDelete)
+		adminGroup.POST("/catalog/test", deps.ProviderAPI.ModelTest)
+		adminGroup.POST("/catalog/set_default", deps.ProviderAPI.ModelSetDefault)
+		adminGroup.POST("/catalog/grant", deps.ProviderAPI.ModelGrant)
 	}
 	usageGroup := rg.Group("/model/usage")
 	usageGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermUsageRead))

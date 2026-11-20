@@ -1,0 +1,90 @@
+/* 角色分配对话框：模型摘要 + 角色勾选列表。 */
+.grant-dialog__model {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.grant-dialog__provider {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background-color: var(--primary-light);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.grant-dialog__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.grant-dialog__hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.grant-dialog__tools {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.grant-dialog__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.grant-dialog__item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-base);
+  background-color: var(--bg-card);
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+
+.grant-dialog__item:hover {
+  border-color: var(--primary-hover);
+  background-color: var(--primary-light);
+  transform: translateY(-1px);
+}
+
+.grant-dialog__item.is-checked {
+  border-color: var(--primary);
+  background-color: var(--primary-light);
+}
+
+.grant-dialog__role-name {
+  font-size: 14px;
+  color: var(--text-main);
+}
+
+.grant-dialog__role-code {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.grant-dialog__empty {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--text-placeholder);
+}
+
+.grant-dialog__count {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+}

@@ -66,6 +66,8 @@ func main() {
 		&domain.UserRoleDO{},
 		&domain.AuditLogDO{},
 		&domain.ModelProviderDO{},
+		&domain.ModelCatalogDO{},
+		&domain.ModelRoleGrantDO{},
 		&domain.ModelUsageStatDO{},
 		&domain.NotificationDO{},
 		&domain.LoginLogDO{},
@@ -164,7 +166,7 @@ func main() {
 	usageRepo := repo.NewModelUsageRepo(db)
 	usageService := service.NewModelUsageService(usageRepo, ctx)
 	aiClient.SetUsageRecorder(usageService)
-	providerService := service.NewModelProviderService(providerRepo, aiClient, cfg.JWT.Secret,
+	providerService := service.NewModelProviderService(providerRepo, roleRepo, aiClient, cfg.JWT.Secret,
 		time.Duration(aiTimeoutSec)*time.Second)
 	// 供应商表为空且配置了网关时播种默认供应商（配置文件即"出厂默认"，之后在页面上管理）。
 	if cfg.AI.BaseURL != "" && cfg.AI.ChatModel != "" {
@@ -180,6 +182,10 @@ func main() {
 		}); err != nil {
 			pkg.SLogger().Warnw("默认模型供应商播种失败，可在页面手工添加", "error", err)
 		}
+	}
+	// 旧版「供应商自带一个模型」数据升级为模型目录（幂等），失败仅告警不阻断启动。
+	if err := providerService.MigrateLegacyModels(ctx); err != nil {
+		pkg.SLogger().Warnw("旧版模型数据迁移失败，可在模型供应商页手工补齐", "error", err)
 	}
 	knowledgeConfig := service.KnowledgeIndexConfig{
 		UploadMaxMB:    cfg.App.UploadMaxMB,

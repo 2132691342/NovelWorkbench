@@ -1,4 +1,5 @@
-// 本文件实现模型供应商业务：启动播种、CRUD、默认切换、密钥解密与连通性测试。
+// 本文件实现模型供应商业务：启动播种、供应商 CRUD、密钥封存与连通性测试。
+// 供应商只承载「网关 + 凭据」，具体模型与其角色授权见 model_catalog_service.go。
 
 package service
 
@@ -13,7 +14,7 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/repo"
 )
 
-// ProviderSeed 启动期供应商播种参数（来自配置文件，仅供应商表为空时生效）。
+// ProviderSeed 启动期模型播种参数（来自配置文件，仅供应商表为空时生效）。
 type ProviderSeed struct {
 	ProviderName  string  // 供应商名称
 	ProtocolCode  string  // 协议
@@ -25,20 +26,23 @@ type ProviderSeed struct {
 	TimeoutSec    int     // 调用超时（秒）
 }
 
-// ModelProviderService 模型供应商业务：CRUD、默认切换、连通性测试与调用规格解析。
+// ModelProviderService 模型生态业务：供应商、模型目录、角色授权与调用规格解析。
 type ModelProviderService struct {
-	providerRepo *repo.ModelProviderRepo // 供应商仓储
+	providerRepo *repo.ModelProviderRepo // 模型生态仓储
+	roleRepo     *repo.RoleRepo          // 角色仓储（授权与管理员判定）
 	gateway      *ai.Client              // 模型网关（流式调用与用量上报）
 	secretKey    string                  // 密钥封存材料（取 JWT 密钥派生）
 	timeout      time.Duration           // 默认调用超时
 }
 
-// NewModelProviderService 构造模型供应商服务。
-func NewModelProviderService(providerRepo *repo.ModelProviderRepo, gateway *ai.Client, secretKey string, timeout time.Duration) *ModelProviderService {
-	return &ModelProviderService{providerRepo: providerRepo, gateway: gateway, secretKey: secretKey, timeout: timeout}
+// NewModelProviderService 构造模型生态服务。
+func NewModelProviderService(providerRepo *repo.ModelProviderRepo, roleRepo *repo.RoleRepo,
+	gateway *ai.Client, secretKey string, timeout time.Duration) *ModelProviderService {
+	return &ModelProviderService{providerRepo: providerRepo, roleRepo: roleRepo, gateway: gateway,
+		secretKey: secretKey, timeout: timeout}
 }
 
-// SeedDefault 供应商表为空时按配置文件播种一条默认供应商（幂等）。
+// SeedDefault 供应商表为空时按配置播种「一个供应商 + 一个默认模型」，并授权给内置角色（幂等）。
 func (s *ModelProviderService) SeedDefault(ctx context.Context, seed ProviderSeed) error {
 	count, err := s.providerRepo.Count(ctx)
 	if err != nil || count > 0 {
@@ -48,41 +52,135 @@ func (s *ModelProviderService) SeedDefault(ctx context.Context, seed ProviderSee
 	if err != nil {
 		return pkg.WrapBizError(domain.RespCodeInternalError, "供应商密钥封存失败", err)
 	}
-	do := &domain.ModelProviderDO{
+	providerDO := &domain.ModelProviderDO{
 		ProviderULID:       pkg.NewULID(domain.IDPrefixModelProvider),
 		ProviderName:       seed.ProviderName,
 		ProtocolCode:       seed.ProtocolCode,
 		BaseURL:            strings.TrimRight(seed.BaseURL, "/"),
 		APIKeyCipher:       cipherText,
-		ChatModelName:      seed.ChatModelName,
+		EnabledFlag:        true,
+		LastTestStatusCode: domain.ProviderTestStatusUntested,
+		RemarkText:         "配置文件引导创建，可在模型供应商页修改",
+	}
+	if err := s.providerRepo.Create(ctx, providerDO); err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "供应商播种失败", err)
+	}
+	modelDO := &domain.ModelCatalogDO{
+		ModelULID:          pkg.NewULID(domain.IDPrefixModelCatalog),
+		ProviderULID:       providerDO.ProviderULID,
+		ModelName:          seed.ChatModelName,
+		ModelLabel:         seed.ChatModelName,
 		Temperature:        seed.Temperature,
 		MaxTokens:          seed.MaxTokens,
 		EnabledFlag:        true,
 		DefaultFlag:        true,
 		LastTestStatusCode: domain.ProviderTestStatusUntested,
-		RemarkText:         "配置文件引导创建，可在模型供应商页修改",
 	}
-	if err := s.providerRepo.Create(ctx, do); err != nil {
-		return pkg.WrapBizError(domain.RespCodeStorageError, "供应商播种失败", err)
+	if err := s.providerRepo.CreateModel(ctx, modelDO); err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "默认模型播种失败", err)
+	}
+	return s.grantToBuiltinRoles(ctx, modelDO.ModelULID)
+}
+
+// MigrateLegacyModels 把旧版「供应商自带一个模型」的数据迁移为模型目录行（幂等）。
+// 模型表非空时整体跳过；旧版默认标记迁移到对应模型，保证升级后开箱可用。
+func (s *ModelProviderService) MigrateLegacyModels(ctx context.Context) error {
+	count, err := s.providerRepo.CountModels(ctx)
+	if err != nil || count > 0 {
+		return err
+	}
+	rows, err := s.providerRepo.ListLegacyProviderModels(ctx)
+	if err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "旧模型数据读取失败", err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	var defaultModelULID string
+	for _, row := range rows {
+		do := &domain.ModelCatalogDO{
+			ModelULID:          pkg.NewULID(domain.IDPrefixModelCatalog),
+			ProviderULID:       row.ProviderULID,
+			ModelName:          row.ChatModelName,
+			ModelLabel:         row.ChatModelName,
+			Temperature:        row.Temperature,
+			MaxTokens:          row.MaxTokens,
+			EnabledFlag:        true,
+			LastTestStatusCode: row.LastTestStatusCode,
+		}
+		if do.LastTestStatusCode == "" {
+			do.LastTestStatusCode = domain.ProviderTestStatusUntested
+		}
+		if err := s.providerRepo.CreateModel(ctx, do); err != nil {
+			return pkg.WrapBizError(domain.RespCodeStorageError, "旧模型迁移失败", err)
+		}
+		if err := s.grantToBuiltinRoles(ctx, do.ModelULID); err != nil {
+			return err
+		}
+		if row.DefaultFlag && defaultModelULID == "" {
+			defaultModelULID = do.ModelULID
+		}
+	}
+	if defaultModelULID != "" {
+		if err := s.providerRepo.ClearDefaultModel(ctx); err != nil {
+			return err
+		}
+		if err := s.providerRepo.UpdateModel(ctx, defaultModelULID, map[string]any{"default_flag": true}); err != nil {
+			return pkg.WrapBizError(domain.RespCodeStorageError, "旧默认模型迁移失败", err)
+		}
+	}
+	pkg.SLogger().Infow("旧版模型数据已迁移", "count", len(rows), "default_model_ulid", defaultModelULID)
+	return nil
+}
+
+// grantToBuiltinRoles 把模型授权给全部内置角色（管理员与普通用户开箱可用，可随时撤销）。
+func (s *ModelProviderService) grantToBuiltinRoles(ctx context.Context, modelULID string) error {
+	roleList, err := s.roleRepo.ListAll(ctx)
+	if err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "内置角色读取失败", err)
+	}
+	roleULIDList := make([]string, 0, len(roleList))
+	for i := range roleList {
+		if roleList[i].BuiltinFlag {
+			roleULIDList = append(roleULIDList, roleList[i].RoleULID)
+		}
+	}
+	if err := s.providerRepo.ReplaceGrants(ctx, modelULID, roleULIDList); err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "默认模型授权失败", err)
 	}
 	return nil
 }
 
-// List 查询供应商列表（密钥仅回显掩码）。
-func (s *ModelProviderService) List(ctx context.Context) ([]domain.ModelProviderVO, error) {
+// ListProviders 查询供应商列表（含模型数量统计，密钥仅回显掩码）。
+func (s *ModelProviderService) ListProviders(ctx context.Context) ([]domain.ModelProviderVO, error) {
 	dos, err := s.providerRepo.List(ctx)
 	if err != nil {
 		return nil, pkg.WrapBizError(domain.RespCodeStorageError, "供应商列表读取失败", err)
 	}
+	modelDOS, err := s.providerRepo.ListModels(ctx, "")
+	if err != nil {
+		return nil, pkg.WrapBizError(domain.RespCodeStorageError, "模型目录读取失败", err)
+	}
+	totalMap := make(map[string]int, len(dos))
+	enabledMap := make(map[string]int, len(dos))
+	for i := range modelDOS {
+		totalMap[modelDOS[i].ProviderULID]++
+		if modelDOS[i].EnabledFlag {
+			enabledMap[modelDOS[i].ProviderULID]++
+		}
+	}
 	vos := make([]domain.ModelProviderVO, 0, len(dos))
 	for i := range dos {
-		vos = append(vos, s.toVO(&dos[i]))
+		vo := s.toProviderVO(&dos[i])
+		vo.ModelCount = totalMap[vo.ProviderULID]
+		vo.EnabledModelCount = enabledMap[vo.ProviderULID]
+		vos = append(vos, vo)
 	}
 	return vos, nil
 }
 
-// Save 创建/更新供应商（provider_ulid 为空创建；默认标记全局唯一）。
-func (s *ModelProviderService) Save(ctx context.Context, req *domain.ModelProviderREQ) (domain.ModelProviderVO, error) {
+// SaveProvider 创建/更新供应商（provider_ulid 为空创建）。
+func (s *ModelProviderService) SaveProvider(ctx context.Context, req *domain.ModelProviderREQ) (domain.ModelProviderVO, error) {
 	baseURL := strings.TrimRight(req.BaseURL, "/")
 	if req.ProtocolCode == domain.ProtocolCodeAnthropic && strings.HasSuffix(baseURL, "/v1") {
 		baseURL = strings.TrimSuffix(baseURL, "/v1") // Anthropic SDK 自行拼 /v1/messages
@@ -101,24 +199,15 @@ func (s *ModelProviderService) Save(ctx context.Context, req *domain.ModelProvid
 			ProtocolCode:       req.ProtocolCode,
 			BaseURL:            baseURL,
 			APIKeyCipher:       cipherText,
-			ChatModelName:      req.ChatModelName,
-			Temperature:        temperatureOf(req.Temperature),
-			MaxTokens:          req.MaxTokens,
 			EnabledFlag:        boolValueOf(req.EnabledFlag, true),
-			DefaultFlag:        boolValueOf(req.DefaultFlag, false),
 			SortOrder:          req.SortOrder,
 			RemarkText:         req.RemarkText,
 			LastTestStatusCode: domain.ProviderTestStatusUntested,
 		}
-		if do.DefaultFlag {
-			if err := s.providerRepo.ClearDefault(ctx); err != nil {
-				return domain.ModelProviderVO{}, err
-			}
-		}
 		if err := s.providerRepo.Create(ctx, do); err != nil {
 			return domain.ModelProviderVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "供应商创建失败", err)
 		}
-		return s.voOf(ctx, do.ProviderULID)
+		return s.toProviderVO(do), nil
 	}
 	current, err := s.providerRepo.GetByULID(ctx, req.ProviderULID)
 	if err != nil {
@@ -128,14 +217,11 @@ func (s *ModelProviderService) Save(ctx context.Context, req *domain.ModelProvid
 		return domain.ModelProviderVO{}, pkg.NewBizError(domain.RespCodeNotFound, "供应商不存在")
 	}
 	fields := map[string]any{
-		"provider_name":   req.ProviderName,
-		"protocol_code":   req.ProtocolCode,
-		"base_url":        baseURL,
-		"chat_model_name": req.ChatModelName,
-		"temperature":     temperatureOf(req.Temperature),
-		"max_tokens":      req.MaxTokens,
-		"sort_order":      req.SortOrder,
-		"remark_text":     req.RemarkText,
+		"provider_name": req.ProviderName,
+		"protocol_code": req.ProtocolCode,
+		"base_url":      baseURL,
+		"sort_order":    req.SortOrder,
+		"remark_text":   req.RemarkText,
 	}
 	if req.APIKeyText != "" {
 		cipherText, sealErr := s.sealKey(req.APIKeyText)
@@ -147,22 +233,18 @@ func (s *ModelProviderService) Save(ctx context.Context, req *domain.ModelProvid
 	if req.EnabledFlag != nil {
 		fields["enabled_flag"] = *req.EnabledFlag
 	}
-	if req.DefaultFlag != nil {
-		if *req.DefaultFlag {
-			if err := s.providerRepo.ClearDefault(ctx); err != nil {
-				return domain.ModelProviderVO{}, err
-			}
-		}
-		fields["default_flag"] = *req.DefaultFlag
-	}
 	if err := s.providerRepo.Update(ctx, req.ProviderULID, fields); err != nil {
 		return domain.ModelProviderVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "供应商更新失败", err)
 	}
-	return s.voOf(ctx, req.ProviderULID)
+	updated, err := s.providerRepo.GetByULID(ctx, req.ProviderULID)
+	if err != nil || updated == nil {
+		return domain.ModelProviderVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "供应商回读失败", err)
+	}
+	return s.toProviderVO(updated), nil
 }
 
-// Delete 删除供应商（默认供应商需先切换）。
-func (s *ModelProviderService) Delete(ctx context.Context, req *domain.ModelProviderDeleteREQ) error {
+// DeleteProvider 删除供应商（其下仍有模型时拒绝，避免误删模型与授权）。
+func (s *ModelProviderService) DeleteProvider(ctx context.Context, req *domain.ModelProviderDeleteREQ) error {
 	current, err := s.providerRepo.GetByULID(ctx, req.ProviderULID)
 	if err != nil {
 		return err
@@ -170,142 +252,84 @@ func (s *ModelProviderService) Delete(ctx context.Context, req *domain.ModelProv
 	if current == nil {
 		return pkg.NewBizError(domain.RespCodeNotFound, "供应商不存在")
 	}
-	if current.DefaultFlag {
-		return pkg.NewBizError(domain.RespCodeBizFailed, "默认供应商不可删除，请先切换默认")
+	modelCount, err := s.providerRepo.CountModelsByProvider(ctx, req.ProviderULID)
+	if err != nil {
+		return err
+	}
+	if modelCount > 0 {
+		return pkg.NewBizError(domain.RespCodeBizFailed, "该供应商下还有模型，请先删除或迁移模型")
 	}
 	return s.providerRepo.Delete(ctx, req.ProviderULID)
 }
 
-// Test 连通性测试（只验证对话通道，结果回写供应商记录）。
-func (s *ModelProviderService) Test(ctx context.Context, req *domain.ModelProviderTestREQ) (domain.ModelProviderTestDTO, error) {
-	current, err := s.providerRepo.GetByULID(ctx, req.ProviderULID)
+// TestProvider 供应商连通性测试：用其下首个启用模型发一次极小对话，结果回写供应商记录。
+func (s *ModelProviderService) TestProvider(ctx context.Context, req *domain.ModelProviderTestREQ) (domain.ModelProviderTestDTO, error) {
+	providerDO, err := s.providerRepo.GetByULID(ctx, req.ProviderULID)
 	if err != nil {
 		return domain.ModelProviderTestDTO{}, err
 	}
-	if current == nil {
+	if providerDO == nil {
 		return domain.ModelProviderTestDTO{}, pkg.NewBizError(domain.RespCodeNotFound, "供应商不存在")
 	}
-	spec, err := s.specOf(current)
+	modelDOS, err := s.providerRepo.ListModels(ctx, req.ProviderULID)
 	if err != nil {
 		return domain.ModelProviderTestDTO{}, err
 	}
-	startedAt := time.Now()
-	probe, probeErr := s.gateway.Probe(ctx, spec)
-	latencyMs := time.Since(startedAt).Milliseconds()
-	dto := domain.ModelProviderTestDTO{
-		StatusCode:  domain.ProviderTestStatusSuccess,
-		LatencyMs:   latencyMs,
-		ReplyText:   probe.ReplyText,
-		MessageText: "对话通道连通",
+	var probeModel *domain.ModelCatalogDO
+	for i := range modelDOS {
+		if modelDOS[i].EnabledFlag {
+			probeModel = &modelDOS[i]
+			break
+		}
 	}
-	if probeErr != nil {
-		dto.StatusCode = domain.ProviderTestStatusFailed
-		dto.MessageText = "对话通道失败：" + probeErr.Error()
+	if probeModel == nil {
+		return domain.ModelProviderTestDTO{}, pkg.NewBizError(domain.RespCodeBizFailed, "该供应商下没有启用的模型，无法测试连通性")
 	}
+	dto := s.probe(ctx, providerDO, probeModel)
 	fields := map[string]any{
 		"last_test_status_code": dto.StatusCode,
 		"last_test_message":     truncateRunes(dto.MessageText, 480),
 		"last_test_at_ms":       time.Now().UnixMilli(),
 	}
-	if err := s.providerRepo.Update(ctx, current.ProviderULID, fields); err != nil {
-		pkg.SLogger().Warnw("供应商测试结果回写失败", "provider_ulid", current.ProviderULID, "error", err)
+	if err := s.providerRepo.Update(ctx, providerDO.ProviderULID, fields); err != nil {
+		pkg.SLogger().Warnw("供应商测试结果回写失败", "provider_ulid", providerDO.ProviderULID, "error", err)
 	}
-	return dto, nil
-}
-
-// ChatSpec 返回默认供应商的对话规格（无可用供应商时给出明确业务错误）。
-func (s *ModelProviderService) ChatSpec(ctx context.Context) (ai.ProviderSpec, error) {
-	current, err := s.providerRepo.FindDefault(ctx)
-	if err != nil {
-		return ai.ProviderSpec{}, pkg.WrapBizError(domain.RespCodeStorageError, "默认供应商读取失败", err)
-	}
-	if current == nil {
-		return ai.ProviderSpec{}, pkg.NewBizError(domain.RespCodeAIProviderError, "尚未配置可用的模型供应商，请到「模型供应商」页添加并设为默认")
-	}
-	return s.specOf(current)
-}
-
-// ChatSpecOf 返回指定供应商的对话规格（providerULID 为空时取默认）。
-func (s *ModelProviderService) ChatSpecOf(ctx context.Context, providerULID string) (ai.ProviderSpec, error) {
-	if providerULID == "" {
-		return s.ChatSpec(ctx)
-	}
-	current, err := s.providerRepo.GetByULID(ctx, providerULID)
-	if err != nil {
-		return ai.ProviderSpec{}, err
-	}
-	if current == nil || !current.EnabledFlag {
-		return ai.ProviderSpec{}, pkg.NewBizError(domain.RespCodeInvalidParam, "所选供应商不存在或已停用")
-	}
-	return s.specOf(current)
-}
-
-// Capability 返回当前 AI 能力探测结果（仅对话能力）。
-func (s *ModelProviderService) Capability(ctx context.Context) (domain.ModelCapabilityVO, error) {
-	vo := domain.ModelCapabilityVO{}
-	defaultProvider, err := s.providerRepo.FindDefault(ctx)
-	if err != nil {
-		return vo, pkg.WrapBizError(domain.RespCodeStorageError, "供应商读取失败", err)
-	}
-	if defaultProvider != nil {
-		vo.ChatReady = true
-		vo.DefaultProviderULID = defaultProvider.ProviderULID
-		vo.DefaultProviderName = defaultProvider.ProviderName
-		vo.DefaultChatModelName = defaultProvider.ChatModelName
-	}
-	if !vo.ChatReady {
-		vo.HintText = "尚未配置模型供应商，AI 生成与检索重排不可用；知识库仍可进行关键词检索"
-	} else {
-		vo.HintText = "对话模型可用；知识库使用关键词检索，必要时由对话模型重排"
-	}
-	return vo, nil
-}
-
-// specOf 将供应商记录转为调用规格（解封密钥）。
-func (s *ModelProviderService) specOf(do *domain.ModelProviderDO) (ai.ProviderSpec, error) {
-	apiKey, err := pkg.OpenSecret(do.APIKeyCipher, s.secretKey)
-	if err != nil {
-		return ai.ProviderSpec{}, pkg.NewBizError(domain.RespCodeBizFailed, "供应商密钥无法解密，请重新填写 API Key")
-	}
-	return ai.ProviderSpec{
-		ProviderULID:  do.ProviderULID,
-		ProviderName:  do.ProviderName,
-		ProtocolCode:  do.ProtocolCode,
-		BaseURL:       do.BaseURL,
-		APIKey:        apiKey,
-		ChatModelName: do.ChatModelName,
-		Temperature:   do.Temperature,
-		MaxTokens:     do.MaxTokens,
-		Timeout:       s.timeout,
+	return domain.ModelProviderTestDTO{
+		StatusCode:   dto.StatusCode,
+		MessageText:  dto.MessageText,
+		LatencyMs:    dto.LatencyMs,
+		ReplyText:    dto.ReplyText,
+		ProbeModelID: probeModel.ModelULID,
 	}, nil
 }
 
-// sealKey 封存明文密钥（空串返回空串，供"保持不变"语义使用）。
-func (s *ModelProviderService) sealKey(plainText string) (string, error) {
-	if plainText == "" {
-		return "", nil
-	}
-	cipherText, err := pkg.SealSecret(plainText, s.secretKey)
+// probe 执行一次极小对话验证网关与模型可用（供应商/模型共用的唯一探测实现）。
+func (s *ModelProviderService) probe(ctx context.Context, providerDO *domain.ModelProviderDO,
+	modelDO *domain.ModelCatalogDO) domain.ModelCatalogTestDTO {
+	spec, err := s.specOf(providerDO, modelDO)
 	if err != nil {
-		return "", pkg.WrapBizError(domain.RespCodeInternalError, "密钥封存失败", err)
+		return domain.ModelCatalogTestDTO{StatusCode: domain.ProviderTestStatusFailed, MessageText: err.Error()}
 	}
-	return cipherText, nil
+	startedAt := time.Now()
+	result, probeErr := s.gateway.Probe(ctx, spec)
+	latencyMs := time.Since(startedAt).Milliseconds()
+	if probeErr != nil {
+		return domain.ModelCatalogTestDTO{
+			StatusCode:  domain.ProviderTestStatusFailed,
+			MessageText: "对话通道失败：" + probeErr.Error(),
+			LatencyMs:   latencyMs,
+		}
+	}
+	return domain.ModelCatalogTestDTO{
+		StatusCode:  domain.ProviderTestStatusSuccess,
+		MessageText: "对话通道连通",
+		LatencyMs:   latencyMs,
+		ReplyText:   result.ReplyText,
+	}
 }
 
-// voOf 按 ULID 读取并组装视图对象。
-func (s *ModelProviderService) voOf(ctx context.Context, providerULID string) (domain.ModelProviderVO, error) {
-	do, err := s.providerRepo.GetByULID(ctx, providerULID)
-	if err != nil {
-		return domain.ModelProviderVO{}, err
-	}
-	if do == nil {
-		return domain.ModelProviderVO{}, pkg.NewBizError(domain.RespCodeNotFound, "供应商不存在")
-	}
-	return s.toVO(do), nil
-}
-
-// toVO 组装供应商视图对象（密钥只给掩码）。
-func (s *ModelProviderService) toVO(do *domain.ModelProviderDO) domain.ModelProviderVO {
+// toProviderVO 组装供应商视图对象（密钥只给掩码）。
+func (s *ModelProviderService) toProviderVO(do *domain.ModelProviderDO) domain.ModelProviderVO {
 	masked := ""
 	configured := do.APIKeyCipher != ""
 	if configured {
@@ -322,11 +346,7 @@ func (s *ModelProviderService) toVO(do *domain.ModelProviderDO) domain.ModelProv
 		BaseURL:            do.BaseURL,
 		APIKeyMasked:       masked,
 		APIKeyConfigured:   configured,
-		ChatModelName:      do.ChatModelName,
-		Temperature:        do.Temperature,
-		MaxTokens:          do.MaxTokens,
 		EnabledFlag:        do.EnabledFlag,
-		DefaultFlag:        do.DefaultFlag,
 		SortOrder:          do.SortOrder,
 		RemarkText:         do.RemarkText,
 		LastTestStatusCode: do.LastTestStatusCode,
@@ -336,20 +356,44 @@ func (s *ModelProviderService) toVO(do *domain.ModelProviderDO) domain.ModelProv
 	}
 }
 
+// specOf 将「供应商 + 模型」转为调用规格（解封密钥）。
+func (s *ModelProviderService) specOf(providerDO *domain.ModelProviderDO,
+	modelDO *domain.ModelCatalogDO) (ai.ProviderSpec, error) {
+	apiKey, err := pkg.OpenSecret(providerDO.APIKeyCipher, s.secretKey)
+	if err != nil {
+		return ai.ProviderSpec{}, pkg.NewBizError(domain.RespCodeBizFailed, "供应商密钥无法解密，请重新填写 API Key")
+	}
+	return ai.ProviderSpec{
+		ProviderULID:  providerDO.ProviderULID,
+		ProviderName:  providerDO.ProviderName,
+		ProtocolCode:  providerDO.ProtocolCode,
+		BaseURL:       providerDO.BaseURL,
+		APIKey:        apiKey,
+		ChatModelName: modelDO.ModelName,
+		Temperature:   modelDO.Temperature,
+		MaxTokens:     modelDO.MaxTokens,
+		Timeout:       s.timeout,
+	}, nil
+}
+
+// sealKey 封存明文密钥（空串返回空串，供"保持不变"语义使用）。
+func (s *ModelProviderService) sealKey(plainText string) (string, error) {
+	if plainText == "" {
+		return "", nil
+	}
+	cipherText, err := pkg.SealSecret(plainText, s.secretKey)
+	if err != nil {
+		return "", pkg.WrapBizError(domain.RespCodeInternalError, "密钥封存失败", err)
+	}
+	return cipherText, nil
+}
+
 // maskSecret 生成密钥掩码（保留首 4 位与末 3 位）。
 func maskSecret(secretText string) string {
 	if len(secretText) <= 10 {
 		return "****"
 	}
 	return secretText[:4] + "***" + secretText[len(secretText)-3:]
-}
-
-// temperatureOf 采样温度缺省值。
-func temperatureOf(value *float64) float64 {
-	if value == nil || *value <= 0 {
-		return 0.7
-	}
-	return *value
 }
 
 // boolValueOf 可选布尔取值（nil 用默认）。

@@ -16,6 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   retry: []
   'insert-to-chapter': [contentText: string]
+  'replace-chapter': [contentText: string]
 }>()
 
 const { t } = useI18n()
@@ -85,6 +86,9 @@ function chunkPreview(chunkText: string): string {
         <NWButton size="small" @click="emit('insert-to-chapter', message.content_text)">
           {{ t('workspace.ai.insertToChapter') }}
         </NWButton>
+        <NWButton size="small" @click="emit('replace-chapter', message.content_text)">
+          {{ t('workspace.ai.replaceChapter') }}
+        </NWButton>
       </div>
 
       <div v-if="showAssistantActions() && referenceExpanded" class="chat-message__references">
@@ -117,7 +121,7 @@ function chunkPreview(chunkText: string): string {
 .chat-message {
   display: flex;
   margin-bottom: 12px;
-  animation: chat-message-in 0.22s ease both;
+  animation: chat-message-in 0.22s ease;
 }
 
 @keyframes chat-message-in {

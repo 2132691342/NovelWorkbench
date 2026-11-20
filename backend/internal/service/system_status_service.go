@@ -41,7 +41,7 @@ func NewSystemStatusService(deps SystemProbeDeps, providerSvc *ModelProviderServ
 }
 
 // Status 汇总系统运行状态（依赖探测并发执行，单项失败不影响其余结果）。
-func (s *SystemStatusService) Status(ctx context.Context) (domain.SystemStatusVO, error) {
+func (s *SystemStatusService) Status(ctx context.Context, userULID string) (domain.SystemStatusVO, error) {
 	probeList := []struct {
 		code     string
 		name     string
@@ -72,7 +72,7 @@ func (s *SystemStatusService) Status(ctx context.Context) (domain.SystemStatusVO
 		BuildVersionText:  s.deps.BuildVersion,
 		DependencyList:    results,
 	}
-	capability, err := s.providerSvc.Capability(ctx)
+	capability, err := s.providerSvc.Capability(ctx, userULID)
 	if err != nil {
 		pkg.SLogger().Warnw("AI 能力探测失败", "error", err)
 	}

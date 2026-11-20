@@ -11,6 +11,8 @@ export default {
     delete: 'Delete',
     create: 'Create',
     action: 'Actions',
+    actions: 'Actions',
+    more: 'More',
     refresh: 'Refresh',
     logout: 'Log out',
   },

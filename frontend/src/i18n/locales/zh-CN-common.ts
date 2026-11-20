@@ -11,6 +11,8 @@ export default {
     delete: '删除',
     create: '新建',
     action: '操作',
+    actions: '操作',
+    more: '更多',
     refresh: '刷新',
     logout: '退出登录',
   },

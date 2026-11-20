@@ -219,7 +219,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		}
 	}
 	messages := buildChatMessages(project.StyleText, assembledText, instructionText, historyList)
-	providerSpec, err := s.providerSvc.ChatSpecOf(ctx, req.ProviderULID)
+	providerSpec, err := s.providerSvc.ChatSpecOf(ctx, userULID, req.ModelULID)
 	if err != nil {
 		return err // 供应商不可用：流未开始，api 层输出 JSON 包络
 	}

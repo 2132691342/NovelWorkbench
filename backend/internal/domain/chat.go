@@ -42,7 +42,7 @@ type ChatSendREQ struct {
 	RefChapterULIDList []string          `json:"ref_chapter_ulid_list"`                          // @引用章节
 	RefMessageULIDList []string          `json:"ref_message_ulid_list"`                          // 显式引用的历史消息
 	HistoryCount       int               `json:"history_count" binding:"omitempty,min=0,max=50"` // 历史消息注入条数，0 用全局配置
-	ProviderULID       string            `json:"provider_ulid" binding:"omitempty,max=40"`       // 指定供应商，空用默认
+	ModelULID          string            `json:"model_ulid" binding:"omitempty,max=40"`          // 指定模型，空用默认
 }
 
 // ChatHistoryREQ 拉取会话历史。
