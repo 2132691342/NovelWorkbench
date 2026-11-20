@@ -78,7 +78,7 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 `parseRerankIDs` 的规则：
 
-1. 回复以 ``` 开头 → 直接判失败（拒绝 Markdown 包裹）。
+1. 回复以 Markdown 代码围栏开头 → 直接判失败（拒绝包裹输出）。
 2. 取首个 `{` 到末个 `}` 之间文本，`json.Unmarshal` 为 `{"ids":[...]}`。
 3. ID 必须属于候选集且不重复，否则整体失败。
 4. 模型未返回的候选按原顺序补在尾部，保证不丢候选。
