@@ -359,6 +359,7 @@ export default {
       saveFailed: 'Save failed',
       retry: 'Retry',
     },
+    editorLoading: 'Loading editor…',
   },
   lore: {
     title: 'World lore',

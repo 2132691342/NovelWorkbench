@@ -357,6 +357,7 @@ export default {
       saveFailed: '保存失败',
       retry: '重试',
     },
+    editorLoading: '编辑器加载中…',
   },
   lore: {
     title: '世界观设定',

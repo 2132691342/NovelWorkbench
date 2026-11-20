@@ -1,4 +1,4 @@
-// 本文件覆盖菜单与权限目录链路：导航可见性过滤 → 菜单树装配 → 权限目录汇总与分组。
+// 本文件覆盖菜单与权限链路的场景回归：导航过滤、菜单树装配、权限目录汇总与去重。
 
 package service
 
@@ -11,20 +11,14 @@ import (
 // menuDO 构造测试用菜单行。
 func menuDO(ulid, parentULID, code, name, menuType, permCode string) domain.MenuDO {
 	return domain.MenuDO{
-		MenuULID:     ulid,
-		ParentULID:   parentULID,
-		MenuCode:     code,
-		MenuName:     name,
-		MenuTypeCode: menuType,
-		ScopeCode:    domain.MenuScopeGlobal,
-		PermCode:     permCode,
-		VisibleFlag:  true,
-		EnabledFlag:  true,
+		MenuULID: ulid, ParentULID: parentULID, MenuCode: code, MenuName: name,
+		MenuTypeCode: menuType, ScopeCode: domain.MenuScopeGlobal,
+		PermCode: permCode, VisibleFlag: true, EnabledFlag: true,
 	}
 }
 
-// TestMenuAndPermissionChain 覆盖菜单与权限目录链路。
-func TestMenuAndPermissionChain(t *testing.T) {
+// testMenus 构造固定的菜单夹具：一组两层级菜单、隐藏页与停用页。
+func testMenus() []domain.MenuDO {
 	menus := []domain.MenuDO{
 		menuDO("MNU_1", "", "group_system", "系统管理", domain.MenuTypeGroup, ""),
 		menuDO("MNU_2", "MNU_1", "admin_users", "用户管理", domain.MenuTypePage, "system:user:manage"),
@@ -35,33 +29,31 @@ func TestMenuAndPermissionChain(t *testing.T) {
 	}
 	menus[4].VisibleFlag = false
 	menus[5].EnabledFlag = false
+	return menus
+}
 
-	// ---- 环节一：导航可见性过滤（动作节点、隐藏节点与未授权权限码都不进树） ----
-	visible := filterVisibleMenus(menus, []string{"system:user:manage"})
+// TestFilterVisibleMenus 覆盖导航过滤：动作节点、隐藏节点、未授权权限码不进树，通配权限放行全部。
+func TestFilterVisibleMenus(t *testing.T) {
+	visible := filterVisibleMenus(testMenus(), []string{"system:user:manage"})
 	if len(visible) != 3 {
 		t.Fatalf("可见菜单数 = %d, want 3", len(visible))
 	}
 	for _, do := range visible {
-		if do.MenuTypeCode == domain.MenuTypeAction {
-			t.Fatalf("动作节点不应进导航树: %s", do.MenuCode)
-		}
-		if !do.VisibleFlag {
-			t.Fatalf("隐藏菜单不应进导航树: %s", do.MenuCode)
+		if do.MenuTypeCode == domain.MenuTypeAction || !do.VisibleFlag {
+			t.Fatalf("动作/隐藏节点不应进树: %s", do.MenuCode)
 		}
 		if do.PermCode != "" && do.PermCode != "system:user:manage" {
-			t.Fatalf("未授权权限码的菜单不应进导航树: %s", do.MenuCode)
+			t.Fatalf("未授权权限码不应进树: %s", do.MenuCode)
 		}
 	}
-
-	// 通配权限码放行全部带权限的菜单。
-	visible = filterVisibleMenus(menus, []string{domain.PermAdminAll})
-	if len(visible) != 4 {
-		t.Fatalf("通配权限下可见菜单数 = %d, want 4", len(visible))
+	if got := filterVisibleMenus(testMenus(), []string{domain.PermAdminAll}); len(got) != 4 {
+		t.Fatalf("通配权限下可见菜单数 = %d, want 4", len(got))
 	}
+}
 
-	// ---- 环节二：菜单树装配（父子按 ULID 关联，孤儿节点不进树） ----
-	visible = filterVisibleMenus(menus, []string{domain.PermAdminAll})
-	tree := buildMenuTree(visible, "")
+// TestBuildMenuTree 覆盖菜单树装配：父子按 ULID 关联，动作节点不进树，权限码随节点保留。
+func TestBuildMenuTree(t *testing.T) {
+	tree := buildMenuTree(filterVisibleMenus(testMenus(), []string{domain.PermAdminAll}), "")
 	if len(tree) != 3 {
 		t.Fatalf("根节点数 = %d, want 3", len(tree))
 	}
@@ -80,52 +72,41 @@ func TestMenuAndPermissionChain(t *testing.T) {
 	if group.ChildList[0].PermCode != "system:user:manage" {
 		t.Fatalf("节点权限码丢失: %+v", group.ChildList[0])
 	}
+}
 
-	// ---- 环节三：权限目录汇总（动作节点登记为权限，通配单独成组，重复权限码只登记一次） ----
-	catalog := buildPermCatalog(menus)
+// TestBuildPermCatalog 覆盖权限目录：动作节点登记权限、通配独立分组、按首段分组、
+// 重复权限码只登记一次，权限说明含菜单与动作两种格式。
+func TestBuildPermCatalog(t *testing.T) {
+	catalog := buildPermCatalog(testMenus())
 	if len(catalog) != 3 {
 		t.Fatalf("权限分组数 = %d, want 3（all/skill/system）", len(catalog))
 	}
-	if catalog[0].GroupCode != "all" {
-		t.Fatalf("首个分组应为通配权限组，实际 %q", catalog[0].GroupCode)
+	if catalog[0].GroupCode != "all" || catalog[0].GroupName != "全部权限" {
+		t.Fatalf("通配权限应独立成组且排首位: %+v", catalog[0])
 	}
 	if len(catalog[0].PermList) != 1 || catalog[0].PermList[0].PermCode != domain.PermAdminAll {
 		t.Fatalf("通配权限组内容错误: %+v", catalog[0].PermList)
 	}
-
 	groupMap := make(map[string]domain.PermGroupVO, len(catalog))
 	for _, group := range catalog {
 		groupMap[group.GroupCode] = group
 	}
 	systemGroup, ok := groupMap["system"]
-	if !ok {
-		t.Fatal("缺少 system 权限分组")
+	if !ok || systemGroup.GroupName != "系统管理" || len(systemGroup.PermList) != 2 {
+		t.Fatalf("system 分组错误: %+v", systemGroup)
 	}
-	if len(systemGroup.PermList) != 2 {
-		t.Fatalf("system 分组权限数 = %d, want 2", len(systemGroup.PermList))
-	}
-	permCodes := map[string]string{}
+	permCodes := make(map[string]string, len(systemGroup.PermList))
 	for _, item := range systemGroup.PermList {
 		permCodes[item.PermCode] = item.PermDesc
 	}
-	if _, ok := permCodes["system:user:manage"]; !ok {
-		t.Fatalf("system 分组缺少菜单权限: %+v", systemGroup.PermList)
+	if permCodes["system:user:add"] != "动作权限：新增用户" {
+		t.Fatalf("动作权限说明错误: %v", permCodes)
 	}
-	actionDesc, ok := permCodes["system:user:add"]
-	if !ok {
-		t.Fatalf("system 分组缺少动作权限: %+v", systemGroup.PermList)
-	}
-	if actionDesc != "动作权限：新增用户" {
-		t.Fatalf("动作权限说明 = %q", actionDesc)
-	}
-	menuDesc := permCodes["system:user:manage"]
-	if menuDesc != "菜单权限：系统管理 / 用户管理" {
-		t.Fatalf("菜单权限说明 = %q", menuDesc)
+	if permCodes["system:user:manage"] != "菜单权限：系统管理 / 用户管理" {
+		t.Fatalf("菜单权限说明错误: %v", permCodes)
 	}
 
-	// ---- 环节四：重复登记的权限码只出现在目录一次 ----
-	dup := append([]domain.MenuDO{}, menus...)
-	dup = append(dup, menuDO("MNU_7", "", "admin_users_copy", "用户管理副本", domain.MenuTypePage, "system:user:manage"))
+	dup := append(testMenus(), menuDO("MNU_7", "", "admin_users_copy", "用户管理副本", domain.MenuTypePage, "system:user:manage"))
 	catalog = buildPermCatalog(dup)
 	for _, group := range catalog {
 		count := 0
@@ -137,13 +118,5 @@ func TestMenuAndPermissionChain(t *testing.T) {
 		if count > 1 {
 			t.Fatalf("权限码重复登记于目录 %d 次", count)
 		}
-	}
-
-	// ---- 环节五：分组编码决定目录结构（通配单独成组，首段相同归一组） ----
-	if catalog[0].GroupCode != "all" || catalog[0].GroupName != "全部权限" {
-		t.Fatalf("通配权限应独立成组且排首位: %+v", catalog[0])
-	}
-	if groupMap["system"].GroupName != "系统管理" {
-		t.Fatalf("system 分组展示名 = %q", groupMap["system"].GroupName)
 	}
 }

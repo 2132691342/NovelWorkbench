@@ -109,13 +109,7 @@ func buildContextBlocks(input chatContextInput) ([]ai.ContextBlock, string) {
 	if loreText := formatLoreBlock(input.LoreList); loreText != "" {
 		blocks = append(blocks, ai.ContextBlock{BlockKey: "lore", Priority: ai.PriorityCharacter, ContentText: loreText})
 	}
-	if len(input.HistoryList) > 0 {
-		blocks = append(blocks, ai.ContextBlock{
-			BlockKey:    "history",
-			Priority:    ai.PriorityHistory,
-			ContentText: formatHistoryBlock(input.HistoryList),
-		})
-	}
+	// 历史不注入上下文块：它以原生 role 消息追加到消息序列，两处同时注入会让模型看到两份对话。
 	if len(input.SkillRefList) > 0 {
 		blocks = append(blocks, ai.ContextBlock{
 			BlockKey:    "skill_reference",

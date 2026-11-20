@@ -4,7 +4,7 @@
   切换笔记前先落盘；右上角展示保存状态（保存中/已保存/未保存/失败可重试）。
 -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
@@ -21,9 +21,11 @@ import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
-import NoteEditor from './NoteEditor.vue'
-import MarkdownNoteEditor from './MarkdownNoteEditor.vue'
 import { convertNoteContent, type NWNoteContentMode } from './noteContent'
+
+// 两种编辑器体积都在 1MB 级，且互斥使用：按模式懒加载，进页面只付当前模式那一份。
+const NoteEditor = defineAsyncComponent(() => import('./NoteEditor.vue'))
+const MarkdownNoteEditor = defineAsyncComponent(() => import('./MarkdownNoteEditor.vue'))
 
 const route = useRoute()
 const { t } = useI18n()
@@ -365,20 +367,28 @@ onMounted(() => {
               <template v-else>{{ t('notes.saveStatus.unsaved') }}</template>
             </span>
           </div>
-          <MarkdownNoteEditor
-            v-if="editorMode === 'markdown'"
-            v-model="contentHtml"
-            class="notes-page__editor-body"
-            :placeholder="t('markdownNote.editorTip')"
-            @change="handleContentChange"
-          />
-          <NoteEditor
-            v-else
-            v-model="contentHtml"
-            class="notes-page__editor-body"
-            :placeholder="t('notes.contentPlaceholder')"
-            @change="handleContentChange"
-          />
+          <!-- 编辑器按需加载：Suspense 兜住异步组件解析期，避免空白闪烁 -->
+          <Suspense>
+            <template #default>
+              <MarkdownNoteEditor
+                v-if="editorMode === 'markdown'"
+                v-model="contentHtml"
+                class="notes-page__editor-body"
+                :placeholder="t('markdownNote.editorTip')"
+                @change="handleContentChange"
+              />
+              <NoteEditor
+                v-else
+                v-model="contentHtml"
+                class="notes-page__editor-body"
+                :placeholder="t('notes.contentPlaceholder')"
+                @change="handleContentChange"
+              />
+            </template>
+            <template #fallback>
+              <div class="notes-page__editor-loading">{{ t('notes.editorLoading') }}</div>
+            </template>
+          </Suspense>
         </template>
         <div v-else class="notes-page__editor-empty">
           <NWEmpty

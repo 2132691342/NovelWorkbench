@@ -24,8 +24,9 @@ const (
 
 // 模型调用默认参数（供应商未给出时兜底）。
 const (
-	defaultMaxTokens   = 2048 // 单次输出上限
-	defaultTemperature = 0.7  // 采样温度
+	defaultMaxTokens   = 2048  // 单次输出上限
+	ceilingMaxTokens   = 32000 // 输出上限硬顶：误填超大值时钳制，避免超长等待与费用失控
+	defaultTemperature = 0.7   // 采样温度
 	defaultTimeout     = 120 * time.Second
 )
 
@@ -105,6 +106,9 @@ func (c *Client) buildChatModel(spec ProviderSpec) (model.BaseChatModel, error) 
 	maxTokens := spec.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = defaultMaxTokens
+	}
+	if maxTokens > ceilingMaxTokens {
+		maxTokens = ceilingMaxTokens
 	}
 	temperature := spec.Temperature
 	if temperature <= 0 {

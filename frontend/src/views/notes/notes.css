@@ -128,7 +128,7 @@
   width: 20px;
   height: 20px;
   border: none;
-  border-radius: var(--radius-base);
+  border-radius: 5px;
   background: transparent;
   color: var(--text-placeholder);
   cursor: pointer;
@@ -230,6 +230,28 @@
   align-items: center;
   justify-content: center;
   flex: 1;
+}
+
+/* 编辑器按需加载期间的占位：保持与正文一致的留白，避免加载完成后布局跳动 */
+.notes-page__editor-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 48px 0;
+  color: var(--text-placeholder);
+  font-size: 13px;
+  animation: notes-loading-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes notes-loading-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 @media (max-width: 900px) {

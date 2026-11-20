@@ -3,17 +3,18 @@
   txt/md 直接渲染（md 走 marked），docx 走 docx-preview，pdf 走 vue-pdf-embed；取不到原文时明确提示。
 -->
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
-import { renderAsync } from 'docx-preview'
-import VuePdfEmbed from 'vue-pdf-embed'
 import { listKnowledgeChunks, fetchKnowledgeContent } from '@/api/knowledge'
 import type { NWKnowledgeDocumentVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
 import NWIcon from '@/components/NWIcon.vue'
 import NWLoading from '@/components/NWLoading.vue'
+
+// PDF 渲染器体积大且仅 pdf 文档需要，按需加载，避免首屏为它付费。
+const VuePdfEmbed = defineAsyncComponent(() => import('vue-pdf-embed'))
 
 const props = defineProps<{
   visible: boolean
@@ -147,6 +148,7 @@ async function loadPreview(): Promise<void> {
         previewError.value = true
         return
       }
+      const { renderAsync } = await import('docx-preview')
       await renderAsync(blob, docxHost.value, undefined, { inWrapper: true })
       return
     }
