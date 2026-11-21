@@ -183,7 +183,8 @@
 | 面包屑 | `Breadcrumb.vue`：分组名弱化 + `/` + 当前页加粗；数据源是后端菜单树，与侧栏文案永不脱节 | `layout/Breadcrumb.vue` |
 | 多页签 | `TagsView.vue` + `stores/tagsView.ts`：路由变化即登记页签（标题取菜单名），同路径去重；关闭当前页签跳相邻页签；右键支持刷新 / 关闭其它 / 关闭全部；固定页签（`meta.affix_flag`）不可关 | `layout/TagsView.vue` |
 | 页签刷新 | 跳 `/redirect?target_path=…` 中转页再立即回跳，强制重建组件实例 | `views/RedirectView.vue` |
-| 内容区 | 留白交给 `ContentWrap`（默认 `padding: 18px 22px 28px`）；`.is-workspace` 时 `overflow: hidden`，三栏各自滚动 | `layout/ContentWrap.vue` |
+| 内容区 | 留白交给 `ContentWrap`（默认 `padding: 18px 22px 28px`）；`.is-workspace` 时内容区改为 flex 列并 `overflow: hidden`，三栏各自滚动 | `layout/ContentWrap.vue` |
+| 满屏高度链 | 写作台要「三栏各占满屏高、内部各自滚动」，高度必须逐级传递：`.admin-layout__content.is-workspace`（flex 列 + `min-height: 0`）→ `.nw-content-wrap.is-compact`（flex 列 + `min-height: 0`）→ `.workspace-page`（`flex: 1` + `min-height: 0`）→ 三栏（`min-height: 0`）。任一级缺 `min-height: 0`，内部 `height: 100%` 就无法解析，页面会被内容撑高并被上层的 `overflow: hidden` 裁掉（表现为 AI 面板最新回复看不见） | `layout/AdminLayout.css`、`layout/ContentWrap.css`、`views/workspace/workspace.css` |
 | 主题 | `ThemeSwitch.vue` 三态（亮色 / 暗色 / 跟随系统），写 `<html data-theme>`；持久化到 `localStorage.nw_theme`；`system` 时监听 `prefers-color-scheme` 变化 | `layout/ThemeSwitch.vue`、`stores/app.ts` |
 | 页面骨架 | `.nw-page`：纵向 `gap: 16px`、`max-width: var(--layout-content-max-width)`、居中、入场动画 0.28s | `styles/page.css` |
 | 统计栅格 | `.nw-stat-grid`：4 列 → 1200px 起 2 列 → 640px 起 1 列 | `styles/page.css` |
