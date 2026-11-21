@@ -4,6 +4,8 @@ dist/
 out/
 frontend/dist.tar.gz
 dist.tar.gz
+backend.tar.gz
+*.tar.gz
 .tmp/
 
 # 环境与密钥（禁止提交任何真实凭据）
