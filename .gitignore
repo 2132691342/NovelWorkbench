@@ -21,6 +21,12 @@ secrets/
 *.pem
 *.key
 *.p12
+
+# 前端构建配置（只含标题、部署路径与接口前缀，不含凭据，CI 与镜像构建需要）
+!frontend/.env.base
+!frontend/.env.dev
+!frontend/.env.pro
+!frontend/.env.test
 *.pfx
 *.jks
 credentials.json
