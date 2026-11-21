@@ -62,6 +62,7 @@ Authorization: Bearer <token>
 | `system:status:read` | 运行状态 | `/system/status` |
 | `system:setting:manage` | 运行时配置 | `/setting/update` |
 | `skill:manage` | 技能资产 | `/skill/save`、`/skill/delete`、`/skill/reference/*` |
+| `prompt:manage` | 提示词档案 | `/prompt/profile/save`、`/prompt/profile/delete` |
 
 权限码常量定义在 `backend/internal/domain/role.go`。
 

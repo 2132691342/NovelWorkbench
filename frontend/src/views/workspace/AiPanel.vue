@@ -20,6 +20,7 @@ import NWLoading from '@/components/NWLoading.vue'
 import AiPanelHeader from './AiPanelHeader.vue'
 import ChatComposer from './ChatComposer.vue'
 import ChatMessage from './ChatMessage.vue'
+import { applyStreamEvent } from './chatStreamState'
 import type { NWChatDisplayMessage, NWChatSendPayload } from './chatTypes'
 import { NW_QUICK_PROMPT_LIST } from './quickPrompts'
 
@@ -146,17 +147,7 @@ async function runStream(
         currentSessionUlid.value = event.session_ulid
         void loadSessions()
       }
-      if (event.event_type === 'thinking') {
-        assistantMessage.reasoning_text += event.content_text
-      } else if (event.event_type === 'chunk') {
-        assistantMessage.content_text += event.content_text
-      } else if (event.event_type === 'done') {
-        assistantMessage.content_text = event.content_text
-        assistantMessage.reasoning_text = event.reasoning_text || assistantMessage.reasoning_text
-        assistantMessage.reference_list = event.reference_list ?? []
-      } else if (event.event_type === 'error') {
-        assistantMessage.error_message = event.error_message || t('workspace.ai.sendFailed')
-      }
+      applyStreamEvent(assistantMessage, event, t('workspace.ai.sendFailed'))
     },
     onError: () => {
       assistantMessage.error_message = t('workspace.ai.sendFailed')

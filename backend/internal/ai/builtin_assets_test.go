@@ -1,5 +1,5 @@
-// 本文件校验内置创作资产的完整性：每个流程域一份档案 + 两个技能，编码唯一、
-// 占位符已登记、指纹稳定，避免播种出无法保存或无法渲染的资产。
+// 内置创作资产的完整性校验：流程域形状、编码唯一性、模板可渲染性。
+// 这些约束一旦破坏，播种出的资产会无法保存、无法渲染或让前端按钮打到空技能上，因此整体作为一条用例守住。
 
 package ai
 
@@ -12,8 +12,9 @@ var knownPlaceholders = map[string]bool{
 	"user_input": true, "chapter_content": true, "context": true, "skill_code": true,
 }
 
-// TestBuiltinDomainShape 每个域必须有名称、一份档案与两个技能。
-func TestBuiltinDomainShape(t *testing.T) {
+// TestBuiltinAssetIntegrity 覆盖内置资产的完整链路：域形状 → 编码唯一 → 占位符可解析 → 默认档案正确。
+func TestBuiltinAssetIntegrity(t *testing.T) {
+	// 环节1：域形状。每个流程域必须有名称、一份档案与两个技能。
 	domains := BuiltinDomains()
 	if len(domains) < 8 {
 		t.Fatalf("内置流程域不足 8 个：%d", len(domains))
@@ -29,13 +30,11 @@ func TestBuiltinDomainShape(t *testing.T) {
 			t.Fatalf("域 %s 的技能数应为 2，实际 %d", domain.DomainCode, len(domain.SkillList))
 		}
 	}
-}
 
-// TestBuiltinCodesUnique 技能编码与档案编码都必须全局唯一。
-func TestBuiltinCodesUnique(t *testing.T) {
+	// 环节2：编码唯一。技能编码与档案编码都必须全局唯一。
 	skillCodeSet := map[string]bool{}
 	profileCodeSet := map[string]bool{}
-	for _, domain := range BuiltinDomains() {
+	for _, domain := range domains {
 		if profileCodeSet[domain.Profile.ProfileCode] {
 			t.Fatalf("档案编码重复：%s", domain.Profile.ProfileCode)
 		}
@@ -53,17 +52,9 @@ func TestBuiltinCodesUnique(t *testing.T) {
 			t.Fatalf("缺少前端依赖的技能编码：%s", required)
 		}
 	}
-}
 
-// TestBuiltinTemplatesRenderable 模板占位符必须可解析，且默认档案排序号最小。
-func TestBuiltinTemplatesRenderable(t *testing.T) {
-	firstSortOrder := -1
-	for _, profile := range BuiltinPromptProfiles() {
-		if firstSortOrder < 0 || profile.SortOrder < firstSortOrder {
-			firstSortOrder = profile.SortOrder
-		}
-	}
-	for _, domain := range BuiltinDomains() {
+	// 环节3：模板可渲染。占位符必须已登记，模板长度足以承载判据，指纹稳定。
+	for _, domain := range domains {
 		for _, skill := range domain.SkillList {
 			unknown := TemplatePlaceholders(skill.PromptTemplate, knownPlaceholders)
 			if len(unknown) > 0 {
@@ -80,8 +71,9 @@ func TestBuiltinTemplatesRenderable(t *testing.T) {
 			t.Fatalf("档案 %s 排序号必须为正", domain.Profile.ProfileCode)
 		}
 	}
-	// 默认档案取排序号最小者，必须是起草域的连载作者。
-	defaultProfile := BuiltinDomains()[0].Profile
+
+	// 环节4：默认档案取排序号最小者，必须是起草域的连载作者。
+	defaultProfile := BuiltinPromptProfiles()[0]
 	for _, profile := range BuiltinPromptProfiles() {
 		if profile.SortOrder < defaultProfile.SortOrder {
 			defaultProfile = profile

@@ -133,7 +133,7 @@
 | `--primary-soft` / `--primary-light` | 浅底 | `#1e1b4b` / `#3730a3` | 徽标、选中态的底色 |
 | 状态色三元组 | 浅底 + 深字 | 深底 + 浅字 | 见 2.3 |
 
-关键约束：`--primary-active` 在两种主题下都必须是**能在 `--primary-soft` / `--primary-light` 底上读清的前景色**。暗色初版把 `--primary-active` 设为 `#6366f1`（深靛），与 `#312e81` 底叠出约 1.9:1 的对比度，技能编码徽标几乎不可见；改为 `#c7d2fe` 后约 6.4:1。
+关键约束：`--primary-active` 在两种主题下都必须是**能在 `--primary-soft` / `--primary-light` 底上读清的前景色**，不能拿深色当底配深色字。暗色主题下 `--primary-active` 为 `#c7d2fe`，在 `--primary-light`（`#3730a3`）底上的对比度约 6.4:1，满足正文级可读性要求。
 
 主题由 `ThemeSwitch.vue` 三态切换（亮色 / 暗色 / 跟随系统），写入 `<html data-theme>` 并持久化到 `localStorage.nw_theme`。`main.ts` 在 `app.mount()` 之前调用 `useAppStore().initTheme()`，避免首帧闪亮色。`system` 模式下监听 `prefers-color-scheme` 变化实时跟随。
 
@@ -368,7 +368,7 @@ sequenceDiagram
 
 ### 4.1 路由表
 
-`src/router/index.ts` 共 27 条路由记录：`/login`、根布局 `/`、24 条布局子路由（含 `/redirect` 中转页）、兜底 `/:pathMatch(.*)*`；其中具名页面路由 25 条（含 `LoginView`、`RedirectView`）。除 `/login` 外全部挂在 `layout/AdminLayout.vue` 之下，组件均为 `() => import(...)` 懒加载。
+`src/router/index.ts` 共 26 条路由记录：`/login`、根布局 `/`、23 条布局子路由（含 `/redirect` 中转页）、兜底 `/:pathMatch(.*)*`；其中具名页面路由 25 条（含 `LoginView`、`RedirectView`）。除 `/login` 外全部挂在 `layout/AdminLayout.vue` 之下，组件均为 `() => import(...)` 懒加载。
 
 | path | name | 组件 | `meta.menu_code` | `meta.perm_code` | 项目内 |
 | --- | --- | --- | --- | --- | --- |
@@ -459,7 +459,7 @@ flowchart TD
 | `/notifications` | `views/notification/index.vue` | 全部 / 未读 / 已读切换 + 类型筛选（`system` / `task` / `account`）+ 关键词搜索 + 单条已读 + 全部已读 + 删除。与顶栏铃铛共用 `useNotificationStore` 的未读数；带 `link_url` 的通知可直接跳转。容器 `max-width: 980px` |
 | `/admin/users` | `views/admin/users.vue` + `UserFormDialogs.vue` | 分页表格（账号 / 邮箱 / 状态 / 角色标签 / 创建时间 / 操作）。新建对话框 600px、编辑抽屉 480px、重置密码对话框 440px、删除二次确认；角色选项来自 `listAdminRoles`（page_size 500） |
 | `/admin/roles` | `views/admin/roles.vue` | 分页表格 + 600px 保存对话框；权限勾选项唯一来源是 `fetchPermCatalog()`，表格内展示 `perm_name` 而非原始码；内置角色（`builtin_flag`）禁用删除 |
-| `/admin/menus` | `views/admin/menus.vue` + `menuIcons.ts` | 菜单树维护（分组 / 页面 / 动作），520px 抽屉编辑编码、类型、作用域、路由、图标、权限码、展示与启用、排序。`menuIcons.ts` 的 `NW_ICON_CODE_LIST` 列出 22 个可登记图标编码，全部包含在 `components/NWIcon.vue` 的 `NW_ICON_PATH_MAP`（71 个编码）中，保证侧边栏渲染不缺图 |
+| `/admin/menus` | `views/admin/menus.vue` + `menuIcons.ts` | 菜单树维护（分组 / 页面 / 动作），520px 抽屉编辑编码、类型、作用域、路由、图标、权限码、展示与启用、排序。`menuIcons.ts` 的 `NW_ICON_CODE_LIST` 列出 23 个可登记图标编码，全部包含在 `components/NWIcon.vue` 的 `NW_ICON_PATH_MAP`（71 个编码）中，保证侧边栏渲染不缺图 |
 | `/admin/permissions` | `views/admin/permissions.vue` | 只读权限目录：左侧分组、右侧权限表，数据来自 `fetchPermCatalog()` |
 | `/admin/audit` | `views/admin/audit.vue` | 按 `action_code` / `user_ulid` 过滤 + 只读分页表 |
 | `/admin/login-logs` | `views/admin/login-logs.vue` | 账号 / IP、结果（`success` / `failed` / `disabled`）与日期区间筛选 + 只读分页表 |
@@ -520,13 +520,13 @@ flowchart TD
 
 | 分片 | 命名空间 | 内容 |
 | --- | --- | --- |
-| `{lang}-common.ts` | `common`、`http`、`login`、`layout`、`profile`、`notifications`、`dashboard`、`settings`、`skills`（9） | 外壳、登录、仪表盘、设置、技能与通用文案 |
+| `{lang}-common.ts` | `common`、`http`、`login`、`layout`、`profile`、`notifications`、`dashboard`、`settings`、`skills`、`prompts`（10） | 外壳、登录、仪表盘、设置、技能、提示词档案与通用文案 |
 | `{lang}-workspace.ts` | `workspace`、`projectPage`、`character`、`knowledge`、`notes`、`lore`（6） | 写作台与项目内页面 |
 | `{lang}-admin.ts` | `models`、`usage`、`status`、`admin`（4，`admin` 下含 `search` / `reset` / `users` / `roles` / `menus` / `perms` / `loginLogs` / `jobs` / `audit`） | 模型、用量、状态、系统管理 |
 | `{lang}-assets.ts` | `continuity`、`outline`（2） | 连续性看板与创作规划 |
 | `{lang}-extensions.ts` | `markdownNote`（1） | Markdown 笔记编辑器文案 |
 
-共 22 个顶层命名空间，中英各 5 个分片。语言选项由 `NW_LOCALE_OPTIONS` 给出：`zh-CN`（简体中文）、`en-US`（English）。
+共 23 个顶层命名空间，中英各 5 个分片。语言选项由 `NW_LOCALE_OPTIONS` 给出：`zh-CN`（简体中文）、`en-US`（English）。
 
 ### 8.2 键名与同步
 
@@ -546,9 +546,9 @@ flowchart TD
 | 测试文件 | 被测符号 | 覆盖点 |
 | --- | --- | --- |
 | `src/composables/useSSE.test.ts` | `parseSseBuffer` | 单条用例串联断言：跨 chunk 断行（完整事件解析 + 半行留存）、半行补全与多事件粘包、CRLF 换行兼容、非法 JSON 行跳过且不中断后续解析、非 `data:` 前缀行（心跳注释）不产生事件、末尾半行必须留存 |
-| `src/views/notes/noteContent.test.ts` | `convertNoteContent`、`looksLikeHtml` | 单条用例串联断言：WangEditor 空笔记 `<p><br></p>` 转 Markdown 得到空串、空正文与空白正文不产生内容、HTML→Markdown 标题/段落/列表且不残留标签、Markdown→HTML 生成 `<h2>` 且 `looksLikeHtml` 为真、已是目标格式时原样返回 |
+| `src/views/workspace/chatStreamState.test.ts` | `applyStreamEvent` | 单条用例串联断言：思考与正文分别累加、`done` 用服务端全量正文覆盖并补齐完整思考与召回依据、`done` 未带思考时保留已累加内容、`error` 优先用服务端文案否则回落界面文案、未知事件类型不改写消息 |
 
-选择纯函数而非组件测试的理由：SSE 解析与正文格式转换的偏差会直接造成事件丢失或格式串味，二者都是无副作用的纯逻辑，一条用例即可覆盖全部边界；组件渲染与样式由类型检查与人工走查保证。
+选择纯函数而非组件测试的理由：SSE 报文解析与流式事件归并的偏差会直接造成事件丢失或正文重复累加，二者都是无副作用的纯逻辑，一条用例即可覆盖全部边界；组件渲染与样式由类型检查与人工走查保证。
 
 类型正确性由 `npm run build`（`vue-tsc && vite build`）保证，`tsconfig.json` 开启 `strict`、`noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch`。
 

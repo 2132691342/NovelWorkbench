@@ -146,7 +146,7 @@ backend/
 2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 33 张表（失败即退出）。
 3. 连接 Redis / RabbitMQ / MinIO / Manticore；失败只告警并降级。
 4. 构造仓储 → 服务 → 中间件 → 路由。
-5. 播种：内置技能（8 个，并按代码清单下线旧内置技能）、5 份提示词档案、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。
+5. 播种：内置技能（18 个，9 个流程域各 2 个，并按代码清单下线旧内置技能）、9 份提示词档案、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。
 6. 可选播种出厂模型供应商（配置了网关地址与模型名且供应商表为空时）。
 7. 启动知识库索引 worker（RabbitMQ 消费）。
 8. 监听端口；收到 SIGINT/SIGTERM 后优雅关闭 HTTP、worker、连接池。
@@ -222,10 +222,10 @@ frontend/src/
 ├── api           Axios 封装与各业务模块 API（含 contracts.ts 契约类型）
 ├── components    无业务组件：NWButton / NWCard / NWEmpty / NWIcon / NWLoading / NWPageHeader / NWStatTile / ProjectPageHeader
 ├── composables   useSSE：流式解析与请求
-├── layout        AdminLayout、CommandPalette、NotificationBell
+├── layout        AdminLayout 及其子组件（SidebarMenu / Breadcrumb / TagsView / ThemeSwitch / ContentWrap / CommandPalette / NotificationBell）
 ├── router        路由表与守卫（含 meta.perm_code 校验）
-├── stores        auth / app / menu / project / notification
-├── styles        variables / element-theme / button-states / page / global
+├── stores        auth / app / menu / project / notification / tagsView
+├── styles        variables / element-theme / theme-dark / button-states / page / global
 ├── i18n          zh-CN / en-US 分片：common / workspace / assets / admin / extensions
 └── views         登录、仪表盘、工作台、知识库、角色、设定、笔记、创作规划、连续性、
                   模型、技能、个人中心、通知、管理端各页

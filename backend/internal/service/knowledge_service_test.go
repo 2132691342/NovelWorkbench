@@ -1,4 +1,5 @@
-// 本文件覆盖知识库链路的场景回归：文本切片、查询词抽取、RRF 融合排序、重排解析与索引结构迁移。
+// 知识库链路的场景回归：文档切片 → 查询词抽取 → 双通道融合 → 重排解析；索引结构迁移单列一条。
+// 切片与融合是同一条检索链路的上下游，因此合并为一条用例。
 
 package service
 
@@ -20,8 +21,10 @@ func searchHit(chunkULID string) domain.KnowledgeChunkVO {
 	return domain.KnowledgeChunkVO{ChunkULID: chunkULID, ChunkText: chunkULID}
 }
 
-// TestChunkText 覆盖切片：空白处理、重叠窗口、窗口内边界优先、overlap 非法收敛防死循环。
-func TestChunkText(t *testing.T) {
+// TestKnowledgeRetrievalChain 覆盖一次检索从「原文」到「排序结果」的完整链路：
+// 切片 → 查询词抽取 → RRF 双通道融合 → 单通道排序 → 重排解析与 fail-open。
+func TestKnowledgeRetrievalChain(t *testing.T) {
+	// 环节1：切片。空白收敛；重叠窗口；窗口内边界优先于硬切；非法 overlap 收敛防死循环。
 	if chunks := chunkText("  短文本  ", 100, 10); len(chunks) != 1 || chunks[0] != "短文本" {
 		t.Fatalf("短文本应产出单切片: %v", chunks)
 	}
@@ -47,10 +50,8 @@ func TestChunkText(t *testing.T) {
 	if chunks := chunkText("abcd", 2, -5); len(chunks) != 2 {
 		t.Fatalf("负 overlap 应收敛: %v", chunks)
 	}
-}
 
-// TestExtractQueryTerms 覆盖查询词抽取：CJK 2-gram、拉丁词去重去标点。
-func TestExtractQueryTerms(t *testing.T) {
+	// 环节2：查询词抽取。CJK 切 2-gram；拉丁词去重去标点。
 	terms := strings.Join(extractQueryTerms("主角的名字与命运"), ",")
 	if !strings.Contains(terms, "主角") || !strings.Contains(terms, "名字") {
 		t.Fatalf("CJK 应切为 2-gram: %v", terms)
@@ -59,11 +60,8 @@ func TestExtractQueryTerms(t *testing.T) {
 	if len(latin) != 2 || latin[0] != "hello" || latin[1] != "world" {
 		t.Fatalf("拉丁词应去重去标点: %v", latin)
 	}
-}
 
-// TestFuseSearchResults 覆盖双通道 RRF 融合：跨通道命中累加得分并标 hybrid、TopK 截断、
-// 单通道按 1/(60+rank) 降序。
-func TestFuseSearchResults(t *testing.T) {
+	// 环节3：双通道 RRF 融合。跨通道命中累加得分并标 hybrid，TopK 截断。
 	results := fuseSearchResults(
 		[]domain.KnowledgeChunkVO{searchHit("T1"), searchHit("T2")},
 		[]domain.KnowledgeChunkVO{searchHit("T2"), searchHit("T3")},
@@ -80,6 +78,7 @@ func TestFuseSearchResults(t *testing.T) {
 		t.Fatalf("results[1] = %+v, want T1/term", results[1])
 	}
 
+	// 环节4：单通道按 1/(60+rank) 降序并截断 TopK。
 	results = fuseSearchResults(
 		[]domain.KnowledgeChunkVO{searchHit("T1"), searchHit("T2"), searchHit("T3")},
 		nil, 2,
@@ -90,10 +89,8 @@ func TestFuseSearchResults(t *testing.T) {
 	if math.Abs(results[0].ScoreValue-1.0/61.0) > 1e-12 || math.Abs(results[1].ScoreValue-1.0/62.0) > 1e-12 {
 		t.Fatalf("单通道得分不符: %v,%v", results[0].ScoreValue, results[1].ScoreValue)
 	}
-}
 
-// TestParseRerankIDs 覆盖重排解析：合法结果重排并补齐尾部，重复/越界/非 JSON/代码围栏一律失败降级。
-func TestParseRerankIDs(t *testing.T) {
+	// 环节5：重排解析。合法结果重排并补齐尾部；重复、越界、非 JSON、代码围栏一律失败降级。
 	allowed := []string{"C1", "C2", "C3"}
 	ids, err := ai.ParseRerankIDs(`{"ids":["C2","C1"]}`, allowed)
 	if err != nil || len(ids) != 3 || ids[0] != "C2" || ids[1] != "C1" || ids[2] != "C3" {
@@ -106,8 +103,9 @@ func TestParseRerankIDs(t *testing.T) {
 	}
 }
 
-// TestManticoreSchemaMigration 覆盖中文 ngram 表迁移：旧表重建一次且语句序列正确，新表不重建。
-func TestManticoreSchemaMigration(t *testing.T) {
+// TestManticoreSchemaMigrationChain 覆盖中文 ngram 索引的建表结构迁移：识别旧表 → 重建 → 回灌只执行一次；
+// 新结构启动不重建。
+func TestManticoreSchemaMigrationChain(t *testing.T) {
 	var queries []string
 	legacy := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -100,7 +100,7 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 分工约定：档案写「你是谁、什么绝不写」（长篇连载作者 / 责任编辑 / 故事架构师 / 去 AI 味修订 / 设定守门人），技能写「这一次做什么」。二者同时下发，互不覆盖。
 
-内置档案按「流程域 = 1 份档案 + 2 个技能」组织，完整矩阵与蒸馏来源见 [skills.md](skills.md)。
+内置档案按「流程域 = 1 份档案 + 2 个技能」组织，完整矩阵见 [skills.md](skills.md)。
 
 | 档案编码 | 名称 | 定位 |
 | --- | --- | --- |
@@ -123,7 +123,7 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | 100 | `PrioritySkill` | `skill` | 命中技能渲染后的提示词 |
 | 90 | `PriorityCurrentChapter` | `current_chapter` | 当前编辑章节正文 |
 | 85 | `PrioritySkillRef` | `skill_reference` | 技能参考资料（关键词命中，单技能上限 4000 字符） |
-| 80 | `PriorityExplicitRef` | `ref_chapter` / `ref_doc` | @引用章节 / @引用文档全文 |
+| 80 | `PriorityExplicitRef` | `ref_chapter` / `ref_doc` / `ref_summary` / `ref_prompt` | @引用章节 / @引用文档全文 / @引用章节摘要 / @引用提示词档案 |
 | 70 | `PriorityRAG` | `rag` | 知识库召回切片 |
 | 60 | `PriorityChapterSummary` | `chapter_summary` | 相邻章节梗概 |
 | 50 | `PriorityCharacter` | `character` / `lore` | 角色卡 / 设定条目（`note` 排除） |
@@ -211,7 +211,7 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 由 `ai.BuiltinSkills()` 汇总 9 个流程域（`backend/internal/ai/domain_<域>.go`，一个域一个文件），
 `SkillService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种并做指纹升级。
-完整矩阵与蒸馏来源见 [skills.md](skills.md)，此处只列编码与用途：
+完整矩阵见 [skills.md](skills.md)，此处只列编码与用途：
 
 | code | 名称 | 分类 | 所属域 | 用途 |
 | --- | --- | --- | --- | --- |

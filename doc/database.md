@@ -618,7 +618,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `login_logs.login_result_code` | `success` / `failed` / `disabled` | `LoginResultSuccess` / `LoginResultFailed` / `LoginResultDisabled` |
 | `notifications.notification_type_code` | `system` / `task` / `account` | `NotificationTypeSystem` / `NotificationTypeTask` / `NotificationTypeAccount` |
 
-权限码常量共 13 个，全部定义在 `domain/role.go`，以 JSON 数组存于 `roles.perm_codes_json`，并由 `menus.perm_code` 登记到权限目录。其中 `*` 是通配符，不由菜单登记；其余 12 个各对应一条内置菜单行。
+权限码常量共 14 个，全部定义在 `domain/role.go`，以 JSON 数组存于 `roles.perm_codes_json`，并由 `menus.perm_code` 登记到权限目录。其中 `*` 是通配符，不由菜单登记；其余 13 个中，`system:model:manage` 只登记在动作节点上，其余 12 个各对应一条页面或分组菜单行。
 
 | 权限码 | 常量 | 含义 |
 | --- | --- | --- |
@@ -635,6 +635,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `system:loginlog:read` | `PermLoginLogRead` | 登录日志查看 |
 | `system:job:manage` | `PermJobManage` | 异步任务查看与重试 |
 | `skill:manage` | `PermSkillManage` | 技能资产管理 |
+| `prompt:manage` | `PermPromptManage` | 提示词档案管理 |
 
 ### 4.2 创作
 
@@ -911,7 +912,7 @@ flowchart TD
 
 ## 9. 迁移策略
 
-- 唯一迁移入口是 `cmd/server/main.go` 的 `db.AutoMigrate(...)`，声明 32 个 DO：`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`。
+- 唯一迁移入口是 `cmd/server/main.go` 的 `db.AutoMigrate(...)`，声明 33 个 DO：`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`、`PromptProfileDO`。
 - 仓库内没有 `.sql` 文件，也没有 migrations 目录。
 - AutoMigrate 语义：表不存在则建表；表已存在则补缺失的列与索引。它不做破坏性变更——不删列、不改列类型、不删索引；删除字段或调整列宽必须手工执行 DDL。
 - AutoMigrate 失败（连接失败或 DDL 出错）时 `os.Exit(1)`，服务不会带半迁移状态启动。

@@ -3,26 +3,26 @@
 本文逐个说明 NovelWorkbench 业务模块的职责、数据结构、实现路径、边界与设计权衡。
 每个模块固定四段：**职责与数据**（做什么、落在哪些表/对象上）、**实现路径**（文件与符号、关键规则）、**边界**（不做什么、失败如何处理）、**权衡**（为什么这样设计、代价是什么）；接口字段见 `doc/api.md`，表结构见 `doc/database.md`，AI 细节见 `doc/ai.md`。
 
-## 1. 模块总览
+## 0. 模块总览
 
 | # | 模块 | 主要表 | 主要入口 |
 | --- | --- | --- | --- |
-| 2 | 认证与会话 | `users` | `api/auth_api.go`、`service/auth_service.go` |
-| 3 | 用户与角色权限 | `users`、`roles`、`user_roles` | `service/user_admin_service.go`、`service/role_service.go` |
-| 4 | 菜单与导航 | `menus` | `service/menu_service.go` |
-| 5 | 审计与登录日志 | `audit_logs`、`login_logs` | `pkg/access_middleware.go`、`service/audit_service.go`、`service/login_log_service.go` |
-| 6 | 应用配置 | `app_settings` | `service/setting_service.go` |
-| 7 | 站内通知 | `notifications` | `service/notification_service.go` |
-| 8 | 任务中心 | `jobs` | `service/job_service.go`、`service/knowledge_worker.go` |
-| 9 | 项目 / 卷 / 章节 | `projects`、`volumes`、`chapters`、`chapter_snapshots`、`word_count_stats` | `service/project_service.go`、`service/volume_service.go`、`service/chapter_service.go` |
-| 10 | 角色卡与关系图 | `characters`、`character_relations` | `service/character_service.go` |
-| 11 | 世界观设定与创作笔记 | `lore_settings` | `service/lore_service.go` |
-| 12 | 大纲树与场景卡 | `outline_nodes`、`detailed_scenes` | `service/outline_service.go` |
-| 13 | 连续性 | `temporal_facts`、`foreshadow_hooks`、`chapter_summaries` | `service/continuity_service.go` |
-| 14 | 知识库 | `knowledge_documents`、`knowledge_chunks` + MinIO + Manticore | `service/knowledge_service.go`、`service/knowledge_worker.go`、`service/knowledge_search_service.go` |
-| 15 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`（会话与落库）、`service/chat_context.go`（上下文装配）、`service/chat_stream.go`（流式转发与看门狗） |
-| 16 | 技能资产 | `skills`、`skill_references` | `service/skill_service.go`、`service/skill_reference_service.go` |
-| 16.5 | 提示词档案 | `prompt_profiles` | `service/prompt_profile_service.go`、`api/prompt_profile_api.go` |
+| 1 | 认证与会话 | `users` | `api/auth_api.go`、`service/auth_service.go` |
+| 2 | 用户与角色权限 | `users`、`roles`、`user_roles` | `service/user_admin_service.go`、`service/role_service.go` |
+| 3 | 菜单与导航 | `menus` | `service/menu_service.go` |
+| 4 | 审计与登录日志 | `audit_logs`、`login_logs` | `pkg/access_middleware.go`、`service/audit_service.go`、`service/login_log_service.go` |
+| 5 | 应用配置 | `app_settings` | `service/setting_service.go` |
+| 6 | 站内通知 | `notifications` | `service/notification_service.go` |
+| 7 | 任务中心 | `jobs` | `service/job_service.go`、`service/knowledge_worker.go` |
+| 8 | 项目 / 卷 / 章节 | `projects`、`volumes`、`chapters`、`chapter_snapshots`、`word_count_stats` | `service/project_service.go`、`service/volume_service.go`、`service/chapter_service.go` |
+| 9 | 角色卡与关系图 | `characters`、`character_relations` | `service/character_service.go` |
+| 10 | 世界观设定与创作笔记 | `lore_settings` | `service/lore_service.go` |
+| 11 | 大纲树与场景卡 | `outline_nodes`、`detailed_scenes` | `service/outline_service.go` |
+| 12 | 连续性 | `temporal_facts`、`foreshadow_hooks`、`chapter_summaries` | `service/continuity_service.go` |
+| 13 | 知识库 | `knowledge_documents`、`knowledge_chunks` + MinIO + Manticore | `service/knowledge_service.go`、`service/knowledge_worker.go`、`service/knowledge_search_service.go` |
+| 14 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`（会话与落库）、`service/chat_context.go`（上下文装配）、`service/chat_stream.go`（流式转发与看门狗） |
+| 15 | 技能资产 | `skills`、`skill_references` | `service/skill_service.go`、`service/skill_reference_service.go` |
+| 16 | 提示词档案 | `prompt_profiles` | `service/prompt_profile_service.go`、`api/prompt_profile_api.go` |
 | 17 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants` | `service/model_provider_service.go`、`service/model_catalog_service.go`、`service/model_access_service.go` |
 | 18 | 数据总览 | `word_count_stats`、`projects` | `service/stats_service.go` |
 | 19 | 用量分析 | `model_usage_stats` | `service/model_usage_service.go` |
@@ -31,9 +31,9 @@
 
 后端在 `backend/internal/api/router.go` 内注册 111 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、18 个内置技能（`backend/internal/ai/domain_<域>.go`，每域两个）与 9 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
 
-## 2. 认证与会话
+## 1. 认证与会话
 
-### 2.1 职责与数据
+### 1.1 职责与数据
 
 登录、查询当前用户、个人资料维护、修改密码、登出吊销。写入 `users`（`password_hash` 为 bcrypt，`json:"-"` 永不输出）与 `login_logs`；会话状态不落库，靠 JWT + Redis 黑名单维持。
 
@@ -43,7 +43,7 @@
 | 吊销标记 | Redis `nw:token:blacklist:<sha256(token)>` | 值 `"1"`，TTL 取 `expires_at - issued_at`（签发时长，非登出时刻的剩余有效期） |
 | 登录结果 | `login_logs` | `success` / `failed` / `disabled`，含 IP 与 UA |
 
-### 2.2 实现路径
+### 1.2 实现路径
 
 - `service/auth_service.go` 的 `AuthService.Login`：`userRepo.GetByAccount` 同时匹配 `user_name` 与 `user_email`；账号不存在、密码错误均返回 `ERR_UNAUTHORIZED`「账号或密码错误」，`disabled` 返回 `ERR_FORBIDDEN`；成功后 `JWTSigner.SignToken` 签发并把 `role_codes` 一并返回（`withRoleCodes`）。
 - `service/auth_service.go` 的 `AuthService.Logout`：`jwt.Parser` 非验签解析出 `exp`/`iat`，取两者差值作为 TTL 调 `tokenStore.Revoke`。
@@ -52,21 +52,21 @@
 - `pkg/jwt.go` 的 `NewJWTSigner` 在密钥为空时直接返回错误，由 `cmd/server/main.go` 在启动期 fail fast。
 - 免鉴权白名单只有 `/api/v1/auth/login`（`main.go` 构造 `AuthMiddleware` 时传入）。
 
-### 2.3 边界
+### 1.3 边界
 
-- 不提供注册接口，账号只能由管理员创建（见第 3 节）；不存在 `/auth/register` 路由。
+- 不提供注册接口，账号只能由管理员创建（见第 2 节「用户与角色权限」）；不存在 `/auth/register` 路由。
 - 密码错误与账号不存在返回同一文案与同一业务码，不泄露账号是否存在。
 - 登录日志写入失败只打警告，不阻断登录；通知写入失败同样只告警。
 - 令牌吊销依赖 Redis：`TokenRepo.IsRevoked` 在 Redis 异常时返回 `false`（视为未吊销），由后续用户状态校验兜底。
 - 修改密码不吊销已签发的旧令牌，也不强制重新登录，只发通知；禁用账号与删除用户则由 `AuthMiddleware` 的用户状态检查即时生效。
 
-### 2.4 权衡
+### 1.4 权衡
 
 无状态 JWT 让横向扩容与 SSE 长连接不需要会话粘滞，代价是「主动失效」只能靠外部黑名单：黑名单键取令牌哈希，TTL 取签发时长，因此条目最多存活一个令牌周期、不会无限堆积，但一次登出多一跳 Redis 写。每请求回查用户状态多一次主库读，换来「禁用立即生效」，对当前低并发管理型系统是划算的；如果将来 QPS 上升，这一跳是第一个该加短 TTL 缓存的地方。
 
-## 3. 用户与角色权限
+## 2. 用户与角色权限
 
-### 3.1 职责与数据
+### 2.1 职责与数据
 
 账号生命周期（创建、编辑、禁用、重置密码、删除）与角色权限模型（角色 CRUD、权限码勾选、权限判定）。
 
@@ -78,7 +78,7 @@
 
 内置角色两条：`admin`（`perm_codes_json = ["*"]`）与 `user`（空权限集），由 `service/role_service.go` 的 `roleDefaultList` 与 `SeedDefaults` 播种。
 
-### 3.2 实现路径
+### 2.2 实现路径
 
 - `service/user_admin_service.go` 的 `UserAdminService.Create`：登录名与邮箱分别查重 → bcrypt 哈希 → 建用户 → `roleRepo.ReplaceUserRoles` 挂角色（缺省 `user`）→ 发「账号已开通」通知。
 - `service/user_admin_service.go` 的 `Update`：只覆盖传入的非空字段；`roleCodes != nil` 时整体替换角色挂载；`operatorULID` 用于拒绝「禁用自己」。
@@ -88,7 +88,7 @@
 - `service/role_service.go` 的 `HasPerm`：遍历用户全部角色，命中 `*` 或目标权限码即通过；`PermCodesOfUser` 对多角色权限码取并集去重保序。
 - 路由侧由 `pkg/access_middleware.go` 的 `RequirePermMiddleware` 收口：`/admin/user/*` 要 `system:user:manage`，`/admin/role/*` 要 `system:role:manage`（`api/router.go` 的 `registerAdminRoutes`）。
 
-### 3.3 边界
+### 2.3 边界
 
 - 内置角色不可删除、不可改编码；角色下仍有用户时删除被拒（`ERR_CONFLICT`）。
 - 管理员不能禁用或删除自己；邮箱与登录名唯一性由数据库唯一索引与服务层双重保证。
@@ -96,13 +96,13 @@
 - 删除项目只校验项目归属，不额外要求权限码；技能使用对所有登录用户开放，只有维护动作收口到 `skill:manage`。
 - 权限判定逐请求查库，不做缓存，因此角色权限修改在下一次请求即生效。
 
-### 3.4 权衡
+### 2.4 权衡
 
 权限码存在角色行的 JSON 列里，而不是「角色-权限」关联表：读路径只有一次 `roles` 查询加内存遍历，写入是整行覆盖，模型极简。代价是无法按权限码反查角色、也无法在数据库层做外键约束，权限码拼写错误只能靠人工发现。逐请求查库省掉了缓存失效问题，换来的是管理接口每次多一跳主库——对「写操作少、管理端并发低」的定位可以接受。
 
-## 4. 菜单与导航
+## 3. 菜单与导航
 
-### 4.1 职责与数据
+### 3.1 职责与数据
 
 `menus` 表同时承担两件事：前端导航树的唯一数据源，以及权限码的登记处（菜单即权限单一事实源）。表内 26 条内置菜单由 `service/menu_service.go` 的 `menuSeedList` 播种：3 个分组（`group_project` 创作 / `group_platform` 平台 / `group_system` 系统）、22 个页面节点（其中 `dashboard` 与 `settings` 为根级）、1 条动作节点 `action_model_write`。
 
@@ -113,7 +113,7 @@
 | `perm_code` | 权限码，空表示登录即可见 | 导航过滤与权限目录的唯一来源 |
 | `visible_flag` / `enabled_flag` / `sort_order` | 布尔 / 整型 | 显隐、启停、同级排序 |
 
-### 4.2 实现路径
+### 3.2 实现路径
 
 - `MenuService.SeedDefaults`：按 `menu_code` 查缺补插，父级编码先于子级解析，缺父直接报错，保证播种顺序敏感且幂等。
 - `MenuService.Nav`：`roleSvc.PermCodesOfUser` 取权限并集 → `menuRepo.ListEnabled` → `filterVisibleMenus`（剔除动作节点、隐藏节点、未命中权限码的节点，`*` 全放行）→ `buildMenuTree` 按 `parent_ulid` 递归装配，返回 `menu_tree_list` 与 `perm_code_list`。
@@ -122,27 +122,27 @@
 - `MenuService.PermissionCatalog` / `buildPermCatalog`：把菜单行上的非空 `perm_code` 按首段分组（`permGroupCode` / `permGroupLabel`），`*` 单独登记为「全部权限」，同一权限码重复登记只展示一次。
 - 前端 `frontend/src/stores/menu.ts` 的 `loadNav` 拉取 `GET /menu/nav`，把树与权限码同时写入 menu store 与 auth store；`frontend/src/layout/AdminLayout.vue` 侧边栏按 `menu_tree_list` 渲染，项目内菜单在未选项目时置灰。
 
-### 4.3 边界
+### 3.3 边界
 
 - 动作节点永不进入导航树，只在权限目录与角色勾选里出现。
 - 菜单删除不做级联：有下级先删下级，避免悬空 `parent_ulid`。
 - `Nav` 只返回启用菜单；禁用某个菜单后用户刷新导航即消失，不需要重新登录。
 - 导航只决定「看得见什么」，接口鉴权仍由 `RequirePermMiddleware` 独立判定：改菜单可见性不会放宽接口权限。
 
-### 4.4 权衡
+### 3.4 权衡
 
 把权限码登记在菜单表上，省掉了「权限表 + 角色-菜单关联表」两层结构：权限目录、角色勾选、导航过滤共用同一份数据，新增一个受控页面只需加一条菜单行。代价是权限码与「页面」概念绑死，纯动作权限必须伪造成 `action` 节点（如 `action_model_write`），菜单管理页因此混着导航配置与权限登记两件事；同时删除菜单会连带删除该权限码的登记，管理员需要知道这层耦合。
 
-## 5. 审计与登录日志
+## 4. 审计与登录日志
 
-### 5.1 职责与数据
+### 4.1 职责与数据
 
 | 表 | 记录内容 | 触发者 |
 | --- | --- | --- |
 | `audit_logs` | 操作者、动作码（去掉 `/api/v1/` 的路径）、目标类型与 ULID、`status=<HTTP 码>`、IP | `pkg.AuditMiddleware` |
 | `login_logs` | 账号、命中用户、结果码、失败原因、IP、UA | `AuthService.recordLogin` → `LoginLogService.Record` |
 
-### 5.2 实现路径
+### 4.2 实现路径
 
 - `pkg/access_middleware.go` 的 `AuditMiddleware`：仅对 `POST` 且不在跳过名单内的请求生效，先 `c.Next()` 执行业务，再按最终状态码落库；`extractAuditTarget` 只在 `/api/v1/admin/` 路径下、且 body ≤ 64KB（`auditBodyLimitBytes`）时按 `auditTargetKeys` 白名单提取 `user_ulid` / `role_ulid` / `project_ulid` / `chapter_ulid` / `doc_ulid`。
 - 跳过名单在 `cmd/server/main.go` 装配：`/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`（SSE 流不适合等待后置写入）。
@@ -150,20 +150,20 @@
 - `service/login_log_service.go` 的 `Record`：账号 128、失败原因 256、IP 64、UA 512 字符截断后落库，写失败只 `Warnw`。
 - `service/auth_service.go` 的 `Login` 在三条失败分支（账号不存在 / 已禁用 / 密码错误）与成功分支各调用一次 `recordLogin`，因此成功与失败都有痕迹。
 
-### 5.3 边界
+### 4.3 边界
 
 - 审计只覆盖 `POST`：GET 查询不记录，避免读接口把表打成热点。
 - 业务失败也记录（`status=4xx/5xx`），因为写入发生在 `c.Next()` 之后；审计写失败不阻断业务，只记 `audit_record_failed` 警告。
 - 只有 `/admin/` 路径读 body 提取目标，其余路径的 `target_type` / `target_ulid` 为空，避免对创作接口做大 body 拷贝。
 - 登录日志失败不阻断登录链路；日志里的失败原因比接口响应更具体（如「密码错误」「账号已被禁用」），只对管理员可见。
 
-### 5.4 权衡
+### 4.4 权衡
 
 同步落库保证「业务提交即有审计」的顺序一致性，代价是每个 POST 多一次写；当前管理端写操作稀疏，表不会成为瓶颈。body 采样限制在 admin 路径 + 64KB，是对「审计价值 / 拷贝成本」的折中：创作接口的正文可能有几十 KB，逐条拷贝会显著放大内存与磁盘。登录日志与审计日志分表，是因为查询维度与保留策略不同（前者按账号与结果过滤，后者按动作码与操作者过滤）。
 
-## 6. 应用配置
+## 5. 应用配置
 
-### 6.1 职责与数据
+### 5.1 职责与数据
 
 `app_settings` 只有三行，由 `service/setting_service.go` 的 `settingDefaultList` 定义，键、默认值、说明、合法区间同源：
 
@@ -173,26 +173,26 @@
 | `rag_top_k` | 6 | 1–20 | `KnowledgeService.resolveRAGTopK` |
 | `daily_word_goal` | 2000 | 100–100000 | 仪表盘每日目标展示 |
 
-### 6.2 实现路径
+### 5.2 实现路径
 
 - `SettingService.SeedDefaults`：按 `setting_key` 查缺补插；已存在但说明文案变化时只更新 `setting_desc`，不覆盖用户改过的值。
 - `SettingService.Update`：`settingKeyAllowed` 做白名单校验 → `strconv.Atoi` 要求整数 → `settingRangeMap` 校验区间 → 更新值。
 - 消费侧一律「应用配置 > 全局配置」两级回退：`resolveHistoryLimit` 先看请求参数，再看 `chat_history_count`，最后落到 `ChatConfig.HistoryCount`；`resolveRAGTopK` 同理回退到 `KnowledgeIndexConfig.RAGTopK`。
 - 路由：`GET /setting/list` 对所有登录用户开放（前端要读每日目标），`POST /setting/update` 需要 `system:setting:manage`（`api/router.go` 的 `registerSettingRoutes`）。
 
-### 6.3 边界
+### 5.3 边界
 
 - 只支持整数配置：`Update` 拒绝非整数与越界值，返回 `ERR_INVALID_PARAM`；不支持的键同样拒绝。
 - 没有新增键的接口：新增配置必须改 `settingDefaultList` 与 `settingRangeMap` 并重启播种。
 - 不缓存，每次请求读表；读取失败时调用方回退到配置文件值并打警告，不会让对话或检索失败。
 
-### 6.4 权衡
+### 5.4 权衡
 
 「配置即表 + 每次读」让保存后立即生效，不需要重启或广播失效，也不需要配置中心。代价是热路径（每次对话、每次检索）多一次小表查询，并且配置项必须编译期登记——这是一次有意的收紧：运行时只能改值，不能改结构，避免出现无人认识的配置键。前端 `views/settings/index.vue` 里另有一份展示元数据（分组、单位、区间），与后端区间重复，改动时需要两边同步。
 
-## 7. 站内通知
+## 6. 站内通知
 
-### 7.1 职责与数据
+### 6.1 职责与数据
 
 `notifications` 表按用户隔离，读后保留。类型三值：`system`（公告）、`task`（异步任务结果）、`account`（账号事件）。
 
@@ -203,30 +203,30 @@
 | `UserAdminService.ResetPassword` | 密码被管理员重置 | `account` |
 | `KnowledgeWorker.notifyOwner` | 知识库索引完成 / 失败 | `task` |
 
-### 7.2 实现路径
+### 6.2 实现路径
 
 - `NotificationService.Notify`：`user_ulid` 为空直接返回（如项目已删除导致接收人缺失）；标题 128、正文 512、链接 256 字符截断（`pkg.TruncateText`）；类型缺省 `system`。
 - `ListPage` / `UnreadCount` / `MarkRead` / `MarkAllRead` / `Delete` 全部以 `user_ulid` 作为查询条件，不接受跨用户 ID。
 - `DeleteByUser` 在账号删除时清理该用户全部通知。
 - 前端 `frontend/src/stores/notification.ts` 统一维护 `unread_count` 与最近 5 条；`layout/NotificationBell.vue` 挂载时刷新并每 60 秒轮询一次；`views/notification/index.vue` 提供状态/类型筛选与单条、批量已读。
 
-### 7.3 边界
+### 6.3 边界
 
 - 无实时推送：延迟上限等于轮询间隔（60 秒），不支持 WebSocket/SSE 通知。
 - 通知只是提示，不承载业务状态：点开链接跳转由前端路由完成，后端不校验目标资源是否仍存在。
 - 所有写入失败只告警，绝不影响主链路（改密、建号、索引结果都不因通知失败而回滚）。
 
-### 7.4 权衡
+### 6.4 权衡
 
 用「落库 + 轮询」而不是消息推送，省掉长连接与网关改造成本，也天然支持离线用户与历史回看；代价是未读数有最多 60 秒延迟，且每次轮询要跑一次 `count` 查询。通知内容在写入时截断并做快照（标题/正文直接存文本，不存模板 ID），因此历史通知不会随后续文案调整而变化。
 
-## 8. 任务中心
+## 7. 任务中心
 
-### 8.1 职责与数据
+### 7.1 职责与数据
 
 `jobs` 表是异步任务的留痕与运维入口，当前唯一任务族是知识库索引：`doc_index`（首次）与 `doc_reindex`（重建）。`payload_json` 存 `{"doc_ulid": "DOC_..."}`。状态取值 `queued` / `running` / `success` / `failed`，但 worker 只写 `queued`（投递时）、`success`、`failed` 三态：`running` 仅用于 `Stats` 计数与 `GetPendingByDoc` 的待办查询，当前没有代码把它写入任务行。
 
-### 8.2 实现路径
+### 7.2 实现路径
 
 - `service/knowledge_service.go` 的 `enqueueIndexJob`：先建 `queued` 任务行，再 `mqRepo.PublishIndexJob`；投递失败把任务置 `failed` 并返回 `ERR_STORAGE`。
 - `service/knowledge_worker.go` 的 `Run`：启动时 `ensureManticoreSchema`，结构升级返回 `true` 时 `rebuildManticoreIndex` 从 PostgreSQL 回灌；随后阻塞消费，消费中断按 `consumeReconnectInterval`（5 秒）重连，`ctx` 取消时优雅退出。
@@ -234,20 +234,20 @@
 - `service/job_service.go` 的 `ListPage`：解析载荷批量取文档名（`GetDocumentsByULIDs`），避免 N+1；`Stats` 按状态计数；`Retry` 只接受 `failed`，把任务重置为 `queued`、文档重置为 `pending` 后重新投递。
 - 前端 `views/admin/jobs.vue` 展示四张状态卡 + 筛选表 + 失败重试（二次确认）。
 
-### 8.3 边界
+### 7.3 边界
 
 - 只有 `failed` 任务可重试，其余状态返回 `ERR_BIZ_FAILED`；载荷缺 `doc_ulid` 或文档已删除时拒绝。
 - 文档已删除的滞留消息直接 `ack` 并置任务 `failed`，避免无意义重投。
 - 文档状态与任务状态是两套：`knowledge_documents.doc_status_code` 面向用户（`pending/indexing/indexed/failed`），`jobs.job_status_code` 面向运维，由 worker 同步维护。
 - 没有超时回收器：worker 在索引中途崩溃会留下 `queued` 任务与 `indexing` 文档；`/knowledge/reindex` 只接受 `indexed`/`failed`，任务重试只接受 `failed`，因此这两种中间态都没有自助恢复入口，需要人工改状态或重新上传文档。
 
-### 8.4 权衡
+### 7.4 权衡
 
 任务行在投递前创建，保证「消息丢了也能看到一条 queued/failed」，比纯 MQ 语义更可运维。重试放在 worker 内部（进程内退避）而不是让 MQ 重投，避免毒消息在队列里打转；代价是重试次数只体现在 `retry_count`，队列层面看不到投递次数。把 Manticore 索引当作可重建副本来处理（失败只降级关键词通道，不阻断文档 `indexed`），是这条链路最重要的取舍：权威数据永远在 PostgreSQL 与 MinIO。
 
-## 9. 项目 / 卷 / 章节
+## 8. 项目 / 卷 / 章节
 
-### 9.1 职责与数据
+### 8.1 职责与数据
 
 创作主线三级结构：`projects`（书名、题材、文风、简介、状态、累计字数）→ `volumes`（卷名、排序、概要）→ `chapters`（正文、梗概、字数、状态）。`chapter_snapshots` 存人工留档，`word_count_stats` 存按日字数增量（`word_delta` / `ai_word_delta`）。
 
@@ -258,7 +258,7 @@
 | `chapters` | `project_ulid`、`volume_ulid`、`chapter_order`、`word_count` | 冗余 `project_ulid`，鉴权免 join |
 | `chapter_snapshots` | `chapter_ulid`、`content_text`、`snapshot_type`、`change_note` | 当前只有 `manual` |
 
-### 9.2 实现路径
+### 8.2 实现路径
 
 - `service/project_service.go` 的 `Create` / `Update` / `List` / `Detail` / `Tree`；`Tree` 返回卷列表与每卷章节（升序），是写作台一次加载的数据源。
 - `mustOwnProject`（`service/project_service.go`）是所有创作模块共用的归属校验：项目不存在 `ERR_NOT_FOUND`，非本人 `ERR_FORBIDDEN`。
@@ -269,7 +269,7 @@
 - `SnapshotRestore`：回滚前先把当前正文写成一条 `manual` 快照（`change_note` 为「restore 自动留档」），再覆盖正文并重算字数差。
 - 字数口径在 `pkg/text.go` 的 `CountWords`：汉字逐字计数，连续拉丁字符算一个词，前端 `views/workspace/wordCount.ts` 与后端同口径。
 
-### 9.3 边界
+### 8.3 边界
 
 - 卷必须属于目标项目，章节创建时卷不匹配返回 `ERR_INVALID_PARAM`；章节只能通过所属项目间接鉴权。
 - 删除项目只校验项目归属，不额外要求权限码。
@@ -277,17 +277,17 @@
 - 外部存储清理（MinIO / Manticore）在事务外，失败不回滚，可能留下孤儿对象；文档行已删，孤儿对象不再被引用。
 - 级联范围只覆盖快照、章节、卷、角色与关系、设定、会话与消息、知识切片与文档、字数统计；`outline_nodes`、`detailed_scenes`、`temporal_facts`、`foreshadow_hooks`、`chapter_summaries` 不在 `ProjectCascadeDeps` 里，删除项目后这些行会按 `project_ulid` 残留（当前无接口可再访问它们）。
 
-### 9.4 权衡
+### 8.4 权衡
 
 章节表冗余 `project_ulid`，让「按项目取章节」「按项目鉴权」都不需要 join 卷表，代价是插入时必须保证两列一致（服务层强制）。累计字数用「增量表达式 + 每日增量表」而不是每次聚合全表：读路径 O(1)，写路径只加一个常量；代价是账目正确性依赖所有写入口都调用 `applyWordDelta`，一旦有遗漏就只能靠重算修复。快照采用「整章全文副本」而不是 diff，存储放大但回滚是纯覆盖，没有补丁冲突。
 
-## 10. 角色卡与关系图
+## 9. 角色卡与关系图
 
-### 10.1 职责与数据
+### 9.1 职责与数据
 
 `characters` 存角色卡（姓名、别名、类型 `protagonist/antagonist/supporting/minor`、性格、背景、外貌、目标动机），`character_relations` 存有向关系边（起点、终点、类型、说明）。两者都以 `project_ulid` 归属。
 
-### 10.2 实现路径
+### 9.2 实现路径
 
 - `service/character_service.go` 的 `Save`：`character_ulid` 为空即新建，否则先校验存在且同项目，再整字段覆盖更新。
 - `Delete`：单事务内先 `DeleteRelationsByCharacter` 再删角色，避免悬挂边。
@@ -296,23 +296,23 @@
 - 前端 `views/character/index.vue` 为卡片网格 + 编辑抽屉；`CharacterGraphTab.vue` 用 `await import('@antv/x6')` 懒加载渲染关系图，卸载时 `dispose`。
 - 角色卡同时是 AI 上下文素材：`service/chat_context.go` 的 `formatCharacterBlock` 把每个角色的性格截断 120 字、背景截断 200 字后注入（优先级 `ai.PriorityCharacter`）。
 
-### 10.3 边界
+### 9.3 边界
 
 - 关系图按需计算，不落图数据库，也不做布局持久化：每次打开重新取数、重新布局。
 - 角色卡没有版本历史；删除角色会连带删除其全部关系边，不可撤销。
 - 注入 AI 的角色信息是截断摘要，不是全文；角色数量多时靠上下文预算裁剪整块丢弃，而不是逐条挑拣。
 
-### 10.4 权衡
+### 9.4 权衡
 
 用「两张普通表 + 内存构图」替代图数据库：规模是一本书的几十个角色、几百条边，全量加载在毫秒级，省掉一套中间件与同步逻辑。代价是无法做图算法查询（最短路径、社区发现），关系类型也只是自由字符串，没有约束枚举。角色卡选择「全量注入 + 单项截断」而不是按相关性检索，是因为作者期望 AI 认识全部主要角色；预算不足时整块丢弃虽然粗暴，但行为可预测。
 
-## 11. 世界观设定与创作笔记
+## 10. 世界观设定与创作笔记
 
-### 11.1 职责与数据
+### 10.1 职责与数据
 
 `lore_settings` 一张表承载两个产品：世界观设定（`lore_type_code` = `world` / `rule` / `item` / `place` / `event`）与创作笔记（`lore_type_code = note`）。`content_mode_code` 决定正文用哪种编辑器与存储格式：`rich`（HTML）或 `markdown`（原文）。
 
-### 11.2 实现路径
+### 10.2 实现路径
 
 - `service/lore_service.go` 的 `Save`：新建时 `content_mode_code` 缺省 `rich`；更新时只覆盖非空字段，`content_mode_code` 传空表示保持原值。
 - `Delete` / `List` 均先经 `mustOwnProject`；列表支持按 `lore_type_code` 与关键词过滤，按 `sort_order` 升序。
@@ -320,24 +320,24 @@
 - 前端 `views/lore/index.vue` 按分类展示设定卡片；`views/notes/index.vue` 只查 `NW_LORE_TYPE_NOTE`，标题与正文 2 秒防抖自动保存（`POST /lore/save`），切换笔记前 `flushSave`，保存状态分 `idle/saving/saved/failed`。
 - 笔记双模式由 `views/notes/noteContent.ts` 桥接：`rich` 用 WangEditor，`markdown` 用 MavonEditor，切换模式时用 turndown / marked 做 HTML 与 Markdown 互转，模式随 `content_mode_code` 持久化。
 
-### 11.3 边界
+### 10.3 边界
 
 - `note` 永不进入 AI 上下文：即使作者手动在对话里 `@` 引用，引用入口只覆盖知识库文档与章节，不包含设定表。
 - 正文上限 20000 字符（`LoreREQ` 的 `binding`）；类型白名单 `world rule item place event note`，非法值被参数校验拒绝。
 - 设定没有版本历史，删除即物理删除；富文本以 HTML 原样存储，不做服务端清洗（信任单作者场景）。
 - 同一张表意味着「设定」与「笔记」共享所有权、排序与搜索语义，但没有独立的字段（笔记没有额外元数据）。
 
-### 11.4 权衡
+### 10.4 权衡
 
 复用设定表承载笔记，省掉一张表、一套 CRUD 与一套前端状态；代价是「排除笔记」这条业务规则必须同时存在于 SQL 与格式化函数两处（当前刻意冗余，任一处失效仍有兜底），且笔记的富文本/双模式逻辑在设定页并不需要。私人笔记的隔离选择「SQL 层排除」而不是「提示词层过滤」，是因为前者能保证即使上下文装配被改写也不会泄漏。
 
-## 12. 大纲树与场景卡
+## 11. 大纲树与场景卡
 
-### 12.1 职责与数据
+### 11.1 职责与数据
 
 `outline_nodes` 是邻接表树（`parent_outline_ulid` + `sort_order`），节点类型 `volume` / `arc` / `storyBlock` / `chapter`，状态 `draft` / `planning` / `ready` / `done`。`detailed_scenes` 挂在节点下，记录出场角色 ULID 列表、地点、核心冲突、节奏 `slow/medium/fast/climax`、预计字数、入场状态、目标、关键选择、结果、出场状态。
 
-### 12.2 实现路径
+### 11.2 实现路径
 
 - `service/outline_service.go` 的 `SaveNode`：新建时 `sort_order` 为 0 则取 `MaxNodeOrder+1`，状态缺省 `draft`，并 `validateParent` 校验父节点属本项目且不成环；更新时先 `loadOwnedNode` 确认节点属本项目。
 - `validateParent`：父节点为空直接放行；父节点等于自身拒绝；随后从父节点沿 `parent_outline_ulid` 上溯（每层都 `loadOwnedNode` 校验属本项目），一旦发现某层的父节点是自己即判成环。
@@ -346,20 +346,20 @@
 - `SaveScene`：先 `loadOwnedNode` 校验节点，`encodeCharacterULIDs` 把角色列表序列化为 JSON；新建时排序取 `MaxSceneOrder+1`；更新时 `loadOwnedScene` 确认场景属本项目。
 - 前端 `views/outline/index.vue` 左树右场景卡；节点类型/状态/节奏选项集中在 `views/outline/outlineOptions.ts`。
 
-### 12.3 边界
+### 11.3 边界
 
 - 大纲节点与真实章节是两套数据：大纲 `chapter` 类型节点不会自动创建 `chapters` 行，反之亦然，作者需要分别维护。
 - 删除节点必须自底向上，没有「连同子树一起删」的接口。
 - 场景卡的出场角色只存 ULID 列表，不校验角色是否仍存在；角色被删后列表里会留下失效引用。
 - 没有拖拽重排接口：调整顺序靠保存新的 `sort_order`。
 
-### 12.4 权衡
+### 11.4 权衡
 
 邻接表 + 内存建树，写入是单行更新，读取是一次全项目查询，对一本书的规模（几十到几百节点）足够；代价是深度查询（祖先链、子树统计）要在应用层循环，且没有数据库级的外键或环约束——成环检测是服务层职责。大纲与章节分离，是因为规划阶段的结构（幕、故事块）与写作阶段的卷章并不一一对应；代价是两套结构的同步只能靠作者。
 
-## 13. 连续性
+## 12. 连续性
 
-### 13.1 职责与数据
+### 12.1 职责与数据
 
 三本手工账，全部以 `project_ulid` 归属：
 
@@ -369,7 +369,7 @@
 | `foreshadow_hooks` | `planned` / `planted` / `echoed` / `resolved` / `abandoned` | 描述、预期回收、埋设/回收章节、重要度 `high/medium/low` |
 | `chapter_summaries` | `pending` / `verified` / `stale` | 摘要正文、`source_hash_text`（生成时正文指纹） |
 
-### 13.2 实现路径
+### 12.2 实现路径
 
 - `service/continuity_service.go` 的四个校验函数 `isValidFactStatusCode` / `isValidHookStatusCode` / `isValidImportanceCode` / `isValidSummaryStatusCode` 是状态白名单的唯一实现，允许空值由调用方补默认（事实 `candidate`、重要度 `medium`、摘要 `pending`）。
 - `SaveFact`：新建或更新；更新时状态为空则沿用原值，不允许把状态写成非法码。
@@ -378,24 +378,24 @@
 - `SaveSummary`：无 `summary_ulid` 时先按 `(project_ulid, chapter_ulid)` 查既有记录，存在则更新，保证「一章一条摘要」；`source_hash_text` 只是原样存储。
 - 前端 `views/continuity/index.vue` 三个页签各自筛选与加载；事实行提供「确认 / 取代 / 标记过期」下拉，摘要状态在 `ContinuityDialogs.vue` 里选择。
 
-### 13.3 边界
+### 12.3 边界
 
-- 全部由作者手工维护：AI 对话链路不写这三张表，也不读取它们（章节梗概走 `chapters.summary_text`，见第 15 节）。
+- 全部由作者手工维护：AI 对话链路不写这三张表，也不读取它们（章节梗概走 `chapters.summary_text`，见第 14 节「AI 对话」）。
 - `source_hash_text` 不参与自动比对：正文变化后系统不会自动把摘要置 `stale`，需要作者手动改状态。
 - 状态流转没有强制的前置约束（例如 `echoed` 之前是否必须 `planted`），只有取值白名单。
 - 章节 ULID 字段（`setup_chapter_ulid`、`valid_from_chapter_ulid` 等）不做存在性校验。
 
-### 13.4 权衡
+### 12.4 权衡
 
 把连续性做成「可人工复核的账本」而不是「AI 自动抽取的知识图谱」：结论可解释、可回溯到章节引用，且不会因为模型幻觉污染权威数据；代价是全部维护成本落在作者身上，规模大了容易漏记。事实复核不允许退回 `candidate`，是因为「候选」代表未经人判断的原始记录，一旦人工定性就不该伪装成未处理——需要推翻时用 `superseded` 并新建一条。摘要指纹只存不算，是为将来自动失效留的字段，当前不承担逻辑。
 
-## 14. 知识库
+## 13. 知识库
 
-### 14.1 职责与数据
+### 13.1 职责与数据
 
 原文进 MinIO（对象键即 `doc_ulid`），元数据与切片进 PostgreSQL（`knowledge_documents` / `knowledge_chunks`），全文检索副本进 Manticore。文档状态 `pending → indexing → indexed | failed`，类型白名单 `txt/md/docx/pdf`，单文件上限取 `KnowledgeIndexConfig.UploadMaxMB`（配置项 `app.upload_max_mb`，默认 20MB）。
 
-### 14.2 实现路径
+### 13.2 实现路径
 
 - 上传：`service/knowledge_service.go` 的 `Upload` 校验归属与扩展名 → `objectRepo.PutObject` 写原文 → 建 `pending` 文档行（失败则回滚对象）→ `enqueueIndexJob` 投递任务（失败则文档置 `failed`）。
 - 索引：`service/knowledge_worker.go` 的 `indexDocument` 读原文 → `extractDocumentText`（`extractDocxText` / `extractPDFText`）→ `chunkText` 按 `ChunkSize` 切分、`ChunkOverlap` 重叠、`lastBoundary` 在句末/换行处回退断点 → `contentHashOf`（SHA-256）与既有切片比对复用 ULID → 单事务删旧切片写新切片 → `syncManticoreChunks` 先删后插 → 文档置 `indexed` 并回写 `chunk_count` / `total_token_count`。
@@ -405,7 +405,7 @@
 - 默认召回条数：`resolveRAGTopK` 优先 `rag_top_k` 配置，回退 `KnowledgeIndexConfig.RAGTopK`。
 - 其它入口：`ChunkList`（切片分页）、`GetContent`（按 `Content-Type` 直接输出原文二进制，读取上限 `contentMaxBytes` = 25MB，不走 JSON 包络）、`Stats`（按状态计数与切片总数）、`Reindex`（仅 `indexed`/`failed` 可重投）、`Delete`（先删对象与 Manticore 行，再事务删切片与文档）。
 
-### 14.3 边界
+### 13.3 边界
 
 - 不支持向量检索，也不生成 embedding；`hybrid` 指「词条 + 短语两条词法通道」，不是语义通道。
 - 检索限定单项目：`KnowledgeSearchREQ.ProjectULID` 必填且经 `mustOwnProject` 校验，Manticore 查询也带 `project_ulid` 过滤；`mustOwnDoc` 对 `project_ulid` 为空或 `"0"` 的全局库文档放行，对话 `@` 引用时同样接受这类文档。
@@ -413,17 +413,17 @@
 - 切片入库在事务内，Manticore 同步在事务外：同步失败时 PostgreSQL 与索引短暂不一致，靠 `Reindex` 或重启时的结构检查修复。
 - 删除文档先删外部对象：MinIO 删除失败直接返回 `ERR_STORAGE` 并中止，Manticore 删除失败只告警。
 
-### 14.4 权衡
+### 13.4 权衡
 
 不引入向量模型是这套设计的根假设：部署不需要额外模型与向量库，检索结果完全可解释（能给出 MATCH 表达式与每个通道的名次），索引可从 PostgreSQL 整体重建。代价是同义改写、跨语言查询召回明显弱于语义检索，只能靠 CJK 2-gram 切词、双通道 RRF 与对话模型重排补偿。用 Manticore 而不是 PostgreSQL 全文索引，是为了 CJK ngram 分词与 BM25 打分开箱可用；代价是多一个必须同步的存储，以及「索引可重建」带来的运维复杂度（worker、队列、任务状态机）。
 
-## 15. AI 对话
+## 14. AI 对话
 
-### 15.1 职责与数据
+### 14.1 职责与数据
 
 `chat_sessions`（项目 + 用户 + 会话名）与 `chat_messages`（角色 `user/assistant/system`、正文、命中技能码、三类引用 ULID 的 JSON、估算 token）。会话名缺省时用首条消息前 20 字回填。
 
-### 15.2 实现路径
+### 14.2 实现路径
 
 `ChatService.Send`（`service/chat_service.go`）是唯一生成入口，顺序固定：
 
@@ -439,7 +439,7 @@
 
 SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单行事件，`begin()` 首次输出时提交 `text/event-stream`、`no-cache`、`X-Accel-Buffering: no`；事件 `seq` 由 `chatEventWriter.emit` 单调递增。
 
-### 15.3 边界
+### 14.3 边界
 
 - 单链路：没有「一键生成摘要/续写」的独立接口，所有生成都走 `/chat/send` + 技能码；前端插入章节是本地动作（`ChapterEditor.insertTextAtCursor` 后走 2 秒防抖保存）。
 - 流开始前的失败（项目、技能、会话）返回 JSON 包络且不写任何消息；但 `ChatSpecOf` 在用户消息落库之后才执行，供应商不可用时同样返回 JSON 包络，此时用户消息已留在会话里、assistant 消息缺失。
@@ -449,19 +449,19 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - 历史条数优先级：请求参数 > `chat_history_count` > `ChatConfig.HistoryCount`（默认 5）；上下文超预算时丢弃是静默的（仅服务端日志）。
 - `chat/send` 在审计跳过名单内，因此不产生 `audit_logs` 行；用量统计仍由 `ai.Client` 上报。
 
-### 15.4 权衡
+### 14.4 权衡
 
 单链路把所有生成收口到一处，上下文装配、容错、流式协议、落库与统计只有一份实现，排错路径唯一；代价是交互上多一步「生成 → 手动插入」，且无法为某类生成定制不同的流式行为。上下文用「优先级 + 整块丢弃」而不是「逐块摘要压缩」：行为确定、不会二次调用模型，但预算不足时可能丢掉整块角色信息，作者无从感知。RAG 失败降级为空上下文而不是报错，是保证「对话永远可用」的取舍，代价是回答质量静默下降。
 
-## 16. 技能资产
+## 15. 技能资产
 
-### 16.1 职责与数据
+### 15.1 职责与数据
 
 `skills` 是可编辑的提示词资产：编码（对话中以 `/code` 触发）、名称、作用域 `global`/`project`、分类 `write/revise/outline/setting/review/other`、模板 `prompt_template`、变量声明 `variable_spec_json`、启停与内置标记。`skill_references` 存参考资料（名称、正文、逗号分隔关键词、排序），在技能命中时按关键词挑选注入。
 
-内置技能 18 个，按 9 个流程域组织（每域一份档案 + 两个技能）：起草 `continue`/`conflict`、架构 `outline`/`worldrule`、打磨 `polish`/`dialogue`、去 AI 味 `deai`/`humanness`、质检 `review`/`hitscan`、连续性 `foreshadow`/`ledger`、定稿 `summary`/`finalcheck`、运营 `golden3`/`platform`、立项 `pitch`/`deconstruct`。由 `ai.BuiltinSkills()` 从 `domain_<域>.go` 汇总、`SkillService.SeedDefaults` 播种为全局作用域 `builtin_flag=true`，并按内容指纹做版本升级；完整矩阵与蒸馏来源见 [skills.md](skills.md)。
+内置技能 18 个，按 9 个流程域组织（每域一份档案 + 两个技能）：起草 `continue`/`conflict`、架构 `outline`/`worldrule`、打磨 `polish`/`dialogue`、去 AI 味 `deai`/`humanness`、质检 `review`/`hitscan`、连续性 `foreshadow`/`ledger`、定稿 `summary`/`finalcheck`、运营 `golden3`/`platform`、立项 `pitch`/`deconstruct`。由 `ai.BuiltinSkills()` 从 `domain_<域>.go` 汇总、`SkillService.SeedDefaults` 播种为全局作用域 `builtin_flag=true`，并按内容指纹做版本升级；完整矩阵见 [skills.md](skills.md)。
 
-### 16.2 实现路径
+### 15.2 实现路径
 
 - `SkillService.List`：`project_ulid` 非空时合并「项目技能 + 全局技能」，并用 `isOverriddenGlobalSkill` 给被覆盖的全局技能打标记。
 - `SkillService.Save`：作用域缺省 `global`；项目技能必须带项目并经 `mustProjectAccess` 校验项目存在（不校验创建者）；`validateSkillTemplate` 要求模板占位符都在变量声明里；同一作用域下 `skill_code` 唯一；内置技能不允许改编码与作用域。
@@ -471,7 +471,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - 参考资料：`skill_reference_service.go` 的 `matchReferences` → `selectSkillReferences`：关键词为空总是命中，否则任一关键词出现在正文中即命中；按排序累计字符，超过 `skillReferenceBudgetChars`（4000）即停止（后续资料一律不取）。
 - 前端 `views/skills/index.vue` 支持作用域切换（全局 / 当前项目）+ 分类关键词筛选 + 编辑抽屉；`SkillReferencePanel.vue` 管理参考资料。
 
-### 16.3 边界
+### 15.3 边界
 
 - 内置技能不可删除（`ERR_BIZ_FAILED`，可停用），删除自定义技能时级联清理其参考资料。
 - 只识别正文首个 token 的斜杠命令；正文中间出现的 `/xxx` 不会触发技能。
@@ -479,19 +479,19 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - 项目技能的作用域校验只看「项目存在」，不看归属：同一项目的协作者都能维护项目技能，这是刻意的团队协作放宽。
 - 变量只支持字符串；模板占位符未声明的会被 `validateSkillTemplate` 拒绝保存。
 
-### 16.4 权衡
+### 15.4 权衡
 
 把提示词做成数据而不是代码，让作者不改代码、不发版就能调技能；代价是模板与变量的一致性必须在保存期校验，运行期还要处理变量缺失与参考资料预算。作用域覆盖规则（项目覆盖全局）让「全局默认 + 项目特化」成为可能，代价是列表页必须显式标注「被覆盖」，否则作者会困惑于改了全局为什么没生效。参考资料用关键词命中而不是向量相似度，与第 14 节的检索取舍一致：可解释、零额外依赖，但同义表达命中率有限。
 
-## 16.5 提示词档案
+## 16. 提示词档案
 
-### 16.5.1 职责与数据
+### 16.1 职责与数据
 
 `prompt_profiles` 存「AI 是谁」：编码、名称、作用域 `global`/`project`、系统提示词正文、启停与内置标记。与技能的分工是：**档案定身份与底线，技能定本次动作**。同一次对话两者同时下发，档案不会被技能覆盖。
 
 内置 9 份，与技能一一配对：`novelist`（长篇连载作者，默认）、`architect`（故事架构师）、`stylist`（文字打磨师）、`deai`（去 AI 味修订）、`editor`（连载责任编辑）、`continuity`（设定守门人）、`final_editor`（定稿编辑）、`serial_editor`（连载平台主编）、`pitch_analyst`（选题策划）。由 `ai.BuiltinPromptProfiles()` 提供、`PromptProfileService.SeedDefaults` 播种并按指纹升级，见 [skills.md](skills.md)。
 
-### 16.5.2 实现路径
+### 16.2 实现路径
 
 - `SystemPromptOf(projectULID, promptProfileULID)`：显式档案（须启用且为全局或属于当前项目）→ 启用的全局默认档案（排序号最小）→ `ai.SystemPrompt("")` 内置兜底。解析失败不报错，直接降级，保证链路永远有身份约束。
 - `ai.ComposeSystemPrompt(profileText, styleText)`：档案正文 + 「本项目文风约束」段落。有档案时不再拼内置人设，避免两套身份打架。
@@ -499,13 +499,13 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - `Delete`：内置档案拒绝删除（可停用），停用后使用它的对话自动回退到默认档案。
 - 前端 `views/prompts/index.vue` 管理档案，`views/workspace/ChatComposer.vue` 提供对话期档案选择（清空即用默认）。
 
-### 16.5.3 边界
+### 16.3 边界
 
 - 档案不参与上下文预算裁剪：它走 `system` 角色，不受 `ContextBudgetChars` 约束，因此正文上限设为 8000 字符。
 - 项目档案的归属校验与技能不同：档案用 `mustOwnProject`（校验创建者），技能用 `mustProjectAccess`（只校验项目存在）。档案会直接影响模型行为，收得更紧。
 - 档案只在对话链路生效，知识库重排等内部调用仍走固定提示词。
 
-### 16.5.4 权衡
+### 16.4 权衡
 
 把系统提示词做成可编辑资产，让「换一种 AI 身份」不需要改代码；代价是多一层解析与一次数据库读取（每次发送一次 `GetByULID` 或 `GetDefaultGlobal`，单行主键查询，可忽略）。不做缓存是刻意的：档案改完要立刻生效，缓存失效逻辑比查询本身更贵。
 
