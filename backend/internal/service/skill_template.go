@@ -73,7 +73,10 @@ func resolveSkillVariables(skillCode string, variableList []domain.SkillVariable
 
 // validateSkillTemplate 校验模板中的占位符都已在变量声明中登记（内置占位符除外）。
 func validateSkillTemplate(promptTemplate string, variableList []domain.SkillVariableDO) error {
-	known := map[string]bool{"user_input": true, "chapter_content": true, "context": true, "skill_code": true}
+	known := make(map[string]bool, len(ai.BuiltinPlaceholders)+len(variableList))
+	for name := range ai.BuiltinPlaceholders {
+		known[name] = true
+	}
 	for i := range variableList {
 		if variableList[i].VariableName == "" {
 			return pkg.NewBizError(domain.RespCodeInvalidParam, "变量名不能为空")

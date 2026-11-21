@@ -1,0 +1,33 @@
+{
+  "name": "@novelworkbench/hooks",
+  "version": "1.0.0",
+  "description": "NovelWorkbench 通用组合式函数",
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    },
+    "./useForm": {
+      "import": "./src/useForm.ts",
+      "types": "./src/useForm.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc6 --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vue": "catalog:"
+  },
+  "peerDependencies": {
+    "vue": ">=3.4.0"
+  },
+  "license": "MIT"
+}

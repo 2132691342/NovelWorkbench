@@ -1,10 +1,10 @@
 # 系统架构
 
-本文描述 NovelWorkbench 的整体定位、技术选型、分层约束、请求生命周期与核心链路。
+本文说明 NovelWorkbench 的定位、技术选型、分层约束、请求生命周期、启动装配与核心链路。全文只描述当前已实现的设计与取舍。
 
 ## 1. 系统定位
 
-NovelWorkbench 是前后端分离的 AI 小说创作工作台，以「项目 → 卷 → 章节」为写作主线，把大纲、正文、角色、世界观、知识资料、AI 对话与技能资产统一在一个工作台中，同时提供完整的 SaaS 管理能力。
+NovelWorkbench 是前后端分离的 AI 小说创作工作台。以「项目 → 卷 → 章节」为写作主线，把大纲、正文、角色、世界观、知识资料、AI 对话与技能资产收拢进同一个工作台，同时提供完整的 SaaS 管理能力。
 
 | 职责 | 内容 |
 | --- | --- |
@@ -31,7 +31,7 @@ flowchart LR
   AI -->|OpenAI 兼容 / Anthropic| LLM[模型服务]
 ```
 
-部署形态：前端 nginx 容器 + 后端 Go 容器；中间件可复用宿主机既有实例，也可通过 `--profile infra` 本地拉起。后端 `CGO_ENABLED=0` 静态编译，不引入 cgo。
+部署形态：前端 nginx 容器 + 后端 Go 容器；中间件可复用宿主机既有实例，也可通过 `docker-compose.yml --profile infra` 本地拉起。后端 `CGO_ENABLED=0` 静态编译，不引入 cgo。
 
 ## 3. 技术选型
 
@@ -48,10 +48,10 @@ flowchart LR
 | 缓存 | Redis | 登出令牌黑名单 |
 | 队列 | RabbitMQ | 知识库异步索引任务 |
 | 对象存储 | MinIO | 知识库文档原文 |
-| 前端 | Vue 3 + TypeScript + Vite | SPA |
-| UI | Element Plus + UnoCSS | 组件库与品牌令牌 |
+| 前端框架 | Vue 3.5 + TypeScript + Vite | SPA，pnpm workspace 单仓 |
+| UI | Element Plus 2.14 | 组件库；品牌令牌与按钮五态覆盖其默认样式 |
 | 状态 / 路由 / HTTP | Pinia、Vue Router、Axios | 认证、项目上下文、包络解包 |
-| 可视化 / 编辑器 | ECharts、AntV X6、CodeMirror 6、WangEditor、MavonEditor | 趋势图、关系图、正文、富文本与 Markdown 笔记 |
+| 可视化 / 编辑器 | ECharts、AntV X6、CodeMirror 6、marked、docx-preview、vue-pdf-embed | 趋势图、关系图、章节正文、笔记预览、文档预览 |
 | 测试 | Go testing + Vitest | 链路级单元测试 |
 | 部署 | Docker Compose / Podman Compose + GitHub Actions | 镜像构建与发布 |
 
@@ -64,11 +64,11 @@ backend/
 ├── cmd/server        装配启动、迁移播种、路由、优雅关闭
 ├── configs/          配置模板（凭据留空，环境变量注入）
 └── internal/
-    ├── api           HTTP 处理器与路由注册
-    ├── service       业务规则、事务边界、上下文装配
-    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx）
-    ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处
-    ├── ai            模型网关、提示词装配、内置技能、用量契约
+    ├── api           HTTP 处理器与路由注册（25 个文件）
+    ├── service       业务规则、事务边界、上下文装配（36 个文件）
+    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，26 个文件）
+    ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（22 个文件）
+    ├── ai            模型网关、提示词装配、内置技能、用量契约（14 个文件）
     ├── infra         配置加载、连接构造、启动校验
     └── pkg           ULID、包络、错误、JWT、中间件、密钥封存、文本工具
 ```
@@ -146,10 +146,12 @@ backend/
 2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 33 张表（失败即退出）。
 3. 连接 Redis / RabbitMQ / MinIO / Manticore；失败只告警并降级。
 4. 构造仓储 → 服务 → 中间件 → 路由。
-5. 播种：内置技能（18 个，9 个流程域各 2 个，并按代码清单下线旧内置技能）、9 份提示词档案、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。
+5. 播种：内置技能（18 个，9 个流程域各 2 个，按内容指纹升级）、9 份提示词档案、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。
 6. 可选播种出厂模型供应商（配置了网关地址与模型名且供应商表为空时）。
 7. 启动知识库索引 worker（RabbitMQ 消费）。
 8. 监听端口；收到 SIGINT/SIGTERM 后优雅关闭 HTTP、worker、连接池。
+
+播种是幂等的：按业务编码查缺补插，已存在的内容按内容指纹升级，因此重启与升级不会产生重复数据，也不会覆盖作者改过的展示字段。
 
 ## 7. 核心链路
 
@@ -191,7 +193,7 @@ sequenceDiagram
   SVC-->>API: SSE done（含召回依据）
 ```
 
-关键机制见 `doc/ai.md`。设计取舍：单链路（所有生成走 `/chat/send` + 技能码）保证上下文、容错与审计只有一处实现。
+关键机制见 [ai.md](ai.md)。设计取舍：单链路（所有生成走 `/chat/send` + 技能码）保证上下文、容错与审计只有一处实现。
 
 ### 7.4 知识库
 
@@ -217,21 +219,28 @@ sequenceDiagram
 
 ## 8. 前端架构
 
+前端是 pnpm workspace 单仓：根应用 + 4 个内部包（`@novelworkbench/components` / `hooks` / `request` / `styles`）。
+
 ```
-frontend/src/
-├── api           Axios 封装与各业务模块 API（含 contracts.ts 契约类型）
-├── components    无业务组件：NWButton / NWCard / NWEmpty / NWIcon / NWLoading / NWPageHeader / NWStatTile / ProjectPageHeader
-├── composables   useSSE：流式解析与请求
-├── layout        AdminLayout 及其子组件（SidebarMenu / Breadcrumb / TagsView / ThemeSwitch / ContentWrap / CommandPalette / NotificationBell）
-├── router        路由表与守卫（含 meta.perm_code 校验）
-├── stores        auth / app / menu / project / notification / tagsView
-├── styles        variables / element-theme / theme-dark / button-states / page / global
-├── i18n          zh-CN / en-US 分片：common / workspace / assets / admin / extensions
-└── views         登录、仪表盘、工作台、知识库、角色、设定、笔记、创作规划、连续性、
-                  模型、技能、个人中心、通知、管理端各页
+frontend/
+├── packages/     内部包：图标与主题组件、表单 hooks、请求客户端、设计令牌与按钮五态
+├── src/
+│   ├── api         请求薄封装（http.ts）、后端契约类型（contracts.ts）与业务模块
+│   ├── request     请求实例：注入令牌、解包包络、401 会话过期
+│   ├── components  Logo / Breadcrumb / TagsView / ContextMenu / Echart / ConfigGlobal / UserInfo / Backtop
+│   ├── composables usePageQuery（分页列表状态）、useSSE（流式解析与请求）
+│   ├── layout      Layout 外壳 + 顶栏、后端驱动导航、项目切换、通知铃铛
+│   ├── router      静态路由表（页面组件在此声明，菜单只控可见性）
+│   ├── permission  唯一全局守卫：登录态、导航加载、页面权限码
+│   ├── store       user / menu / project / app / locale / tagsView / notification
+│   ├── locales     界面壳文案（zh-CN）
+│   └── views       登录、仪表盘、写作台、创作规划、连续性、角色、设定、知识库、笔记、
+│                   模型、技能、提示词、通知、个人中心、管理端各页、系统设置
 ```
 
-交互约定：按钮五态（默认/悬停/按下/禁用/加载）、异步动作必有反馈、列表具备加载与空态、危险操作二次确认、路由切换有过渡、AI 流式输出可中止。侧边栏完全由 `GET /menu/nav` 下发，改菜单即改导航。
+交互约定：按钮五态（默认/悬停/按下/禁用/加载，悬停放大、按下缩小）、异步动作必有反馈、列表具备加载与空态、危险操作二次确认、路由切换有过渡、AI 流式输出可中止。侧边栏由 `GET /menu/nav` 决定显示什么，页面组件静态声明，因此改菜单不需要前端发版。
+
+前端细节见 [frontend.md](frontend.md)。
 
 ## 9. 部署架构
 
@@ -240,6 +249,8 @@ frontend/src/
 - 本地：`docker-compose.yml` 提供应用容器与可选 `infra` profile。
 - 云主机：`deploy/podman/` 用 Podman Compose 加入既有中间件网络，`deploy.sh` 完成构建、重建与健康自检。
 - CI：push / PR 触发 vet、build、test 与前端构建；tag 触发镜像发布到 GHCR。
+
+部署细节见 [deploy.md](deploy.md)。
 
 ## 10. 设计取舍
 
@@ -253,6 +264,7 @@ frontend/src/
 | 笔记复用设定表 | 少一张表与一套 CRUD | 设定与笔记共用分类字段，笔记固定为 `note` |
 | 无数据库外键 | 迁移与批量写入不受约束校验拖累 | 引用完整性只能由 service 保证 |
 | 菜单即权限登记 | 新增权限零代码改动 | 菜单表承担两重语义，改动需谨慎 |
+| 静态路由 + 后端菜单 | 改菜单无需前端发版 | 新增页面必须同时改前端路由表 |
 
 ## 11. 质量约束
 

@@ -1,311 +1,269 @@
-<!--
-  用量分析页：区间选择 + 4 项关键指标 + 按日趋势（ECharts 双轴：调用量柱状 / token 折线）+
-  按供应商与按模型分布表。
-  数据来源：后端 model_usage_stats 按日聚合（供应商 × 模型 × 调用类型）。
--->
+<!-- 用量分析页：按天展示调用量、token 与延迟趋势。 -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import * as echarts from 'echarts'
-import { useI18n } from 'vue-i18n'
-import { getModelUsageOverview, type NWModelUsageOverviewVo } from '@/api/model'
-import NWCard from '@/components/NWCard.vue'
-import NWEmpty from '@/components/NWEmpty.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import { chartSeriesColor } from '@/utils/designToken'
+  import { computed, onMounted, ref } from 'vue'
+  import { ElButton, ElCard, ElDatePicker, ElEmpty, ElTable, ElTableColumn } from 'element-plus'
+  import type { EChartsOption } from 'echarts'
+  import { getModelUsageOverview } from '@/api/model'
+  import type { NWModelUsageGroupVo, NWModelUsageOverviewVo } from '@/api/model'
+  import Echart from '@/components/Echart/index.vue'
+  import { useAppStore } from '@/store/modules/app'
 
-const { t } = useI18n()
+  const appStore = useAppStore()
 
-/** 图表配色：运行时读取设计令牌，避免 Canvas 侧硬编码品牌色 */
-const NW_CHART_CALL_COLOR = chartSeriesColor(1)
-const NW_CHART_TOKEN_COLOR = chartSeriesColor(2)
-
-/** 区间预设天数 */
-const NW_RANGE_OPTION_LIST = [7, 14, 30] as const
-
-const rangeDays = ref<number>(14)
-const overviewLoading = ref(false)
-const overviewVo = ref<NWModelUsageOverviewVo>({
-  call_count_total: 0,
-  fail_count_total: 0,
-  total_tokens_total: 0,
-  avg_latency_ms: 0,
-  success_rate_value: 0,
-  daily_list: [],
-  provider_list: [],
-  model_list: [],
-})
-
-const trendChartElement = ref<HTMLDivElement | null>(null)
-let trendChartInstance: echarts.ECharts | null = null
-
-/** 区间起始日期（YYYY-MM-DD） */
-function rangeFromDate(days: number): string {
-  const fromDate = new Date()
-  fromDate.setDate(fromDate.getDate() - (days - 1))
-  return fromDate.toISOString().slice(0, 10)
-}
-
-const statCardList = computed(() => [
-  {
-    stat_key: 'call_count_total',
-    stat_label: t('usage.callCount'),
-    stat_value: overviewVo.value.call_count_total.toLocaleString(),
-    stat_class: 'stat-card--indigo',
-  },
-  {
-    stat_key: 'total_tokens_total',
-    stat_label: t('usage.totalTokens'),
-    stat_value: overviewVo.value.total_tokens_total.toLocaleString(),
-    stat_class: 'stat-card--violet',
-  },
-  {
-    stat_key: 'avg_latency_ms',
-    stat_label: t('usage.avgLatency'),
-    stat_value: `${overviewVo.value.avg_latency_ms} ms`,
-    stat_class: 'stat-card--blue',
-  },
-  {
-    stat_key: 'success_rate_value',
-    stat_label: t('usage.successRate'),
-    stat_value: `${(overviewVo.value.success_rate_value * 100).toFixed(1)}%`,
-    stat_class: 'stat-card--slate',
-  },
-])
-
-/** 渲染按日趋势图 */
-function renderTrendChart(): void {
-  if (!trendChartElement.value) {
-    return
-  }
-  if (!trendChartInstance) {
-    trendChartInstance = echarts.init(trendChartElement.value)
-  }
-  const dailyList = overviewVo.value.daily_list
-  trendChartInstance.setOption({
-    color: [NW_CHART_CALL_COLOR, NW_CHART_TOKEN_COLOR],
-    tooltip: { trigger: 'axis' },
-    legend: {
-      data: [t('usage.callCount'), t('usage.totalTokens')],
-      top: 0,
-    },
-    grid: { left: 56, right: 64, top: 44, bottom: 36 },
-    xAxis: {
-      type: 'category',
-      data: dailyList.map((dailyItem) => dailyItem.stat_date),
-      boundaryGap: true,
-    },
-    yAxis: [
-      { type: 'value', name: t('usage.callCount'), splitLine: { show: true } },
-      { type: 'value', name: t('usage.totalTokens'), splitLine: { show: false } },
-    ],
-    series: [
-      {
-        name: t('usage.callCount'),
-        type: 'bar',
-        data: dailyList.map((dailyItem) => dailyItem.call_count),
-        itemStyle: { color: NW_CHART_CALL_COLOR, borderRadius: [4, 4, 0, 0] },
-        barMaxWidth: 20,
-      },
-      {
-        name: t('usage.totalTokens'),
-        type: 'line',
-        yAxisIndex: 1,
-        smooth: true,
-        data: dailyList.map((dailyItem) => dailyItem.total_tokens),
-        itemStyle: { color: NW_CHART_TOKEN_COLOR },
-        lineStyle: { width: 2 },
-        symbolSize: 6,
-      },
-    ],
+  const overview = ref<NWModelUsageOverviewVo>({
+    call_count_total: 0,
+    fail_count_total: 0,
+    total_tokens_total: 0,
+    avg_latency_ms: 0,
+    success_rate_value: 0,
+    daily_list: [],
+    provider_list: [],
+    model_list: []
   })
-}
+  const loading = ref(false)
+  const dateRange = ref<string[] | null>(null)
 
-function handleWindowResize(): void {
-  trendChartInstance?.resize()
-}
+  /** 图表轴/网格线配色跟随明暗主题 */
+  const axisColor = computed(() => (appStore.isDark ? '#94a3b8' : '#94a3b8'))
+  const splitColor = computed(() => (appStore.isDark ? '#273244' : '#eef2f7'))
+  const lineColor = computed(() => (appStore.isDark ? '#344055' : '#e2e8f0'))
 
-/** 加载用量总览 */
-async function loadOverview(): Promise<void> {
-  overviewLoading.value = true
-  try {
-    const toDate = new Date().toISOString().slice(0, 10)
-    const data = await getModelUsageOverview(rangeFromDate(rangeDays.value), toDate)
-    overviewVo.value = {
-      ...data,
-      daily_list: Array.isArray(data.daily_list) ? data.daily_list : [],
-      provider_list: Array.isArray(data.provider_list) ? data.provider_list : [],
-      model_list: Array.isArray(data.model_list) ? data.model_list : [],
+  const summaryCards = computed(() => [
+    { label: '总调用次数', value: overview.value.call_count_total.toLocaleString() },
+    { label: '失败次数', value: overview.value.fail_count_total.toLocaleString(), tone: 'danger' },
+    { label: '总 Token', value: overview.value.total_tokens_total.toLocaleString() },
+    { label: '平均延迟', value: `${overview.value.avg_latency_ms} ms` },
+    {
+      label: '成功率',
+      value: `${(overview.value.success_rate_value * 100).toFixed(1)}%`,
+      tone: 'success'
     }
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    overviewLoading.value = false
+  ])
+
+  /** 每日调用量柱状 + Token 折线（双轴） */
+  const chartOption = computed<EChartsOption>(() => {
+    const dailyList = overview.value.daily_list
+    return {
+      grid: { left: 52, right: 56, top: 40, bottom: 34 },
+      tooltip: { trigger: 'axis' },
+      legend: {
+        data: ['调用次数', 'Token 数'],
+        right: 12,
+        top: 4,
+        textStyle: { color: axisColor.value, fontSize: 11 }
+      },
+      xAxis: {
+        type: 'category',
+        data: dailyList.map((item) => item.stat_date.slice(5)),
+        axisLine: { lineStyle: { color: lineColor.value } },
+        axisLabel: { color: axisColor.value, fontSize: 11 }
+      },
+      yAxis: [
+        {
+          type: 'value',
+          name: '次数',
+          nameTextStyle: { color: axisColor.value, fontSize: 11 },
+          splitLine: { lineStyle: { color: splitColor.value } },
+          axisLabel: { color: axisColor.value, fontSize: 11 }
+        },
+        {
+          type: 'value',
+          name: 'Token',
+          nameTextStyle: { color: axisColor.value, fontSize: 11 },
+          splitLine: { show: false },
+          axisLabel: { color: axisColor.value, fontSize: 11 }
+        }
+      ],
+      series: [
+        {
+          name: '调用次数',
+          type: 'bar',
+          barMaxWidth: 22,
+          itemStyle: { color: '#6366f1', borderRadius: [4, 4, 0, 0] },
+          data: dailyList.map((item) => item.call_count)
+        },
+        {
+          name: 'Token 数',
+          type: 'line',
+          yAxisIndex: 1,
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { width: 2, color: '#10b981' },
+          areaStyle: { color: 'rgba(16, 185, 129, 0.12)' },
+          data: dailyList.map((item) => item.total_tokens)
+        }
+      ]
+    }
+  })
+
+  const load = async () => {
+    loading.value = true
+    try {
+      overview.value = await getModelUsageOverview(
+        dateRange.value?.[0] || undefined,
+        dateRange.value?.[1] || undefined
+      )
+    } catch {
+      // 失败提示由请求层统一弹出，保留上次数据
+    } finally {
+      loading.value = false
+    }
   }
-  // 图表容器在 loading 结束后才挂载，必须等 DOM 更新后再初始化
-  await nextTick()
-  renderTrendChart()
-}
 
-/** 切换区间 */
-function handleRangeChange(days: number): void {
-  if (rangeDays.value === days) {
-    return
-  }
-  rangeDays.value = days
-  void loadOverview()
-}
+  const groupRows = computed<NWModelUsageGroupVo[]>(() => overview.value.model_list ?? [])
 
-/** 成功率百分比文案 */
-function successRateText(rateValue: number): string {
-  return `${(rateValue * 100).toFixed(1)}%`
-}
-
-onMounted(() => {
-  void loadOverview()
-  window.addEventListener('resize', handleWindowResize)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', handleWindowResize)
-  trendChartInstance?.dispose()
-  trendChartInstance = null
-})
+  onMounted(() => {
+    void load()
+  })
 </script>
 
 <template>
-  <div class="nw-page usage-page">
-    <header class="usage-page__header">
-      <div>
-        <h2 class="usage-page__title">{{ t('usage.title') }}</h2>
-        <p class="usage-page__subtitle">{{ t('usage.subtitle') }}</p>
-      </div>
-      <el-radio-group :model-value="rangeDays" @change="handleRangeChange(Number($event))">
-        <el-radio-button v-for="days in NW_RANGE_OPTION_LIST" :key="days" :value="days">
-          {{ t('usage.rangeDays', { days }) }}
-        </el-radio-button>
-      </el-radio-group>
-    </header>
+  <div class="nw-page">
+    <div class="nw-toolbar">
+      <ElDatePicker
+        v-model="dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        class="admin-usage__date"
+        @change="load()"
+      />
+      <ElButton type="primary" plain @click="load()">查询</ElButton>
+      <div class="admin-usage__spacer" />
+      <span class="nw-hint">按日聚合模型调用与 Token 消耗</span>
+    </div>
 
-    <NWLoading v-if="overviewLoading" />
-    <template v-else>
-      <div class="usage-page__stats">
-        <NWCard v-for="statItem in statCardList" :key="statItem.stat_key">
-          <div class="stat-card" :class="statItem.stat_class">
-            <span class="stat-card__label">{{ statItem.stat_label }}</span>
-            <span class="stat-card__value">{{ statItem.stat_value }}</span>
-          </div>
-        </NWCard>
-      </div>
+    <div class="admin-usage__summary">
+      <ElCard
+        v-for="card in summaryCards"
+        :key="card.label"
+        v-loading="loading"
+        shadow="never"
+        class="admin-usage__stat"
+      >
+        <span class="admin-usage__stat-label">{{ card.label }}</span>
+        <strong class="admin-usage__stat-value" :class="card.tone ? `is-${card.tone}` : ''">
+          {{ card.value }}
+        </strong>
+      </ElCard>
+    </div>
 
-      <NWCard :title="t('usage.trendTitle')" class="usage-page__trend-card">
-        <div ref="trendChartElement" class="usage-page__chart" />
-      </NWCard>
+    <ElCard v-loading="loading" shadow="never" class="admin-usage__chart-card">
+      <template #header>
+        <div class="admin-usage__chart-head">
+          <span class="admin-usage__chart-title">每日调用趋势</span>
+          <span class="nw-hint">柱：调用次数 / 线：Token 数</span>
+        </div>
+      </template>
+      <Echart v-if="overview.daily_list.length > 0" :option="chartOption" :height="300" />
+      <ElEmpty v-else description="所选区间暂无调用数据" :image-size="70" />
+    </ElCard>
 
-      <div class="usage-page__tables">
-        <NWCard :title="t('usage.byProvider')">
-          <NWEmpty v-if="overviewVo.provider_list.length === 0" :description_text="t('usage.emptyTip')" />
-          <el-table v-else :data="overviewVo.provider_list" size="small">
-            <el-table-column prop="group_name" :label="t('usage.groupName')" min-width="160" />
-            <el-table-column prop="call_count" :label="t('usage.callCount')" width="110" />
-            <el-table-column prop="fail_count" :label="t('usage.failCount')" width="100" />
-            <el-table-column prop="total_tokens" :label="t('usage.totalTokens')" width="130" />
-            <el-table-column :label="t('usage.avgLatency')" width="120">
-              <template #default="{ row }">{{ row.avg_latency_ms }} ms</template>
-            </el-table-column>
-            <el-table-column :label="t('usage.successRate')" width="110">
-              <template #default="{ row }">{{ successRateText(row.success_rate_value) }}</template>
-            </el-table-column>
-          </el-table>
-        </NWCard>
-
-        <NWCard :title="t('usage.byModel')">
-          <NWEmpty v-if="overviewVo.model_list.length === 0" :description_text="t('usage.emptyTip')" />
-          <el-table v-else :data="overviewVo.model_list" size="small">
-            <el-table-column prop="group_name" :label="t('usage.groupName')" min-width="160" />
-            <el-table-column prop="call_count" :label="t('usage.callCount')" width="110" />
-            <el-table-column prop="fail_count" :label="t('usage.failCount')" width="100" />
-            <el-table-column prop="total_tokens" :label="t('usage.totalTokens')" width="130" />
-            <el-table-column :label="t('usage.successRate')" width="110">
-              <template #default="{ row }">{{ successRateText(row.success_rate_value) }}</template>
-            </el-table-column>
-          </el-table>
-        </NWCard>
-      </div>
-    </template>
+    <ElCard shadow="never" class="admin-usage__table-card">
+      <template #header>
+        <span class="admin-usage__chart-title">按模型分组</span>
+      </template>
+      <ElTable v-loading="loading" :data="groupRows" class="admin-usage__table">
+        <ElTableColumn prop="group_name" label="模型" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="admin-usage__model">{{ row.group_name }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn prop="call_count" label="调用次数" width="120" align="right" />
+        <ElTableColumn prop="fail_count" label="失败次数" width="110" align="right" />
+        <ElTableColumn label="Token 数" width="140" align="right">
+          <template #default="{ row }">{{ row.total_tokens.toLocaleString() }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="平均延迟" width="120" align="right">
+          <template #default="{ row }">{{ row.avg_latency_ms }} ms</template>
+        </ElTableColumn>
+        <ElTableColumn label="成功率" width="120" align="right">
+          <template #default="{ row }">
+            <span
+              class="nw-badge"
+              :class="row.success_rate_value >= 0.95 ? 'nw-badge--success' : 'nw-badge--warning'"
+            >
+              {{ (row.success_rate_value * 100).toFixed(1) }}%
+            </span>
+          </template>
+        </ElTableColumn>
+        <template #empty>
+          <span class="nw-hint">暂无模型用量数据</span>
+        </template>
+      </ElTable>
+    </ElCard>
   </div>
 </template>
 
-<style scoped>
-.usage-page__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
+<style lang="less" scoped>
+  .admin-usage {
+    &__date {
+      width: 260px;
+    }
 
-.usage-page__title {
-  margin: 0 0 4px;
-  font-size: 20px;
-  color: var(--text-main);
-}
+    &__spacer {
+      flex: 1;
+    }
 
-.usage-page__subtitle {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
+    &__summary {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    }
 
-.usage-page__stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-  margin-bottom: 16px;
-}
+    &__stat {
+      :deep(.el-card__body) {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 14px 18px;
+      }
+    }
 
-.usage-page__trend-card {
-  margin-bottom: 16px;
-}
+    &__stat-label {
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+    }
 
-.usage-page__chart {
-  width: 100%;
-  height: 320px;
-}
+    &__stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--nw-ink);
 
-.usage-page__tables {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-  gap: 16px;
-}
+      &.is-success {
+        color: var(--nw-success);
+      }
 
-.stat-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-left: 12px;
-  border-left: 3px solid var(--primary);
-}
+      &.is-danger {
+        color: var(--nw-danger);
+      }
+    }
 
-.stat-card--slate {
-  border-left-color: var(--saas_dashboard-color-5);
-}
+    &__chart-card,
+    &__table-card {
+      border-radius: var(--nw-radius-lg);
+    }
 
-.stat-card--violet {
-  border-left-color: var(--saas_dashboard-color-2);
-}
+    &__chart-head {
+      display: flex;
+      gap: 12px;
+      align-items: baseline;
+    }
 
-.stat-card--blue {
-  border-left-color: var(--info);
-}
+    &__chart-title {
+      font-size: 14px;
+      font-weight: 650;
+    }
 
-.stat-card__label {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
+    &__table {
+      border-radius: var(--nw-radius-md);
+    }
 
-.stat-card__value {
-  color: var(--text-main);
-  font-size: 24px;
-  font-weight: 600;
-}
+    &__model {
+      font-weight: 600;
+      color: var(--nw-ink);
+    }
+  }
 </style>

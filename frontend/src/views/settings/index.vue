@@ -1,405 +1,226 @@
-<!--
-  系统设置：运行时白名单配置，按业务分组展示。
-  配置在每次请求时读取，保存后立即生效，无需重启服务。
--->
+<!-- 系统设置页：分组编辑运行配置项。 -->
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { useI18n } from 'vue-i18n'
-import { get, post } from '@/api/http'
-import type { NWSettingItemVo } from '@/api/contracts'
-import NWButton from '@/components/NWButton.vue'
-import NWIcon from '@/components/NWIcon.vue'
-import NWPageHeader from '@/components/NWPageHeader.vue'
+  import { computed, onMounted, ref } from 'vue'
+  import { ElAlert, ElButton, ElCard, ElInput, ElMessage, ElSwitch } from 'element-plus'
+  import { get, post } from '@/api/http'
+  import type { NWSettingItemVo } from '@/api/contracts'
 
-const { t } = useI18n()
+  const items = ref<NWSettingItemVo[]>([])
+  const drafts = ref<Record<string, string>>({})
+  const loading = ref(false)
+  const saving = ref(false)
 
-interface SettingMeta {
-  group_code: string
-  title_text: string
-  desc_text: string
-  min_value: number
-  max_value: number
-  unit_text: string
-}
+  /** 分组：按配置键前缀归类，避免设置项堆成一列 */
+  const groupMeta: Array<{ code: string; name: string; keys: string[] }> = [
+    { code: 'chat', name: 'AI 对话', keys: ['chat_history_count'] },
+    { code: 'knowledge', name: '知识库检索', keys: ['rag_top_k'] },
+    { code: 'writing', name: '写作目标', keys: ['daily_word_goal'] }
+  ]
 
-const settingList = ref<NWSettingItemVo[]>([])
-const draftMap = ref<Record<string, string>>({})
-const listLoading = ref(false)
-const savingKey = ref('')
-const savingAll = ref(false)
+  const isBooleanValue = (value: string) => value === 'true' || value === 'false'
 
-const settingMetaMap = computed<Record<string, SettingMeta>>(() => ({
-  chat_history_count: {
-    group_code: 'ai',
-    title_text: t('settings.chatHistoryTitle'),
-    desc_text: t('settings.chatHistoryDesc'),
-    min_value: 0,
-    max_value: 50,
-    unit_text: t('settings.unitMessages'),
-  },
-  rag_top_k: {
-    group_code: 'knowledge',
-    title_text: t('settings.ragTopKTitle'),
-    desc_text: t('settings.ragTopKDesc'),
-    min_value: 1,
-    max_value: 20,
-    unit_text: t('settings.unitChunks'),
-  },
-  daily_word_goal: {
-    group_code: 'writing',
-    title_text: t('settings.dailyGoalTitle'),
-    desc_text: t('settings.dailyGoalDesc'),
-    min_value: 100,
-    max_value: 100000,
-    unit_text: t('settings.unitWords'),
-  },
-}))
-
-const groupMetaList = computed(() => [
-  { group_code: 'writing', group_title: t('settings.groupWriting'), group_icon: 'target', group_desc: t('settings.groupWritingDesc') },
-  { group_code: 'ai', group_title: t('settings.groupAi'), group_icon: 'sparkles', group_desc: t('settings.groupAiDesc') },
-  { group_code: 'knowledge', group_title: t('settings.groupKnowledge'), group_icon: 'database', group_desc: t('settings.groupKnowledgeDesc') },
-])
-
-const groupedSettingList = computed(() =>
-  groupMetaList.value.map((groupItem) => ({
-    ...groupItem,
-    item_list: settingList.value.filter(
-      (settingItem) =>
-        (settingMetaMap.value[settingItem.setting_key]?.group_code ?? 'writing') === groupItem.group_code,
-    ),
-  })).filter((groupItem) => groupItem.item_list.length > 0),
-)
-
-const dirtyKeyList = computed(() =>
-  settingList.value
-    .filter((settingItem) => draftMap.value[settingItem.setting_key] !== settingItem.setting_value)
-    .map((settingItem) => settingItem.setting_key),
-)
-
-function metaOf(settingKey: string): SettingMeta {
-  return (
-    settingMetaMap.value[settingKey] ?? {
-      group_code: 'writing',
-      title_text: settingKey,
-      desc_text: '',
-      min_value: 0,
-      max_value: 999999,
-      unit_text: '',
-    }
-  )
-}
-
-async function loadSettingList(): Promise<void> {
-  listLoading.value = true
-  try {
-    const settingData = await get<NWSettingItemVo[]>('/setting/list')
-    settingList.value = Array.isArray(settingData) ? settingData : []
-    draftMap.value = Object.fromEntries(
-      settingList.value.map((settingItem) => [settingItem.setting_key, settingItem.setting_value]),
-    )
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    listLoading.value = false
-  }
-}
-
-async function saveSetting(settingKey: string): Promise<void> {
-  const settingValue = draftMap.value[settingKey]
-  if (settingValue === undefined) return
-  savingKey.value = settingKey
-  try {
-    await post<null>('/setting/update', {
-      setting_key: settingKey,
-      setting_value: String(settingValue),
-    })
-    const targetItem = settingList.value.find((settingItem) => settingItem.setting_key === settingKey)
-    if (targetItem) targetItem.setting_value = String(settingValue)
-    ElMessage.success(t('settings.saveSuccess'))
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    savingKey.value = ''
-  }
-}
-
-async function saveAllSettings(): Promise<void> {
-  if (dirtyKeyList.value.length === 0) return
-  savingAll.value = true
-  const failedKeyList: string[] = []
-  for (const settingKey of dirtyKeyList.value) {
-    try {
-      await post<null>('/setting/update', {
-        setting_key: settingKey,
-        setting_value: String(draftMap.value[settingKey]),
+  /** 分组后的设置项（未登记分组的键归入「其他」） */
+  const groups = computed(() => {
+    const usedKeys = new Set<string>()
+    const grouped = groupMeta
+      .map((meta) => {
+        const list = items.value.filter((item) => meta.keys.includes(item.setting_key))
+        list.forEach((item) => usedKeys.add(item.setting_key))
+        return { ...meta, list }
       })
-      const targetItem = settingList.value.find((settingItem) => settingItem.setting_key === settingKey)
-      if (targetItem) targetItem.setting_value = String(draftMap.value[settingKey])
+      .filter((group) => group.list.length > 0)
+    const others = items.value.filter((item) => !usedKeys.has(item.setting_key))
+    if (others.length > 0) {
+      grouped.push({ code: 'other', name: '其他配置', keys: [], list: others })
+    }
+    return grouped
+  })
+
+  const dirtyCount = computed(
+    () => items.value.filter((item) => drafts.value[item.setting_key] !== item.setting_value).length
+  )
+
+  const load = async () => {
+    loading.value = true
+    try {
+      items.value = await get<NWSettingItemVo[]>('/setting/list')
+      drafts.value = Object.fromEntries(items.value.map((item) => [item.setting_key, item.setting_value]))
     } catch {
-      failedKeyList.push(settingKey)
+      items.value = []
+      drafts.value = {}
+    } finally {
+      loading.value = false
     }
   }
-  savingAll.value = false
-  if (failedKeyList.length === 0) {
-    ElMessage.success(t('settings.saveAllSuccess'))
-  } else {
-    ElMessage.error(t('settings.saveAllPartial', { count: failedKeyList.length }))
+
+  /** 保存全部：逐项提交后端单键更新接口，任一失败即中断并保留未提交草稿 */
+  const saveAll = async () => {
+    const changed = items.value.filter(
+      (item) => drafts.value[item.setting_key] !== item.setting_value
+    )
+    if (changed.length === 0) {
+      ElMessage.info('没有需要保存的修改')
+      return
+    }
+    saving.value = true
+    try {
+      for (const item of changed) {
+        await post<NWSettingItemVo>('/setting/update', {
+          setting_key: item.setting_key,
+          setting_value: drafts.value[item.setting_key] ?? ''
+        })
+      }
+      ElMessage.success(`已保存 ${changed.length} 项配置`)
+      await load()
+    } finally {
+      saving.value = false
+    }
   }
-}
 
-function resetDraft(): void {
-  draftMap.value = Object.fromEntries(
-    settingList.value.map((settingItem) => [settingItem.setting_key, settingItem.setting_value]),
-  )
-}
+  const resetDrafts = () => {
+    drafts.value = Object.fromEntries(items.value.map((item) => [item.setting_key, item.setting_value]))
+  }
 
-onMounted(() => {
-  void loadSettingList()
-})
+  const handleSwitchChange = (settingKey: string, checked: boolean) => {
+    drafts.value[settingKey] = checked ? 'true' : 'false'
+  }
+
+  onMounted(() => {
+    void load()
+  })
 </script>
 
 <template>
-  <div class="nw-page settings-page">
-    <NWPageHeader
-      :title_text="t('settings.title')"
-      :subtitle_text="t('settings.pageSubtitle')"
-      icon_code="sliders"
-    >
-      <template #actions>
-        <NWButton :disabled="dirtyKeyList.length === 0" @click="resetDraft">
-          {{ t('settings.resetDraft') }}
-        </NWButton>
-        <NWButton
-          type="primary"
-          :loading="savingAll"
-          :disabled="dirtyKeyList.length === 0"
-          @click="saveAllSettings"
-        >
-          <NWIcon icon_code="save" :size_px="15" />
-          {{ t('settings.saveAll', { count: dirtyKeyList.length }) }}
-        </NWButton>
-      </template>
-    </NWPageHeader>
-
-    <div v-if="listLoading" class="settings-page__skeleton">
-      <div v-for="index in 3" :key="index" class="settings-page__skeleton-card" />
+  <div class="nw-page">
+    <div class="nw-toolbar">
+      <ElButton type="primary" :loading="saving" @click="saveAll()">
+        <Icon icon="mdi:check" :size="15" />
+        <span class="settings__btn-text">保存全部</span>
+      </ElButton>
+      <ElButton :disabled="dirtyCount === 0" @click="resetDrafts()">撤销修改</ElButton>
+      <div class="settings__spacer" />
+      <span class="nw-hint">
+        {{ dirtyCount > 0 ? `${dirtyCount} 项待保存` : '配置已同步' }}
+      </span>
     </div>
 
-    <template v-else>
-      <section v-for="groupItem in groupedSettingList" :key="groupItem.group_code" class="nw-panel">
-        <header class="nw-panel__header">
-          <div class="settings-page__group-head">
-            <span class="settings-page__group-icon">
-              <NWIcon :icon_code="groupItem.group_icon" :size_px="17" />
-            </span>
-            <div>
-              <h3 class="nw-panel__title">{{ groupItem.group_title }}</h3>
-              <p class="nw-panel__subtitle">{{ groupItem.group_desc }}</p>
-            </div>
-          </div>
-          <span class="nw-badge nw-badge--success">
-            <span class="nw-badge__dot" />
-            {{ t('settings.effectiveNow') }}
-          </span>
-        </header>
-        <div class="nw-panel__body settings-page__group-body">
-          <article
-            v-for="settingItem in groupItem.item_list"
-            :key="settingItem.setting_key"
-            class="settings-page__row"
-            :class="{ 'is-dirty': draftMap[settingItem.setting_key] !== settingItem.setting_value }"
-          >
-            <div class="settings-page__row-text">
-              <h4 class="settings-page__row-title">{{ metaOf(settingItem.setting_key).title_text }}</h4>
-              <p class="settings-page__row-desc">{{ metaOf(settingItem.setting_key).desc_text }}</p>
-              <span class="settings-page__row-key">{{ settingItem.setting_key }}</span>
-            </div>
-            <div class="settings-page__row-control">
-              <el-input-number
-                :model-value="Number(draftMap[settingItem.setting_key] ?? 0)"
-                :min="metaOf(settingItem.setting_key).min_value"
-                :max="metaOf(settingItem.setting_key).max_value"
-                :step="1"
-                controls-position="right"
-                class="settings-page__input-number"
-                @update:model-value="(nextValue: number | undefined) => (draftMap[settingItem.setting_key] = String(nextValue ?? 0))"
-              />
-              <span class="settings-page__unit">{{ metaOf(settingItem.setting_key).unit_text }}</span>
-              <NWButton
-                size="small"
-                type="primary"
-                :loading="savingKey === settingItem.setting_key"
-                :disabled="draftMap[settingItem.setting_key] === settingItem.setting_value"
-                @click="saveSetting(settingItem.setting_key)"
-              >
-                {{ t('common.save') }}
-              </NWButton>
-            </div>
-          </article>
-        </div>
-      </section>
+    <ElAlert
+      type="info"
+      :closable="false"
+      show-icon
+      title="运行时可调参数"
+      description="这里的改动立即生效，无需重启服务；数值型配置请保持在说明标注的范围内。"
+    />
 
-      <section class="nw-panel settings-page__about">
-        <div class="nw-panel__body">
-          <div class="settings-page__about-icon"><NWIcon icon_code="info" :size_px="18" /></div>
-          <div>
-            <h4 class="settings-page__about-title">{{ t('settings.aboutTitle') }}</h4>
-            <p class="settings-page__about-desc">{{ t('settings.aboutDesc') }}</p>
+    <div v-loading="loading" class="settings__groups">
+      <ElCard v-for="group in groups" :key="group.code" shadow="never" class="setting-group">
+        <template #header>
+          <div class="setting-group__head">
+            <span class="setting-group__name">{{ group.name }}</span>
+            <span class="nw-badge nw-badge--neutral">{{ group.list.length }}</span>
           </div>
+        </template>
+
+        <div v-for="item in group.list" :key="item.setting_key" class="setting-row">
+          <div class="setting-row__label">
+            <span class="setting-row__desc">{{ item.setting_desc || item.setting_key }}</span>
+            <code class="setting-row__key">{{ item.setting_key }}</code>
+          </div>
+          <ElSwitch
+            v-if="isBooleanValue(item.setting_value)"
+            :model-value="drafts[item.setting_key] === 'true'"
+            @update:model-value="handleSwitchChange(item.setting_key, Boolean($event))"
+          />
+          <ElInput
+            v-else
+            v-model="drafts[item.setting_key]"
+            class="setting-row__input"
+            placeholder="请输入配置值"
+          >
+            <template #append>数值</template>
+          </ElInput>
         </div>
-      </section>
-    </template>
+      </ElCard>
+
+      <ElAlert
+        v-if="!loading && groups.length === 0"
+        type="info"
+        :closable="false"
+        title="暂无可用配置项"
+        description="后端尚未播种运行时配置。"
+      />
+    </div>
   </div>
 </template>
 
-<style scoped>
-.settings-page {
-  max-width: 1040px;
-}
+<style lang="less" scoped>
+  .settings {
+    &__btn-text {
+      margin-left: 4px;
+    }
 
-.settings-page__group-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 11px;
-}
+    &__spacer {
+      flex: 1;
+    }
 
-.settings-page__group-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  border-radius: var(--radius-md);
-  background: var(--primary-soft);
-  color: var(--primary);
-}
-
-.settings-page__group-body {
-  padding: 6px 20px;
-}
-
-.settings-page__row {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 15px 0;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.settings-page__row:last-child {
-  border-bottom: none;
-}
-
-.settings-page__row.is-dirty .settings-page__row-title {
-  color: var(--primary);
-}
-
-.settings-page__row-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.settings-page__row-title {
-  margin: 0;
-  color: var(--text-main);
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-.settings-page__row-desc {
-  margin: 3px 0 4px;
-  color: var(--text-placeholder);
-  font-size: 11.5px;
-  line-height: 1.6;
-}
-
-.settings-page__row-key {
-  color: var(--text-placeholder);
-  font-family: 'JetBrains Mono', Consolas, monospace;
-  font-size: 10px;
-  opacity: 0.7;
-}
-
-.settings-page__row-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.settings-page__input-number {
-  width: 132px;
-}
-
-.settings-page__unit {
-  min-width: 44px;
-  color: var(--text-placeholder);
-  font-size: 11.5px;
-}
-
-.settings-page__about .nw-panel__body {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.settings-page__about-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  border-radius: var(--radius-md);
-  background: var(--info-bg);
-  color: var(--info-text);
-}
-
-.settings-page__about-title {
-  margin: 0 0 3px;
-  color: var(--text-main);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.settings-page__about-desc {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.settings-page__skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.settings-page__skeleton-card {
-  height: 160px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-shine) 37%, var(--skeleton-base) 63%);
-  background-size: 400% 100%;
-  animation: settings-shimmer 1.3s ease infinite;
-}
-
-@keyframes settings-shimmer {
-  0% { background-position: 100% 50%; }
-  100% { background-position: 0 50%; }
-}
-
-@media (max-width: 760px) {
-  .settings-page__row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
+    &__groups {
+      display: grid;
+      gap: 14px;
+      align-items: start;
+      min-height: 120px;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    }
   }
 
-  .settings-page__row-control {
-    width: 100%;
+  .setting-group {
+    border-radius: var(--nw-radius-lg);
+
+    &__head {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    &__name {
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--nw-ink);
+    }
   }
-}
+
+  .setting-row {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--nw-border-soft);
+
+    &:last-child {
+      border-bottom: 0;
+    }
+
+    &__label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    &__desc {
+      font-size: 13px;
+      color: var(--nw-ink);
+    }
+
+    &__key {
+      font-family: var(--el-font-family-mono, monospace);
+      font-size: 11.5px;
+      color: var(--nw-text-muted);
+    }
+
+    &__input {
+      width: 170px;
+      flex: none;
+    }
+  }
 </style>

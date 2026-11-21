@@ -1,248 +1,426 @@
-<!--
-  角色管理页：角色卡片网格（筛选 + 新建/编辑抽屉 + 删除确认）
-  与关系图页签（AntV X6 关系图，见 CharacterGraphTab）。
--->
+<!-- 角色管理页：角色卡片列表与关系图谱两个页签。 -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { useI18n } from 'vue-i18n'
-import { deleteCharacter, listCharacters, type NWCharacterVo } from '@/api/character'
-import NWButton from '@/components/NWButton.vue'
-import NWCard from '@/components/NWCard.vue'
-import NWIcon from '@/components/NWIcon.vue'
-import NWPageHeader from '@/components/NWPageHeader.vue'
-import NWEmpty from '@/components/NWEmpty.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
-import CharacterEditDrawer from './CharacterEditDrawer.vue'
-import CharacterGraphTab from './CharacterGraphTab.vue'
+  import { computed, onMounted, ref, watch } from 'vue'
+  import {
+    ElButton,
+    ElCard,
+    ElEmpty,
+    ElInput,
+    ElMessage,
+    ElMessageBox,
+    ElOption,
+    ElSelect,
+    ElTable,
+    ElTableColumn,
+    ElTabPane,
+    ElTabs,
+    ElTooltip
+  } from 'element-plus'
+  import {
+    deleteCharacter,
+    getCharacterGraph,
+    listCharacters,
+    type NWCharacterGraphVo,
+    type NWCharacterVo
+  } from '@/api/character'
+  import { useProjectStore } from '@/store/modules/project'
+  import CharacterFormDrawer from './components/CharacterFormDrawer.vue'
+  import CharacterGraphPanel from './components/CharacterGraphPanel.vue'
+  import RelationFormDialog from './components/RelationFormDialog.vue'
+  import { asRow } from '@/utils/table'
 
-const route = useRoute()
-const { t } = useI18n()
+  const projectStore = useProjectStore()
+  const projectUlid = computed(() => projectStore.currentProjectUlid)
 
-const projectUlid = computed(() => String(route.params.project_ulid ?? ''))
+  /** 角色类型选项（与后端枚举一致） */
+  const roleTypeOptions = [
+    { value: '', label: '全部类型' },
+    { value: 'protagonist', label: '主角' },
+    { value: 'antagonist', label: '反派' },
+    { value: 'supporting', label: '配角' },
+    { value: 'minor', label: '龙套' }
+  ]
 
-/** 角色类型选项（筛选下拉） */
-const roleTypeOptions = ['protagonist', 'antagonist', 'supporting', 'minor']
-
-const activeTab = ref('list')
-const characterList = ref<NWCharacterVo[]>([])
-const listLoading = ref(false)
-const roleTypeFilter = ref('')
-const keywordText = ref('')
-const editDrawerVisible = ref(false)
-const editingCharacter = ref<NWCharacterVo | null>(null)
-const graphTabRef = ref<InstanceType<typeof CharacterGraphTab> | null>(null)
-
-/** 角色类型展示文案 */
-function roleTypeText(roleTypeCode: string): string {
-  switch (roleTypeCode) {
-    case 'protagonist':
-      return t('character.roleProtagonist')
-    case 'antagonist':
-      return t('character.roleAntagonist')
-    case 'supporting':
-      return t('character.roleSupporting')
-    case 'minor':
-      return t('character.roleMinor')
-    default:
-      return roleTypeCode
+  /** 关系类型展示文案（图谱边标签复用） */
+  const relationTypeLabelMap: Record<string, string> = {
+    friend: '朋友',
+    enemy: '敌对',
+    lover: '恋人',
+    kin: '亲属',
+    teacher: '师徒',
+    rival: '对手',
+    subordinate: '上下级'
   }
-}
 
-/** 加载角色列表（类型/关键词过滤） */
-async function loadCharacters(): Promise<void> {
-  if (!projectUlid.value) {
-    return
+  const activeTab = ref<string | number>('list')
+  const roleTypeCode = ref('')
+  const keywordText = ref('')
+  const characterList = ref<NWCharacterVo[]>([])
+  const listLoading = ref(false)
+
+  const graphData = ref<NWCharacterGraphVo | null>(null)
+  const graphLoading = ref(false)
+
+  const formDrawer = ref<InstanceType<typeof CharacterFormDrawer> | null>(null)
+  const relationDialog = ref<InstanceType<typeof RelationFormDialog> | null>(null)
+
+  const roleTypeLabel = (code: string) =>
+    roleTypeOptions.find((item) => item.value === code)?.label ?? (code || '未分类')
+
+  /** 角色类型徽标配色 */
+  const roleTypeBadge = (code: string) => {
+    if (code === 'protagonist') return 'success'
+    if (code === 'antagonist') return 'danger'
+    if (code === 'supporting') return 'warning'
+    return 'neutral'
   }
-  listLoading.value = true
-  try {
-    const listData = await listCharacters({
-      project_ulid: projectUlid.value,
-      role_type_code: roleTypeFilter.value || undefined,
-      keyword_text: keywordText.value || undefined,
-    })
-    characterList.value = Array.isArray(listData) ? listData : []
-  } catch {
-    // 失败提示由 http 层统一弹出
-    characterList.value = []
-  } finally {
-    listLoading.value = false
+
+  /** 角色描述摘要：优先性格，其次背景 */
+  const describeCharacter = (row: NWCharacterVo) =>
+    row.personality_text || row.background_text || row.goal_text || '暂无描述'
+
+  const graphNodeList = computed(() => graphData.value?.node_list ?? [])
+
+  const loadCharacters = async () => {
+    if (!projectUlid.value) {
+      characterList.value = []
+      return
+    }
+    listLoading.value = true
+    try {
+      characterList.value = await listCharacters({
+        project_ulid: projectUlid.value,
+        role_type_code: roleTypeCode.value || undefined,
+        keyword_text: keywordText.value.trim() || undefined
+      })
+    } catch {
+      characterList.value = []
+    } finally {
+      listLoading.value = false
+    }
   }
-}
 
-/** 新建角色 */
-function handleCreate(): void {
-  editingCharacter.value = null
-  editDrawerVisible.value = true
-}
-
-/** 编辑角色 */
-function handleEdit(characterVo: NWCharacterVo): void {
-  editingCharacter.value = characterVo
-  editDrawerVisible.value = true
-}
-
-/** 删除角色（二次确认，连带删关系边） */
-async function handleDelete(characterVo: NWCharacterVo): Promise<void> {
-  try {
-    await ElMessageBox.confirm(t('character.deleteConfirm'), t('common.confirm'), {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning',
-    })
-  } catch {
-    return
+  const loadGraph = async () => {
+    if (!projectUlid.value) {
+      graphData.value = null
+      return
+    }
+    graphLoading.value = true
+    try {
+      graphData.value = await getCharacterGraph(projectUlid.value)
+    } catch {
+      graphData.value = null
+    } finally {
+      graphLoading.value = false
+    }
   }
-  try {
-    await deleteCharacter(characterVo.character_ulid)
-    ElMessage.success(t('character.deleteSuccess'))
-    await loadCharacters()
-    graphTabRef.value?.reload()
-  } catch {
-    // 失败提示由 http 层统一弹出
+
+  const refreshAll = () => Promise.all([loadCharacters(), loadGraph()])
+
+  const resetFilter = () => {
+    roleTypeCode.value = ''
+    keywordText.value = ''
+    void loadCharacters()
   }
-}
 
-/** 保存成功：刷新列表与关系图 */
-function handleSaved(): void {
-  void loadCharacters()
-  graphTabRef.value?.reload()
-}
-
-watch(activeTab, (tabName) => {
-  if (tabName === 'graph') {
-    graphTabRef.value?.reload()
+  const removeCharacter = async (row: NWCharacterVo) => {
+    try {
+      await ElMessageBox.confirm(
+        `删除「${row.character_name}」会同时删除其全部关系连线，确定继续？`,
+        '删除角色',
+        { type: 'warning' }
+      )
+    } catch {
+      return
+    }
+    await deleteCharacter(row.character_ulid)
+    ElMessage.success('角色已删除')
+    await refreshAll()
   }
-})
 
-watch(projectUlid, () => {
-  keywordText.value = ''
-  roleTypeFilter.value = ''
-  void loadCharacters()
-})
+  const openRelationDialog = () => {
+    if (graphNodeList.value.length < 2) {
+      ElMessage.warning('至少需要两个角色才能创建关系')
+      return
+    }
+    relationDialog.value?.open()
+  }
 
-onMounted(() => {
-  void loadCharacters()
-})
+  watch(
+    projectUlid,
+    async (nextUlid) => {
+      if (!nextUlid) {
+        characterList.value = []
+        graphData.value = null
+        return
+      }
+      await refreshAll()
+    },
+    { immediate: true }
+  )
+
+  watch(activeTab, (nextTab) => {
+    if (nextTab === 'graph') void loadGraph()
+  })
+
+  onMounted(async () => {
+    if (!projectStore.projectOptions.length) {
+      await projectStore.loadProjectOptions()
+    }
+  })
 </script>
 
 <template>
-  <div class="nw-page character-page">
-    <ProjectPageHeader :project-ulid="projectUlid" />
+  <div class="nw-page">
+    <ElCard shadow="never" class="character__card">
+      <ElTabs v-model="activeTab" class="character__tabs">
+        <ElTabPane name="list">
+          <template #label>
+            <span class="character__tab-label">
+              <Icon icon="mdi:account-group" :size="14" />
+              <span>角色列表</span>
+            </span>
+          </template>
 
-    <NWPageHeader
-      :title_text="t('character.title')"
-      :subtitle_text="t('character.pageSubtitle')"
-      icon_code="users"
-    >
-      <template #actions>
-        <NWButton type="primary" @click="handleCreate">
-          <NWIcon icon_code="plus" :size_px="15" />
-          {{ t('character.create') }}
-        </NWButton>
-      </template>
-    </NWPageHeader>
-
-    <NWCard :hoverable="false">
-      <el-tabs v-model="activeTab">
-        <!-- 角色列表页签 -->
-        <el-tab-pane :label="t('character.listTab')" name="list">
-          <div class="character-page__filters">
-            <el-select
-              v-model="roleTypeFilter"
-              clearable
-              class="character-page__role-select"
-              :placeholder="t('character.roleTypePlaceholder')"
-              @change="loadCharacters"
-            >
-              <el-option
-                v-for="roleType in roleTypeOptions"
-                :key="roleType"
-                :label="roleTypeText(roleType)"
-                :value="roleType"
-              />
-            </el-select>
-            <el-input
+          <div class="nw-toolbar character__toolbar">
+            <ElInput
               v-model="keywordText"
-              class="character-page__keyword"
+              placeholder="搜索姓名或别名"
               clearable
-              :placeholder="t('character.keywordPlaceholder')"
+              class="character__search"
               @keyup.enter="loadCharacters"
               @clear="loadCharacters"
             />
-            <NWButton size="small" @click="loadCharacters">
-              <NWIcon icon_code="search" :size_px="14" />
-              {{ t('character.search') }}
-            </NWButton>
-            <span class="nw-toolbar__spacer" />
-            <span class="character-page__count">{{ t('character.countLabel', { count: characterList.length }) }}</span>
-          </div>
-
-          <NWLoading v-if="listLoading && characterList.length === 0" />
-          <NWEmpty
-            v-else-if="characterList.length === 0"
-            icon_code="users"
-            :title_text="t('character.emptyTitle')"
-            :description_text="t('character.emptyTip')"
-          >
-            <template #actions>
-              <NWButton size="small" type="primary" @click="handleCreate">{{ t('character.create') }}</NWButton>
-            </template>
-          </NWEmpty>
-          <div v-else class="character-page__grid">
-            <article
-              v-for="characterVo in characterList"
-              :key="characterVo.character_ulid"
-              class="character-card"
+            <ElSelect
+              v-model="roleTypeCode"
+              class="character__role-filter"
+              @change="loadCharacters"
             >
-              <div class="character-card__top">
-                <span class="character-card__avatar" :class="`is-${characterVo.role_type_code || 'minor'}`">
-                  {{ (characterVo.character_name || '#').charAt(0) }}
-                </span>
-                <div class="character-card__head">
-                  <h4 class="character-card__name" :title="characterVo.character_name">
-                    {{ characterVo.character_name }}
-                  </h4>
-                  <span v-if="characterVo.alias_text" class="character-card__alias" :title="characterVo.alias_text">
-                    {{ characterVo.alias_text }}
-                  </span>
-                </div>
-                <span
-                  class="character-card__role"
-                  :class="`is-${characterVo.role_type_code || 'minor'}`"
-                >
-                  {{ roleTypeText(characterVo.role_type_code) }}
-                </span>
-              </div>
-              <p class="character-card__personality">
-                {{ characterVo.personality_text || t('character.noPersonality') }}
-              </p>
-              <div class="character-card__actions">
-                <NWButton size="small" @click="handleEdit(characterVo)">{{ t('common.edit') }}</NWButton>
-                <NWButton size="small" type="danger-text" @click="handleDelete(characterVo)">
-                  {{ t('common.delete') }}
-                </NWButton>
-              </div>
-            </article>
+              <ElOption
+                v-for="item in roleTypeOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </ElSelect>
+            <ElButton size="small" plain :loading="listLoading" @click="loadCharacters">
+              <Icon icon="mdi:reload" :size="14" />
+              <span class="ml-4px">刷新</span>
+            </ElButton>
+            <ElButton size="small" text @click="resetFilter">重置</ElButton>
+            <div class="character__spacer" />
+            <span class="nw-hint">共 {{ characterList.length }} 个角色</span>
+            <ElButton
+              type="primary"
+              plain
+              size="small"
+              :disabled="!projectUlid"
+              @click="formDrawer?.open()"
+            >
+              <Icon icon="mdi:plus" :size="14" />
+              <span class="ml-4px">新建角色</span>
+            </ElButton>
           </div>
-        </el-tab-pane>
 
-        <!-- 关系图页签 -->
-        <el-tab-pane :label="t('character.graphTab')" name="graph">
-          <CharacterGraphTab ref="graphTabRef" :project-ulid="projectUlid" />
-        </el-tab-pane>
-      </el-tabs>
-    </NWCard>
+          <ElTable
+            v-loading="listLoading"
+            :data="characterList"
+            size="small"
+            row-key="character_ulid"
+            class="character__table"
+          >
+            <ElTableColumn label="姓名" min-width="140">
+              <template #default="{ row }">
+                <div class="character__name-cell">
+                  <strong class="character__name">{{ row.character_name }}</strong>
+                  <span v-if="row.alias_text" class="character__alias">{{ row.alias_text }}</span>
+                </div>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn label="类型" width="92">
+              <template #default="{ row }">
+                <span
+                  class="nw-badge"
+                  :class="`nw-badge--${roleTypeBadge(row.role_type_code)}`"
+                >
+                  {{ roleTypeLabel(row.role_type_code) }}
+                </span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn label="描述" min-width="260">
+              <template #default="{ row }">
+                <ElTooltip
+                  :content="describeCharacter(asRow<NWCharacterVo>(row))"
+                  placement="top"
+                  :show-after="300"
+                  popper-class="character__tip"
+                >
+                  <span class="character__desc">{{ describeCharacter(asRow<NWCharacterVo>(row)) }}</span>
+                </ElTooltip>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn label="目标动机" min-width="160">
+              <template #default="{ row }">
+                <span class="character__goal">{{ row.goal_text || '—' }}</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn label="操作" width="140" fixed="right">
+              <template #default="{ row }">
+                <ElButton size="small" text type="primary" @click="formDrawer?.open(asRow<NWCharacterVo>(row))">
+                  编辑
+                </ElButton>
+                <ElButton size="small" text type="danger" @click="removeCharacter(asRow<NWCharacterVo>(row))">
+                  删除
+                </ElButton>
+              </template>
+            </ElTableColumn>
+            <template #empty>
+              <ElEmpty
+                :description="projectUlid ? '还没有角色，先创建主角与反派' : '请先在顶栏选择项目'"
+                :image-size="80"
+              />
+            </template>
+          </ElTable>
+        </ElTabPane>
 
-    <CharacterEditDrawer
-      v-model:visible="editDrawerVisible"
+        <ElTabPane name="graph">
+          <template #label>
+            <span class="character__tab-label">
+              <Icon icon="mdi:file-tree" :size="14" />
+              <span>关系图谱</span>
+            </span>
+          </template>
+
+          <div class="nw-toolbar character__toolbar">
+            <span class="nw-hint">
+              节点按角色类型着色，拖拽调整位置，双击连线删除关系。
+            </span>
+            <div class="character__spacer" />
+            <ElButton size="small" plain :loading="graphLoading" @click="loadGraph">
+              <Icon icon="mdi:reload" :size="14" />
+              <span class="ml-4px">刷新</span>
+            </ElButton>
+            <ElButton
+              type="primary"
+              plain
+              size="small"
+              :disabled="!projectUlid"
+              @click="openRelationDialog"
+            >
+              <Icon icon="mdi:plus" :size="14" />
+              <span class="ml-4px">新建关系</span>
+            </ElButton>
+          </div>
+
+          <div v-loading="graphLoading" class="character__graph">
+            <CharacterGraphPanel
+              v-if="graphData"
+              :graph-data="graphData"
+              :relation-type-label-map="relationTypeLabelMap"
+              @changed="refreshAll"
+            />
+            <ElEmpty
+              v-else-if="!graphLoading"
+              description="还没有角色关系数据，先创建角色与关系"
+              :image-size="90"
+            />
+          </div>
+        </ElTabPane>
+      </ElTabs>
+    </ElCard>
+
+    <CharacterFormDrawer
+      ref="formDrawer"
       :project-ulid="projectUlid"
-      :character="editingCharacter"
-      @saved="handleSaved"
+      @saved="refreshAll"
+    />
+    <RelationFormDialog
+      ref="relationDialog"
+      :project-ulid="projectUlid"
+      :node-list="graphNodeList"
+      @saved="refreshAll"
     />
   </div>
 </template>
 
-<style scoped src="./character.css"></style>
+<style lang="less" scoped>
+  .character {
+    &__card {
+      :deep(.el-card__body) {
+        padding: 4px 16px 16px;
+      }
+    }
+
+    &__tabs {
+      :deep(.el-tabs__header) {
+        margin-bottom: 14px;
+      }
+    }
+
+    &__tab-label {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    &__toolbar {
+      margin-bottom: 12px;
+    }
+
+    &__search {
+      width: 220px;
+    }
+
+    &__role-filter {
+      width: 130px;
+    }
+
+    &__spacer {
+      flex: 1;
+    }
+
+    &__table {
+      width: 100%;
+    }
+
+    &__name-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    &__name {
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--nw-ink);
+    }
+
+    &__alias {
+      font-size: 11.5px;
+      color: var(--nw-text-muted);
+    }
+
+    &__desc,
+    &__goal {
+      display: block;
+      overflow: hidden;
+      font-size: 12.5px;
+      color: var(--el-text-color-regular);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &__goal {
+      color: var(--nw-text-secondary);
+    }
+
+    &__graph {
+      min-height: 320px;
+    }
+  }
+
+  :deep(.character__tip) {
+    max-width: 360px;
+    line-height: 1.6;
+  }
+</style>

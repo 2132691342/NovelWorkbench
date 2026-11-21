@@ -56,6 +56,12 @@ func AssembleContext(blocks []ContextBlock, budgetChars int) (string, []string) 
 // placeholderPattern 匹配 {{占位符}} 模板变量（包级预编译，避免热路径重复编译）。
 var placeholderPattern = regexp.MustCompile(`\{\{\s*(\w+)\s*\}\}`)
 
+// BuiltinPlaceholders 内置占位符白名单：这些变量由系统在装配上下文时自动注入，
+// 技能模板可直接使用而无需在变量声明中登记。
+var BuiltinPlaceholders = map[string]bool{
+	"user_input": true, "chapter_content": true, "context": true, "skill_code": true,
+}
+
 // RenderPrompt 渲染 {{占位符}} 模板：命中 valueMap 替换为值，缺失占位符替换为空串。
 func RenderPrompt(template string, valueMap map[string]string) string {
 	return placeholderPattern.ReplaceAllStringFunc(template, func(match string) string {

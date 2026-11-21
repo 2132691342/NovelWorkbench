@@ -1,0 +1,25 @@
+{
+  "name": "@novelworkbench/styles",
+  "version": "0.1.0",
+  "description": "NovelWorkbench 公用样式：品牌令牌 + 按钮五态 + 页面骨架",
+  "type": "module",
+  "main": "./src/index.less",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.less"
+    },
+    "./var.css": "./src/var.css"
+  },
+  "files": [
+    "src"
+  ],
+  "peerDependencies": {
+    "element-plus": ">=2.8.0"
+  },
+  "devDependencies": {
+    "element-plus": "catalog:"
+  },
+  "license": "MIT"
+}

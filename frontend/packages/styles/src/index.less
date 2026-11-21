@@ -1,0 +1,124 @@
+@import './var.css';
+@import './button.css';
+@import 'element-plus/theme-chalk/dark/css-vars.css';
+
+*,
+::after,
+::before {
+  padding: 0;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+// 解决抽屉弹出时 body 宽度变化的问题
+.el-popup-parent--hidden {
+  width: 100% !important;
+}
+
+// 页面通用骨架：业务页统一用这些 class，避免每页各写一套间距
+.nw-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  animation: nw-page-enter 0.24s ease;
+}
+
+@keyframes nw-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.nw-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.nw-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.nw-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+.nw-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--nw-primary-soft);
+  color: var(--el-color-primary);
+}
+
+.nw-badge--success {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.nw-badge--warning {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.nw-badge--danger {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.nw-badge--neutral {
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-secondary);
+}
+
+html:root.dark .nw-badge--success {
+  background: #10352a;
+  color: #6ee7b7;
+}
+
+html:root.dark .nw-badge--warning {
+  background: #3a2d13;
+  color: #fcd34d;
+}
+
+html:root.dark .nw-badge--danger {
+  background: #3a1c1c;
+  color: #fca5a5;
+}
+
+// 路由切换过渡
+.nw-fade-enter-active,
+.nw-fade-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.nw-fade-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.nw-fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nw-page {
+    animation: none;
+  }
+}

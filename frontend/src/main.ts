@@ -1,30 +1,39 @@
-// 应用入口：挂载 Vue 实例、注册 Pinia、路由、Element Plus 与 UnoCSS。
+// 应用入口：装配 Pinia、路由、鉴权、i18n、组件库与样式后挂载。
+import 'vue/jsx'
+import 'virtual:uno.css'
 
 import { createApp } from 'vue'
-import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
-import 'element-plus/theme-chalk/dark/css-vars.css'
-import 'virtual:uno.css'
-import '@/styles/variables.css'
-import '@/styles/theme-dark.css'
-import '@/styles/element-theme.css'
-import '@/styles/button-states.css'
-import '@/styles/page.css'
-import '@/styles/global.css'
+
 import App from './App.vue'
-import router from './router'
-import i18n from './i18n'
-import { useAppStore } from '@/stores/app'
 
-const app = createApp(App)
+import { setupI18n } from '@/plugins/vueI18n'
+import { setupStore } from '@/store'
+import { setupGlobCom } from '@/components'
+import { setupRouter } from './router'
+import { setupPermission } from './permission'
 
-app.use(createPinia())
-app.use(router)
-app.use(i18n)
-app.use(ElementPlus)
+import '@novelworkbench/styles'
 
-// 主题必须在挂载前应用，否则首帧会闪亮色
-useAppStore().initTheme()
+// 装配顺序：状态 → 鉴权/导航 → i18n → 全局组件 → 组件库 → 路由 → 挂载
+const setupAll = async () => {
+  const app = createApp(App)
 
-app.mount('#app')
+  setupStore(app)
+
+  await setupPermission()
+
+  setupI18n(app)
+
+  setupGlobCom(app)
+
+  // 全量注册：业务页直接写 <ElButton>，不再逐页维护 import 清单
+  app.use(ElementPlus)
+
+  setupRouter(app)
+
+  app.mount('#app')
+}
+
+setupAll()

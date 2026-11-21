@@ -1,362 +1,349 @@
-<!--
-  写作工作台：项目栏 + 三栏布局（目录树 / 章节编辑器 / AI 面板）。
-  左右栏可独立折叠；AI 面板默认附带当前章节作为上下文。
--->
+<!-- 写作台：目录树、正文编辑器与 AI 面板三栏布局。 -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { useI18n } from 'vue-i18n'
-import { getChapterDetail } from '@/api/chapter'
-import { getProjectTree } from '@/api/project'
-import type { NWChapterBriefVo, NWChapterDetailVo, NWProjectTreeVo } from '@/api/contracts'
-import NWButton from '@/components/NWButton.vue'
-import NWIcon from '@/components/NWIcon.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import AiPanel from './AiPanel.vue'
-import ChapterEditor from './ChapterEditor.vue'
-import SnapshotDialog from './SnapshotDialog.vue'
-import WorkspaceTree from './WorkspaceTree.vue'
+  import { computed, onMounted, ref, watch } from 'vue'
+  import { ElMessage, ElMessageBox } from 'element-plus'
+  import { getChapterDetail } from '@/api/chapter'
+  import { getProjectTree } from '@/api/project'
+  import type { NWChapterBriefVo, NWChapterDetailVo, NWProjectTreeVo } from '@/api/contracts'
+  import { useProjectStore } from '@/store/modules/project'
+  import AiPanel from './AiPanel.vue'
+  import ChapterEditor from './ChapterEditor.vue'
+  import SnapshotDialog from './SnapshotDialog.vue'
+  import WorkspaceTree from './WorkspaceTree.vue'
 
-const route = useRoute()
-const router = useRouter()
-const { t } = useI18n()
+  const projectStore = useProjectStore()
 
-const projectUlid = computed(() => String(route.params.project_ulid ?? ''))
+  const projectUlid = computed(() => projectStore.currentProjectUlid)
+  const treeData = ref<NWProjectTreeVo | null>(null)
+  const currentChapter = ref<NWChapterDetailVo | null>(null)
+  const treeLoading = ref(false)
+  const liveWordCount = ref(0)
+  const leftCollapsed = ref(false)
+  const rightCollapsed = ref(false)
+  const snapshotVisible = ref(false)
 
-const editorRef = ref<InstanceType<typeof ChapterEditor> | null>(null)
-const aiPanelRef = ref<InstanceType<typeof AiPanel> | null>(null)
-const treeData = ref<NWProjectTreeVo | null>(null)
-const currentChapterDetail = ref<NWChapterDetailVo | null>(null)
-const treeLoading = ref(false)
-const liveWordCount = ref(0)
-const leftCollapsed = ref(false)
-const rightCollapsed = ref(false)
-const snapshotDialogVisible = ref(false)
+  const editorRef = ref<InstanceType<typeof ChapterEditor> | null>(null)
+  const aiPanelRef = ref<InstanceType<typeof AiPanel> | null>(null)
 
-/** 扁平章节列表（供 AI 面板 @引用章节页签） */
-const flatChapterList = computed<NWChapterBriefVo[]>(() => {
-  const chapterList: NWChapterBriefVo[] = []
-  for (const volumeNode of treeData.value?.volume_list ?? []) {
-    chapterList.push(...volumeNode.chapter_list)
+  const flatChapterList = computed<NWChapterBriefVo[]>(() =>
+    (treeData.value?.volume_list ?? []).flatMap((volumeNode) => volumeNode.chapter_list)
+  )
+
+  const loadTree = async (initialFlag = false) => {
+    if (!projectUlid.value) return
+    treeLoading.value = true
+    try {
+      treeData.value = await getProjectTree(projectUlid.value)
+      const currentUlid = currentChapter.value?.chapter_ulid ?? ''
+      const stillExists = flatChapterList.value.some((item) => item.chapter_ulid === currentUlid)
+      if (currentUlid && !stillExists) {
+        currentChapter.value = null
+        liveWordCount.value = 0
+      }
+      if (initialFlag && !currentChapter.value && flatChapterList.value.length > 0) {
+        await selectChapter(flatChapterList.value[0].chapter_ulid)
+      }
+    } catch {
+      treeData.value = null
+    } finally {
+      treeLoading.value = false
+    }
   }
-  return chapterList
-})
 
-const projectWordCount = computed(() => treeData.value?.project_vo.total_word_count ?? 0)
-
-const projectStatusText = computed(() => {
-  switch (treeData.value?.project_vo.project_status) {
-    case 'serial':
-      return t('dashboard.statusSerial')
-    case 'completed':
-      return t('dashboard.statusCompleted')
-    default:
-      return t('dashboard.statusDraft')
+  const selectChapter = async (chapterUlid: string) => {
+    if (currentChapter.value?.chapter_ulid === chapterUlid) return
+    await editorRef.value?.flushSave()
+    try {
+      currentChapter.value = await getChapterDetail(chapterUlid)
+      liveWordCount.value = 0
+    } catch {
+      // 失败提示由请求层统一弹出
+    }
   }
-})
 
-const currentChapterName = computed(() => currentChapterDetail.value?.chapter_name ?? '')
-
-/** 加载目录树；当前章节被删除时清空编辑器，初次加载自动选中第一章 */
-async function loadTree(initialFlag = false): Promise<void> {
-  if (!projectUlid.value) {
-    return
+  /** 目录树重命名后同步编辑器标题 */
+  const handleChapterRenamed = (chapterUlid: string, chapterName: string) => {
+    if (currentChapter.value?.chapter_ulid === chapterUlid) {
+      currentChapter.value.chapter_name = chapterName
+    }
   }
-  treeLoading.value = true
-  try {
-    treeData.value = await getProjectTree(projectUlid.value)
-    const currentUlid = currentChapterDetail.value?.chapter_ulid ?? ''
-    const stillExists = flatChapterList.value.some((item) => item.chapter_ulid === currentUlid)
-    if (currentUlid && !stillExists) {
-      currentChapterDetail.value = null
+
+  /** 自动保存成功：同步目录树字数与项目总字数 */
+  const handleSaveSuccess = (payload: {
+    chapter_ulid: string
+    chapter_name: string
+    word_count: number
+    chapter_status: string
+  }) => {
+    for (const volumeNode of treeData.value?.volume_list ?? []) {
+      const chapter = volumeNode.chapter_list.find(
+        (item) => item.chapter_ulid === payload.chapter_ulid
+      )
+      if (!chapter) continue
+      if (treeData.value) {
+        treeData.value.project_vo.total_word_count += payload.word_count - chapter.word_count
+      }
+      chapter.chapter_name = payload.chapter_name
+      chapter.word_count = payload.word_count
+      chapter.chapter_status = payload.chapter_status
+      return
+    }
+  }
+
+  const handleChapterDeleted = (chapterUlid: string) => {
+    if (currentChapter.value?.chapter_ulid === chapterUlid) {
+      currentChapter.value = null
       liveWordCount.value = 0
     }
-    if (initialFlag && !currentChapterDetail.value && flatChapterList.value.length > 0) {
-      await selectChapter(flatChapterList.value[0].chapter_ulid)
+  }
+
+  const openAiWithSkill = (skillCode: string) => {
+    rightCollapsed.value = false
+    const refList = currentChapter.value ? [currentChapter.value.chapter_ulid] : []
+    aiPanelRef.value?.presetSkill(skillCode, refList)
+  }
+
+  const insertToChapter = (contentText: string) => {
+    if (!currentChapter.value) {
+      ElMessage.warning('请先打开一个章节')
+      return
     }
-  } catch {
-    // 失败提示由 http 层统一弹出；接口未就绪保持空态
-    treeData.value = null
-  } finally {
-    treeLoading.value = false
+    editorRef.value?.insertTextAtCursor(contentText)
+    ElMessage.success('已插入光标处')
   }
-}
 
-/** 切换章节：先落盘当前防抖内容，再拉取章节详情 */
-async function selectChapter(chapterUlid: string): Promise<void> {
-  if (currentChapterDetail.value?.chapter_ulid === chapterUlid) {
-    return
-  }
-  await editorRef.value?.flushSave()
-  try {
-    currentChapterDetail.value = await getChapterDetail(chapterUlid)
-    liveWordCount.value = 0
-  } catch {
-    // 失败提示由 http 层统一弹出
-  }
-}
-
-/** 目录树结构变更（增删改卷章）后重载 */
-function handleTreeChanged(): void {
-  void loadTree()
-}
-
-/** 目录树重命名同步编辑器标题 */
-function handleChapterRenamed(chapterUlid: string, chapterName: string): void {
-  if (currentChapterDetail.value?.chapter_ulid === chapterUlid) {
-    currentChapterDetail.value.chapter_name = chapterName
-  }
-}
-
-/** 新建章节后自动打开编辑器 */
-function handleChapterCreated(chapterUlid: string): void {
-  void selectChapter(chapterUlid)
-}
-
-/** 删除的是当前章节时清空编辑器 */
-function handleChapterDeleted(chapterUlid: string): void {
-  if (currentChapterDetail.value?.chapter_ulid === chapterUlid) {
-    currentChapterDetail.value = null
-    liveWordCount.value = 0
-  }
-}
-
-/** 自动保存成功：同步目录树的字数/状态/名称 */
-function handleSaveSuccess(payload: {
-  chapter_ulid: string
-  chapter_name: string
-  word_count: number
-  chapter_status: string
-}): void {
-  for (const volumeNode of treeData.value?.volume_list ?? []) {
-    const chapterItem = volumeNode.chapter_list.find(
-      (item) => item.chapter_ulid === payload.chapter_ulid,
-    )
-    if (chapterItem) {
-      const wordDelta = payload.word_count - chapterItem.word_count
-      chapterItem.chapter_name = payload.chapter_name
-      chapterItem.word_count = payload.word_count
-      chapterItem.chapter_status = payload.chapter_status
-      if (treeData.value) {
-        treeData.value.project_vo.total_word_count += wordDelta
-      }
-      break
+  const replaceChapter = async (contentText: string) => {
+    if (!currentChapter.value) {
+      ElMessage.warning('请先打开一个章节')
+      return
     }
+    try {
+      await ElMessageBox.confirm('将用 AI 回复替换整章正文，确定吗？', '替换整章', {
+        type: 'warning'
+      })
+    } catch {
+      return
+    }
+    editorRef.value?.replaceContent(contentText)
+    ElMessage.success('已替换，正在自动保存')
   }
-}
 
-function handleWordCountChange(wordCount: number): void {
-  liveWordCount.value = wordCount
-}
-
-/** AI 续写：预置 skill_code=continue + 引用当前章节 */
-function handleAiContinue(): void {
-  if (rightCollapsed.value) {
-    rightCollapsed.value = false
+  const openSnapshot = async () => {
+    if (!currentChapter.value) {
+      ElMessage.warning('请先打开一个章节')
+      return
+    }
+    await editorRef.value?.flushSave()
+    snapshotVisible.value = true
   }
-  const refList = currentChapterDetail.value ? [currentChapterDetail.value.chapter_ulid] : []
-  aiPanelRef.value?.presetSkill('continue', refList)
-}
 
-/** AI 润色：预置 skill_code=polish + 引用当前章节 */
-function handleAiPolish(): void {
-  if (rightCollapsed.value) {
-    rightCollapsed.value = false
+  const handleSnapshotRestored = (chapterDetail: NWChapterDetailVo) => {
+    currentChapter.value = chapterDetail
+    void loadTree()
   }
-  const refList = currentChapterDetail.value ? [currentChapterDetail.value.chapter_ulid] : []
-  aiPanelRef.value?.presetSkill('polish', refList)
-}
 
-/** AI 生成梗概：预置 skill_code=summary + 引用当前章节 */
-function handleAiSummary(): void {
-  if (rightCollapsed.value) {
-    rightCollapsed.value = false
+  const focusMode = computed(() => leftCollapsed.value && rightCollapsed.value)
+  const toggleFocusMode = () => {
+    const nextFlag = !focusMode.value
+    leftCollapsed.value = nextFlag
+    rightCollapsed.value = nextFlag
   }
-  const refList = currentChapterDetail.value ? [currentChapterDetail.value.chapter_ulid] : []
-  aiPanelRef.value?.presetSkill('summary', refList)
-}
 
-/** AI 回复插入编辑器光标处（走编辑器同一自动保存通道） */
-function handleInsertToChapter(contentText: string): void {
-  if (!currentChapterDetail.value) {
-    ElMessage.warning(t('workspace.insertNoChapter'))
-    return
-  }
-  editorRef.value?.insertTextAtCursor(contentText)
-  ElMessage.success(t('workspace.insertSuccess'))
-}
+  watch(
+    projectUlid,
+    () => {
+      currentChapter.value = null
+      liveWordCount.value = 0
+      void loadTree(true)
+    },
+    { immediate: true }
+  )
 
-/** AI 回复替换整章正文（二次确认后走编辑器同一自动保存通道） */
-async function handleReplaceChapter(contentText: string): Promise<void> {
-  if (!currentChapterDetail.value) {
-    ElMessage.warning(t('workspace.insertNoChapter'))
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      t('workspace.ai.replaceChapterConfirm'),
-      t('workspace.ai.replaceChapter'),
-      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') },
-    )
-  } catch {
-    return
-  }
-  editorRef.value?.replaceContent(contentText)
-  ElMessage.success(t('workspace.ai.replaceChapterSuccess'))
-}
-
-/** 快照入口：打开前先落盘，保证留档/回滚基于最新正文 */
-async function handleOpenSnapshot(): Promise<void> {
-  if (!currentChapterDetail.value) {
-    ElMessage.warning(t('workspace.insertNoChapter'))
-    return
-  }
-  await editorRef.value?.flushSave()
-  snapshotDialogVisible.value = true
-}
-
-/** 回滚成功：重载章节正文与目录树字数 */
-function handleSnapshotRestored(chapterDetail: NWChapterDetailVo): void {
-  currentChapterDetail.value = chapterDetail
-  void loadTree()
-}
-
-function handleBack(): void {
-  void router.push('/')
-}
-
-/** 专注模式：同时收起左右栏 */
-function toggleFocusMode(): void {
-  const focusFlag = !(leftCollapsed.value && rightCollapsed.value)
-  leftCollapsed.value = focusFlag
-  rightCollapsed.value = focusFlag
-}
-
-const focusModeFlag = computed(() => leftCollapsed.value && rightCollapsed.value)
-
-watch(projectUlid, () => {
-  currentChapterDetail.value = null
-  liveWordCount.value = 0
-  void loadTree(true)
-})
-
-onMounted(() => {
-  void loadTree(true)
-})
+  onMounted(() => {
+    if (!projectUlid.value) void projectStore.loadProjectOptions()
+  })
 </script>
 
 <template>
-  <div class="workspace-page">
-    <!-- 工作台顶栏 -->
-    <header class="workspace-page__topbar">
-      <button type="button" class="workspace-page__back" :title="t('workspace.backToDashboard')" @click="handleBack">
-        <NWIcon icon_code="arrowLeft" :size_px="16" />
-      </button>
-
-      <span class="workspace-page__project-cover">
-        {{ (treeData?.project_vo.project_name || 'N').slice(0, 1) }}
-      </span>
-      <div class="workspace-page__project-info">
-        <div class="workspace-page__project-row">
-          <h2 class="workspace-page__project-name">{{ treeData?.project_vo.project_name || '' }}</h2>
-          <span class="nw-badge nw-badge--primary">{{ projectStatusText }}</span>
-        </div>
-        <span class="workspace-page__words">
-          {{ t('workspace.projectWords') }} <strong>{{ projectWordCount.toLocaleString() }}</strong>
-          <span class="workspace-page__word-divider">/</span>
-          {{ t('workspace.chapterWords') }} <strong>{{ liveWordCount.toLocaleString() }}</strong>
+  <div class="workspace">
+    <header class="workspace__topbar">
+      <div class="workspace__project">
+        <span class="workspace__cover">
+          {{ (treeData?.project_vo.project_name || 'N').slice(0, 1) }}
         </span>
+        <div>
+          <h2 class="workspace__name">{{ treeData?.project_vo.project_name || '未选择项目' }}</h2>
+          <p class="workspace__meta">
+            全书 {{ (treeData?.project_vo.total_word_count ?? 0).toLocaleString() }} 字
+            <span class="workspace__dot">·</span>
+            本章 {{ liveWordCount.toLocaleString() }} 字
+          </p>
+        </div>
       </div>
 
-      <div class="workspace-page__topbar-actions">
-        <el-tooltip :content="t('workspace.focusMode')" placement="bottom">
-          <button
-            type="button"
-            class="workspace-page__icon-btn"
-            :class="{ 'is-active': focusModeFlag }"
-            @click="toggleFocusMode"
-          >
-            <NWIcon icon_code="maximize" :size_px="17" />
-          </button>
-        </el-tooltip>
-        <el-tooltip :content="t('workspace.toggleTree')" placement="bottom">
-          <button
-            type="button"
-            class="workspace-page__icon-btn"
-            :class="{ 'is-active': !leftCollapsed }"
-            @click="leftCollapsed = !leftCollapsed"
-          >
-            <NWIcon icon_code="panelLeft" :size_px="17" />
-          </button>
-        </el-tooltip>
-        <el-tooltip :content="t('workspace.toggleAi')" placement="bottom">
-          <button
-            type="button"
-            class="workspace-page__icon-btn"
-            :class="{ 'is-active': !rightCollapsed }"
-            @click="rightCollapsed = !rightCollapsed"
-          >
-            <NWIcon icon_code="panelRight" :size_px="17" />
-          </button>
-        </el-tooltip>
-        <span class="workspace-page__action-divider" />
-        <NWButton size="small" @click="handleOpenSnapshot">
-          <NWIcon icon_code="history" :size_px="14" />
-          {{ t('workspace.snapshotEntry') }}
-        </NWButton>
+      <div class="workspace__actions">
+        <ElButton size="small" text @click="toggleFocusMode">
+          <Icon icon="mdi:book-open-variant" :size="15" />
+          <span class="ml-4px">{{ focusMode ? '退出专注' : '专注' }}</span>
+        </ElButton>
+        <ElButton size="small" text @click="leftCollapsed = !leftCollapsed">
+          <Icon icon="mdi:file-tree" :size="15" />
+        </ElButton>
+        <ElButton size="small" text @click="rightCollapsed = !rightCollapsed">
+          <Icon icon="mdi:robot-outline" :size="15" />
+        </ElButton>
       </div>
     </header>
 
-    <NWLoading v-if="treeLoading && !treeData" />
-
-    <!-- 三栏主体 -->
-    <div v-else class="workspace-page__main">
-      <aside v-show="!leftCollapsed" class="workspace-page__left">
+    <div v-loading="treeLoading && !treeData" class="workspace__main">
+      <aside v-show="!leftCollapsed" class="workspace__left">
         <WorkspaceTree
           :tree-data="treeData"
           :project-ulid="projectUlid"
-          :current-chapter-ulid="currentChapterDetail?.chapter_ulid ?? ''"
+          :current-chapter-ulid="currentChapter?.chapter_ulid ?? ''"
           @select-chapter="selectChapter"
-          @tree-changed="handleTreeChanged"
-          @chapter-created="handleChapterCreated"
+          @tree-changed="loadTree()"
+          @chapter-created="selectChapter"
           @chapter-renamed="handleChapterRenamed"
           @chapter-deleted="handleChapterDeleted"
         />
       </aside>
 
-      <section class="workspace-page__center">
+      <section class="workspace__center">
         <ChapterEditor
           ref="editorRef"
-          :chapter="currentChapterDetail"
+          :chapter="currentChapter"
           @save-success="handleSaveSuccess"
-          @word-count-change="handleWordCountChange"
-          @ai-continue="handleAiContinue"
-          @ai-polish="handleAiPolish"
-          @ai-summary="handleAiSummary"
-          @open-snapshot="handleOpenSnapshot"
+          @word-count-change="(wordCount) => (liveWordCount = wordCount)"
+          @ai-continue="openAiWithSkill('continue')"
+          @ai-polish="openAiWithSkill('polish')"
+          @ai-summary="openAiWithSkill('summary')"
+          @open-snapshot="openSnapshot"
         />
       </section>
 
-      <aside v-show="!rightCollapsed" class="workspace-page__right">
+      <aside v-show="!rightCollapsed" class="workspace__right">
         <AiPanel
           ref="aiPanelRef"
           :project-ulid="projectUlid"
           :chapter-list="flatChapterList"
-          :current-chapter-ulid="currentChapterDetail?.chapter_ulid ?? ''"
-          :current-chapter-name="currentChapterName"
-          @insert-to-chapter="handleInsertToChapter"
-          @replace-chapter="handleReplaceChapter"
+          :current-chapter-ulid="currentChapter?.chapter_ulid ?? ''"
+          :current-chapter-name="currentChapter?.chapter_name ?? ''"
+          @insert-to-chapter="insertToChapter"
+          @replace-chapter="replaceChapter"
         />
       </aside>
     </div>
 
     <SnapshotDialog
-      v-model:visible="snapshotDialogVisible"
-      :chapter-ulid="currentChapterDetail?.chapter_ulid ?? ''"
+      v-model:visible="snapshotVisible"
+      :chapter-ulid="currentChapter?.chapter_ulid ?? ''"
       @restored="handleSnapshotRestored"
     />
   </div>
 </template>
 
-<style scoped src="./workspace.css"></style>
+<style lang="less" scoped>
+  .workspace {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--top-tool-height) - var(--tags-view-height) - 2 * var(--app-content-padding));
+    overflow: hidden;
+    background: var(--nw-surface);
+    border: 1px solid var(--nw-border);
+    border-radius: var(--nw-radius-lg);
+
+    &__topbar {
+      display: flex;
+      flex: none;
+      align-items: center;
+      justify-content: space-between;
+      height: 52px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--nw-border-soft);
+    }
+
+    &__project {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    &__cover {
+      display: grid;
+      flex: none;
+      width: 32px;
+      height: 32px;
+      font-size: 14px;
+      font-weight: 650;
+      color: #fff;
+      background: linear-gradient(135deg, var(--saas_dashboard-color-1), var(--saas_dashboard-color-2));
+      border-radius: 8px;
+      place-items: center;
+    }
+
+    &__name {
+      overflow: hidden;
+      font-size: 14px;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &__meta {
+      font-size: 11.5px;
+      color: var(--el-text-color-placeholder);
+    }
+
+    &__dot {
+      margin: 0 4px;
+    }
+
+    &__actions {
+      display: flex;
+      gap: 2px;
+      align-items: center;
+    }
+
+    &__main {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+
+    &__left {
+      flex: none;
+      width: 240px;
+      min-height: 0;
+    }
+
+    &__center {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    &__right {
+      flex: none;
+      width: 380px;
+      min-height: 0;
+    }
+  }
+
+  @media (width <= 1280px) {
+    .workspace__right {
+      width: 320px;
+    }
+  }
+
+  @media (width <= 1024px) {
+    .workspace__left {
+      width: 200px;
+    }
+
+    .workspace__right {
+      width: 300px;
+    }
+  }
+</style>

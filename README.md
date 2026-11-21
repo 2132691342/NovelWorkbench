@@ -15,18 +15,18 @@
 | 技能资产 | 全局技能与项目技能（同编码项目覆盖全局）；变量声明与必填校验；参考资料按关键词命中注入（单技能上限 4000 字符）；9 个流程域、18 个内置技能可改可停用 |
 | 提示词档案 | 系统提示词做成可编辑资产：全局档案与项目档案；内置 9 份（起草 / 架构 / 打磨 / 去 AI 味 / 质检 / 连续性 / 定稿 / 上架 / 立项，与技能一一配对）；对话期可临时切换；内置档案可改正文不可删 |
 | 模型生态 | OpenAI 兼容与 Anthropic 双协议；供应商 → 模型目录 → 按角色分配三层结构；密钥 AES-256-GCM 加密、仅回显掩码；模型级连通性测试与系统默认切换；调用量按日聚合 |
-| 知识库 | 文档库与检索测试双页签；txt/md/docx/pdf 上传；MinIO 存原文；RabbitMQ 异步索引；Manticore CJK ngram 召回；RRF 融合与可选对话模型重排；原文预览抽屉；检索追踪 |
-| 设定管理 | 角色卡、AntV X6 关系图、世界观设定分类与搜索；WangEditor 富文本与 MavonEditor Markdown 双模式创作笔记 |
+| 知识库 | 文档库与检索双页签；txt/md/docx/pdf 上传；MinIO 存原文；RabbitMQ 异步索引；Manticore CJK ngram 召回；RRF 融合与可选对话模型重排；原文预览抽屉；检索追踪 |
+| 设定管理 | 角色卡、AntV X6 关系图、世界观设定分类与搜索；创作笔记双栏 Markdown 编辑与预览 |
 | 创作规划 | 多层级大纲树（卷/幕/故事块/章节）、场景卡任务单、成环检测 |
 | 连续性看板 | 时序事实候选与复核、伏笔钩子状态流转、章节摘要与 stale 标记 |
-| 导航与权限 | 后端驱动菜单（分组/页面/图标/排序在线维护）；菜单即权限登记（`perm_code` 单一事实源）+ 权限目录自动汇总；前端路由 `meta.perm_code` 校验；接口逐请求校验 |
+| 导航与权限 | 后端驱动菜单（分组/页面/图标/排序在线维护）；菜单即权限登记（`perm_code` 单一事实源）+ 权限目录自动汇总；前端路由 `meta.permCode` 校验；接口逐请求校验 |
 | SaaS 管理 | JWT 认证（不开放注册，账号由管理员分配）、用户/角色/菜单/权限目录/审计、登录日志、运行时配置、用量分析、运行状态、任务中心、站内通知 |
-| 系统体验 | 品牌五色设计系统、镂空线条按钮五态（悬停放大/按下缩小/加载扫光）、可折叠图标侧栏（折叠态 tooltip + 分组分隔线）、统一页面骨架、表格行引导条、弹窗与抽屉过渡、Ctrl+K 快速跳转、中英双语 |
+| 系统体验 | 品牌五色设计系统、镂空线条按钮五态（悬停放大 / 按下缩小 / 加载扫光）、可折叠图标侧栏、明暗双主题、统一页面骨架、表格加载与空态、弹窗与抽屉过渡 |
 
 ## 技术栈
 
 - 后端：Go 1.24 + Gin 1.11 + GORM(pgx) 1.31 + Viper 1.21 + Zap 1.28 + eino 0.9（OpenAI 兼容 / Anthropic 双协议）+ Redis + RabbitMQ + MinIO + Manticore，`CGO_ENABLED=0` 静态编译
-- 前端：Vue 3 + TypeScript + Vite + Element Plus 2.9 + Pinia + Vue Router + Axios + UnoCSS + ECharts + AntV X6 + CodeMirror 6 + WangEditor + MavonEditor + Vue I18n
+- 前端：Vue 3.5 + TypeScript + Vite + Element Plus 2.14 + Pinia + Vue Router + Axios + UnoCSS + ECharts + AntV X6 + CodeMirror 6 + marked + docx-preview + vue-pdf-embed + Vue I18n
 - 测试：Go `testing`（链路级）+ Vitest（纯函数）
 - 部署：Docker Compose / Podman Compose，GitHub Actions CI/CD，静态二进制 + nginx SPA
 
@@ -58,7 +58,7 @@ docker compose --profile infra up -d --build
 cd backend && go run ./cmd/server
 
 # 前端（/api 代理到 http://127.0.0.1:8080，可用 NW_DEV_PROXY_TARGET 覆盖）
-cd frontend && npm install && npm run dev
+cd frontend && corepack enable && pnpm install && pnpm dev
 ```
 
 ## 仓库结构
@@ -67,7 +67,8 @@ cd frontend && npm install && npm run dev
 backend/            Go 后端：api → service → repo → domain 分层
   cmd/server        装配启动（迁移、播种、路由、优雅关闭）
   internal/         api / service / repo / domain / ai / infra / pkg
-frontend/           Vue 3 前端：设计系统 + 后端驱动导航 + 业务页面
+frontend/           Vue 3 前端（pnpm workspace 单仓）：品牌令牌 + 按钮五态 + 后端驱动导航 + 业务页面
+  packages/         内部包：@novelworkbench/components / hooks / request / styles
 deploy/podman/      Podman 发布资产：构建上下文、运行镜像、编排与发布脚本
 doc/                架构、模块、AI、提示词资产、API、数据库、前端、安全、部署、测试文档
 docker-compose.yml  应用编排与本地中间件 profile（对外 14399）
@@ -79,16 +80,16 @@ docker-compose.yml  应用编排与本地中间件 profile（对外 14399）
 
 | 文档 | 内容 |
 | --- | --- |
-| [doc/architecture.md](doc/architecture.md) | 系统定位、技术选型、分层约束、请求生命周期、核心链路、设计取舍 |
+| [doc/architecture.md](doc/architecture.md) | 系统定位、技术选型、分层约束、请求生命周期、启动装配、核心链路、设计取舍 |
 | [doc/modules.md](doc/modules.md) | 每个业务模块的职责、实现路径、边界与权衡 |
 | [doc/ai.md](doc/ai.md) | 模型网关、上下文装配、系统提示词档案、技能体系、无向量检索、流式协议（含思考事件）、用量统计 |
 | [doc/skills.md](doc/skills.md) | 提示词资产矩阵：9 个流程域 × (1 份档案 + 2 个技能)、提示词构造规则、指纹升级与维护方式 |
 | [doc/database.md](doc/database.md) | 存储分工、表结构、枚举、非关系存储、事务与一致性、迁移与备份 |
 | [doc/api.md](doc/api.md) | 接口契约、统一包络、权限码、分页与前端消费规则 |
-| [doc/frontend.md](doc/frontend.md) | 设计系统、状态与数据流、路由与权限、页面实现、国际化 |
+| [doc/frontend.md](doc/frontend.md) | 工程结构、设计系统、状态与数据流、路由与权限、页面实现、国际化 |
 | [doc/security.md](doc/security.md) | 认证、授权、密钥、审计、上传与部署边界 |
 | [doc/deploy.md](doc/deploy.md) | 容器、配置与环境变量、Compose/Podman、CI/CD、运维 |
-| [doc/test.md](doc/test.md) | 测试策略、当前用例、集成验证清单 |
+| [doc/test.md](doc/test.md) | 测试策略、当前用例清单、集成验证方式 |
 
 ## 约定
 
@@ -96,5 +97,5 @@ docker-compose.yml  应用编排与本地中间件 profile（对外 14399）
 - ID 为带业务前缀的 ULID（`USR_` / `PRJ_` / `SKL_` / `MNU_` …）；业务响应码为字符串（`SUCCESS` / `ERR_*`），HTTP 状态码仍为 int。
 - 业务路由只开放 GET / POST；路径参数放在末尾（`/menu/detail/{MenuULID}`）。
 - 字段带明确后缀（`project_name`、`genre_code`、`created_at`）并有注释；时间出参统一为 RFC3339 字符串。
-- 源文件控制在 500 行内，导出符号有注释，大页面拆分 CSS 与子组件。
+- 源文件控制在 500 行内，导出符号有注释，大页面拆分子组件。
 - 不引入 cgo；不接入向量模型；不开放注册。

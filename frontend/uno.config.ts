@@ -1,8 +1,16 @@
 import { defineConfig, presetUno } from 'unocss'
-import transformerDirectives from '@unocss/transformer-directives'
+import transformerVariantGroup from '@unocss/transformer-variant-group'
 
-// UnoCSS 配置：原子化工具类 + @apply/@variants 指令支持
 export default defineConfig({
-  presets: [presetUno()],
-  transformers: [transformerDirectives()],
+  shortcuts: {
+    'header-action':
+      'h-full flex cursor-pointer items-center px-10px pt-1px pb-0 transition-colors duration-200 hover:bg-[var(--top-header-hover-color)] dark:hover:bg-[var(--el-bg-color-overlay)]'
+  },
+  presets: [presetUno({ dark: 'class', attributify: false })],
+  transformers: [transformerVariantGroup()],
+  content: {
+    pipeline: {
+      include: [/\.(vue|svelte|[jt]sx|mdx?|astro|elm|php|phtml|html|ts)($|\?)/]
+    }
+  }
 })

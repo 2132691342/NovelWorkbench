@@ -1,172 +1,211 @@
-<!--
-  审计日志页：筛选区（动作编码 / 用户 ULID）+ 只读分页表格。
--->
+<!-- 审计日志页：按动作码与目标查询写操作留痕。 -->
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { listAdminAudits, type NWAuditVo } from '@/api/admin'
-import NWButton from '@/components/NWButton.vue'
-import NWPageHeader from '@/components/NWPageHeader.vue'
-import NWCard from '@/components/NWCard.vue'
-import NWEmpty from '@/components/NWEmpty.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import { formatTime } from '@/utils/time'
+  import { onMounted, ref } from 'vue'
+  import {
+    ElButton,
+    ElDatePicker,
+    ElInput,
+    ElPagination,
+    ElTable,
+    ElTableColumn
+  } from 'element-plus'
+  import { listAdminAudits, type NWAuditVo } from '@/api/admin'
+  import { formatTime } from '@/utils/time'
 
-const { t } = useI18n()
+  const rows = ref<NWAuditVo[]>([])
+  const total = ref(0)
+  const pageNum = ref(1)
+  const pageSize = ref(20)
+  const loading = ref(false)
+  const keyword = ref('')
+  const dateRange = ref<string[] | null>(null)
+  const scanCapped = ref(false)
 
-const auditList = ref<NWAuditVo[]>([])
-const listLoading = ref(false)
-const total = ref(0)
-const pageNum = ref(1)
-const pageSize = ref(10)
-const actionFilter = ref('')
-const userFilter = ref('')
+  /** 日期筛选的扫描上限：最多回看 1000 条审计记录（接口未提供日期条件） */
+  const SCAN_LIMIT = 1000
+  const SCAN_PAGE_SIZE = 100
 
-/** 毫秒时间戳转本地时间 */
+  const dateOf = (timeText: string) => (timeText ? timeText.slice(0, 10) : '')
 
-/** 加载审计日志分页 */
-async function loadAuditList(): Promise<void> {
-  listLoading.value = true
-  try {
-    const pageData = await listAdminAudits({
-      page_num: pageNum.value,
-      page_size: pageSize.value,
-      action_code: actionFilter.value.trim() || undefined,
-      user_ulid: userFilter.value.trim() || undefined,
-    })
-    auditList.value = pageData.items ?? []
-    total.value = pageData.total ?? 0
-  } catch {
-    // 失败提示由 http 层统一弹出（静默），保持当前列表
-  } finally {
-    listLoading.value = false
+  /** 无日期条件走服务端分页；有日期条件回看最近记录后按日期本地过滤 */
+  const load = async () => {
+    loading.value = true
+    scanCapped.value = false
+    const actionCode = keyword.value.trim() || undefined
+    try {
+      if (!dateRange.value) {
+        const page = await listAdminAudits({
+          page_num: pageNum.value,
+          page_size: pageSize.value,
+          action_code: actionCode
+        })
+        rows.value = page.items ?? []
+        total.value = page.total ?? 0
+        return
+      }
+
+      const rangeStart = dateRange.value[0]
+      const rangeEnd = dateRange.value[1]
+      const matched: NWAuditVo[] = []
+      let scanned = 0
+      let nextPage = 1
+      while (scanned < SCAN_LIMIT) {
+        const page = await listAdminAudits({
+          page_num: nextPage,
+          page_size: SCAN_PAGE_SIZE,
+          action_code: actionCode
+        })
+        const items = page.items ?? []
+        scanned += items.length
+        matched.push(
+          ...items.filter((item) => {
+            const day = dateOf(item.created_at)
+            return day >= rangeStart && day <= rangeEnd
+          })
+        )
+        const oldest = items[items.length - 1]
+        if (items.length < SCAN_PAGE_SIZE) break
+        if (oldest && dateOf(oldest.created_at) < rangeStart) break
+        nextPage += 1
+      }
+
+      scanCapped.value = scanned >= SCAN_LIMIT
+      total.value = matched.length
+      const start = (pageNum.value - 1) * pageSize.value
+      rows.value = matched.slice(start, start + pageSize.value)
+    } catch {
+      rows.value = []
+      total.value = 0
+    } finally {
+      loading.value = false
+    }
   }
-}
 
-/** 搜索：回到第一页重新加载 */
-function handleSearch(): void {
-  pageNum.value = 1
-  void loadAuditList()
-}
+  const search = async () => {
+    pageNum.value = 1
+    await load()
+  }
 
-/** 重置筛选条件 */
-function handleResetFilters(): void {
-  actionFilter.value = ''
-  userFilter.value = ''
-  handleSearch()
-}
+  const changePage = async (nextPage: number) => {
+    pageNum.value = nextPage
+    await load()
+  }
 
-function handlePageChange(page: number): void {
-  pageNum.value = page
-  void loadAuditList()
-}
-
-function handleSizeChange(size: number): void {
-  pageSize.value = size
-  pageNum.value = 1
-  void loadAuditList()
-}
-
-onMounted(() => {
-  void loadAuditList()
-})
+  onMounted(() => {
+    void load()
+  })
 </script>
 
 <template>
-  <div class="nw-page admin-audit-page">
-    <NWPageHeader
-      :title_text="t('admin.audit.title')"
-      :subtitle_text="t('admin.audit.pageSubtitle')"
-      icon_code="history"
-    />
-    <NWCard :hoverable="false">
-      <template #header>
-        <div class="admin-audit-page__toolbar">
-          <el-input
-            v-model="actionFilter"
-            class="admin-audit-page__filter"
-            :placeholder="t('admin.audit.actionPlaceholder')"
-            clearable
-            @keyup.enter="handleSearch"
-          />
-          <el-input
-            v-model="userFilter"
-            class="admin-audit-page__filter"
-            :placeholder="t('admin.audit.userPlaceholder')"
-            clearable
-            @keyup.enter="handleSearch"
-          />
-          <NWButton type="primary" @click="handleSearch">{{ t('admin.search') }}</NWButton>
-          <NWButton @click="handleResetFilters">{{ t('admin.reset') }}</NWButton>
-        </div>
-      </template>
+  <div class="nw-page">
+    <div class="nw-toolbar">
+      <ElInput
+        v-model="keyword"
+        placeholder="搜索动作码"
+        clearable
+        class="admin-audit__search"
+        @keyup.enter="search()"
+        @clear="search()"
+      />
+      <ElDatePicker
+        v-model="dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        class="admin-audit__date"
+        @change="search()"
+      />
+      <ElButton type="primary" plain @click="search()">查询</ElButton>
+      <div class="admin-audit__spacer" />
+      <span class="nw-hint">共 {{ total }} 条记录</span>
+    </div>
 
-      <NWLoading v-if="listLoading" />
-      <template v-else>
-        <el-table :data="auditList" stripe>
-          <el-table-column :label="t('admin.audit.createdAt')" width="170">
-            <template #default="{ row }">
-              {{ formatTime(row.created_at) }}
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('admin.audit.user')" width="180">
-            <template #default="{ row }">
-              <div class="admin-audit-page__user">
-                <span>{{ row.user_name || '-' }}</span>
-                <span class="admin-audit-page__muted">{{ row.user_ulid }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="action_code" :label="t('admin.audit.actionCode')" width="160" />
-          <el-table-column prop="target_type" :label="t('admin.audit.targetType')" width="120" />
-          <el-table-column prop="target_ulid" :label="t('admin.audit.targetUlid')" width="200" />
-          <el-table-column prop="detail_text" :label="t('admin.audit.detailText')" min-width="220" />
-          <el-table-column prop="ip_addr" :label="t('admin.audit.ipAddr')" width="130" />
-          <template #empty>
-            <NWEmpty :description_text="t('admin.audit.emptyTip')" />
-          </template>
-        </el-table>
-        <el-pagination
-          v-if="total > 0"
-          class="admin-audit-page__pagination"
-          layout="total, prev, pager, next, sizes"
-          :total="total"
-          :current-page="pageNum"
-          :page-size="pageSize"
-          :page-sizes="[10, 20, 50]"
-          @current-change="handlePageChange"
-          @size-change="handleSizeChange"
-        />
+    <p v-if="dateRange" class="nw-hint">
+      按日期筛选时回看最近 {{ SCAN_LIMIT }} 条审计记录<span v-if="scanCapped">（已达上限，更早记录未纳入）</span>。
+    </p>
+
+    <ElTable v-loading="loading" :data="rows" class="admin-audit__table">
+      <ElTableColumn label="时间" width="180">
+        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="操作人" min-width="130">
+        <template #default="{ row }">
+          <span :class="row.user_name ? '' : 'nw-hint'">{{ row.user_name || '未登录' }}</span>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="动作码" min-width="220" show-overflow-tooltip>
+        <template #default="{ row }">
+          <code class="admin-audit__code">{{ row.action_code }}</code>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="目标" min-width="160" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.target_type">
+            {{ row.target_type }}
+            <span class="nw-hint">{{ row.target_ulid }}</span>
+          </span>
+          <span v-else class="nw-hint">—</span>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="详情" min-width="240" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span :class="row.detail_text ? '' : 'nw-hint'">{{ row.detail_text || '—' }}</span>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="IP" width="130">
+        <template #default="{ row }">
+          <span :class="row.ip_addr ? '' : 'nw-hint'">{{ row.ip_addr || '—' }}</span>
+        </template>
+      </ElTableColumn>
+      <template #empty>
+        <span class="nw-hint">暂无审计记录</span>
       </template>
-    </NWCard>
+    </ElTable>
+
+    <div v-if="total > pageSize" class="admin-audit__pager">
+      <ElPagination
+        :current-page="pageNum"
+        :page-size="pageSize"
+        :total="total"
+        layout="prev, pager, next"
+        background
+        @current-change="changePage"
+      />
+    </div>
   </div>
 </template>
 
-<style scoped>
-.admin-audit-page__toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
+<style lang="less" scoped>
+  .admin-audit {
+    &__search {
+      width: 240px;
+    }
 
-.admin-audit-page__filter {
-  width: 200px;
-}
+    &__date {
+      width: 260px;
+    }
 
-.admin-audit-page__user {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.4;
-}
+    &__spacer {
+      flex: 1;
+    }
 
-.admin-audit-page__muted {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
+    &__table {
+      border-radius: var(--nw-radius-lg);
+    }
 
-.admin-audit-page__pagination {
-  margin-top: 14px;
-  justify-content: flex-end;
-}
+    &__code {
+      padding: 1px 6px;
+      font-family: var(--el-font-family-mono, monospace);
+      font-size: 11.5px;
+      color: var(--nw-text-secondary);
+      background: var(--nw-surface-subtle);
+      border-radius: var(--nw-radius-sm);
+    }
+
+    &__pager {
+      display: flex;
+      justify-content: flex-end;
+    }
+  }
 </style>

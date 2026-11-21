@@ -1,441 +1,371 @@
-<!--
-  AI 面板：模型选择 + 会话切换 + 上下文开关 + 快捷指令 + 消息流 + 输入区。
-  模型列表来自「当前账号可用模型」（按角色授权），默认选中系统默认或第一个可用模型。
--->
+<!-- AI 面板：会话管理、流式对话与结果处置。 -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { useI18n } from 'vue-i18n'
-import {
-  createChatSession,
-  deleteChatSession,
-  getChatHistory,
-  listChatSessions,
-} from '@/api/chat'
-import { getModelCapability, type NWModelCapabilityVo, type NWModelOptionVo } from '@/api/model'
-import { useSSE } from '@/composables/useSSE'
-import type { NWChapterBriefVo, NWChatSendReqVo, NWChatSessionVo } from '@/api/contracts'
-import NWIcon from '@/components/NWIcon.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import AiPanelHeader from './AiPanelHeader.vue'
-import ChatComposer from './ChatComposer.vue'
-import ChatMessage from './ChatMessage.vue'
-import { applyStreamEvent } from './chatStreamState'
-import type { NWChatDisplayMessage, NWChatSendPayload } from './chatTypes'
-import { NW_QUICK_PROMPT_LIST } from './quickPrompts'
+  import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+  import { ElMessage, ElMessageBox } from 'element-plus'
+  import {
+    createChatSession,
+    deleteChatSession,
+    getChatHistory,
+    listChatSessions
+  } from '@/api/chat'
+  import { getModelCapability, type NWModelCapabilityVo, type NWModelOptionVo } from '@/api/model'
+  import { listPromptProfiles } from '@/api/prompt'
+  import { listSkills } from '@/api/skill'
+  import type {
+    NWChapterBriefVo,
+    NWChatSendReqVo,
+    NWChatSessionVo,
+    NWPromptProfileVo,
+    NWSkillVo
+  } from '@/api/contracts'
+  import { useSSE } from '@/composables/useSSE'
+  import { applyStreamEvent } from './chatStream'
+  import ChatComposer from './ChatComposer.vue'
+  import ChatMessage from './ChatMessage.vue'
+  import type { ChatDisplayMessage, ChatSendPayload } from './types'
 
-const props = defineProps<{
-  projectUlid: string
-  chapterList: NWChapterBriefVo[]
-  currentChapterUlid?: string
-  currentChapterName?: string
-}>()
+  const props = defineProps<{
+    projectUlid: string
+    chapterList: NWChapterBriefVo[]
+    currentChapterUlid?: string
+    currentChapterName?: string
+  }>()
 
-const emit = defineEmits<{
-  'insert-to-chapter': [contentText: string]
-  'replace-chapter': [contentText: string]
-}>()
+  const emit = defineEmits<{
+    'insert-to-chapter': [contentText: string]
+    'replace-chapter': [contentText: string]
+  }>()
 
-const { t } = useI18n()
-const { streamingFlag, startStream, stopStream } = useSSE()
+  const { streamingFlag, startStream, stopStream } = useSSE()
 
-/** 会话历史一次拉取条数 */
-const NW_HISTORY_PAGE_SIZE = 50
+  const composerRef = ref<InstanceType<typeof ChatComposer> | null>(null)
+  const messageList = ref<ChatDisplayMessage[]>([])
+  const sessionList = ref<NWChatSessionVo[]>([])
+  const currentSessionUlid = ref('')
+  const capability = ref<NWModelCapabilityVo | null>(null)
+  const selectedModelUlid = ref('')
+  const attachChapter = ref(true)
+  const historyLoading = ref(false)
+  const skillList = ref<NWSkillVo[]>([])
+  const profileList = ref<NWPromptProfileVo[]>([])
+  const messagesHost = ref<HTMLDivElement | null>(null)
 
-const composerRef = ref<InstanceType<typeof ChatComposer> | null>(null)
-const messagesHost = ref<HTMLDivElement | null>(null)
-const sessionList = ref<NWChatSessionVo[]>([])
-const currentSessionUlid = ref('')
-const messageList = ref<NWChatDisplayMessage[]>([])
-const historyLoading = ref(false)
-const sessionCreating = ref(false)
-const capabilityVo = ref<NWModelCapabilityVo | null>(null)
-const selectedModelUlid = ref('')
-/** 是否自动附带当前章节 */
-const attachChapterFlag = ref(true)
+  const modelOptions = computed<NWModelOptionVo[]>(() => capability.value?.option_list ?? [])
+  const canSend = computed(() => !streamingFlag.value && modelOptions.value.length > 0)
 
-/** 当前账号可用模型（按角色授权过滤） */
-const modelOptionList = computed<NWModelOptionVo[]>(() => capabilityVo.value?.option_list ?? [])
+  const scrollToBottom = () => {
+    void nextTick(() => {
+      if (messagesHost.value) messagesHost.value.scrollTop = messagesHost.value.scrollHeight
+    })
+  }
 
-/** 当前选中的会话 */
-const currentSessionVo = computed(
-  () => sessionList.value.find((sessionItem) => sessionItem.session_ulid === currentSessionUlid.value) ?? null,
-)
-
-/** 快捷指令（文案按 i18n 键渲染） */
-const quickPromptList = computed(() =>
-  NW_QUICK_PROMPT_LIST.map((promptItem) => ({
-    prompt_code: promptItem.prompt_code,
-    prompt_title: t(promptItem.title_key),
-    prompt_desc: t(promptItem.desc_key),
-    prompt_text: t(promptItem.text_key),
-    skill_code: promptItem.skill_code,
-  })),
-)
-
-/** 组装 /chat/send 请求体（当前章节自动并入引用清单） */
-function buildStreamRequest(payload: NWChatSendPayload): NWChatSendReqVo {
-  const request: NWChatSendReqVo = {
-    session_ulid: currentSessionUlid.value || undefined,
-    project_ulid: props.projectUlid,
-    content_text: payload.content_text,
-    history_count: payload.history_count,
-  }
-  if (payload.skill_code) {
-    request.skill_code = payload.skill_code
-  }
-  const refChapterUlidList = [...payload.ref_chapter_ulid_list]
-  if (
-    attachChapterFlag.value &&
-    props.currentChapterUlid &&
-    !refChapterUlidList.includes(props.currentChapterUlid)
-  ) {
-    refChapterUlidList.unshift(props.currentChapterUlid)
-  }
-  if (payload.ref_doc_ulid_list.length > 0) {
-    request.ref_doc_ulid_list = payload.ref_doc_ulid_list
-  }
-  if (refChapterUlidList.length > 0) {
-    request.ref_chapter_ulid_list = refChapterUlidList
-  }
-  if (payload.ref_summary_ulid_list.length > 0) {
-    request.ref_summary_ulid_list = payload.ref_summary_ulid_list
-  }
-  if (payload.ref_prompt_ulid_list.length > 0) {
-    request.ref_prompt_ulid_list = payload.ref_prompt_ulid_list
-  }
-  if (payload.ref_message_ulid_list.length > 0) {
-    request.ref_message_ulid_list = payload.ref_message_ulid_list
-  }
-  if (payload.prompt_profile_ulid) {
-    request.prompt_profile_ulid = payload.prompt_profile_ulid
-  }
-  if (selectedModelUlid.value) {
-    request.model_ulid = selectedModelUlid.value
-  }
-  return request
-}
-
-/** 加载当前账号可用模型（失败降级为空，面板照常可用） */
-async function loadModelOptions(): Promise<void> {
-  try {
-    const capability = await getModelCapability()
-    capabilityVo.value = capability
-    const existsFlag = capability.option_list.some((item) => item.model_ulid === selectedModelUlid.value)
-    if (!existsFlag) {
-      selectedModelUlid.value = capability.default_model_ulid || capability.option_list[0]?.model_ulid || ''
-    }
-  } catch {
-    capabilityVo.value = null
-  }
-}
-
-/** 发起流式生成并把事件回写到助手消息 */
-async function runStream(
-  request: NWChatSendReqVo,
-  assistantMessage: NWChatDisplayMessage,
-): Promise<void> {
-  assistantMessage.content_text = ''
-  assistantMessage.reasoning_text = ''
-  assistantMessage.error_message = ''
-  assistantMessage.reference_list = []
-  assistantMessage.streaming_flag = true
-  startWaitTimer(assistantMessage)
-  await startStream('/chat/send', request, {
-    onEvent: (event) => {
-      if (event.session_ulid && !currentSessionUlid.value) {
-        currentSessionUlid.value = event.session_ulid
-        void loadSessions()
+  const loadModelOptions = async () => {
+    try {
+      const result = await getModelCapability()
+      capability.value = result
+      if (!result.option_list.some((item) => item.model_ulid === selectedModelUlid.value)) {
+        selectedModelUlid.value =
+          result.default_model_ulid || result.option_list[0]?.model_ulid || ''
       }
-      applyStreamEvent(assistantMessage, event, t('workspace.ai.sendFailed'))
-    },
-    onError: () => {
-      assistantMessage.error_message = t('workspace.ai.sendFailed')
-    },
-  })
-  stopWaitTimer()
-  assistantMessage.streaming_flag = false
-  if (assistantMessage.error_message) {
-    ElMessage.error(assistantMessage.error_message)
-  }
-  void loadSessions()
-  scrollMessagesToBottom()
-}
-
-/** 等待计时器句柄（同一时刻只有一条流在等待） */
-let waitTimerId: number | null = null
-
-/** 启动等待计时：每 200ms 刷新已等待时长，让用户看到界面仍在工作 */
-function startWaitTimer(targetMessage: NWChatDisplayMessage): void {
-  stopWaitTimer()
-  const startedMs = Date.now()
-  targetMessage.waited_ms = 0
-  waitTimerId = window.setInterval(() => {
-    targetMessage.waited_ms = Date.now() - startedMs
-  }, 200)
-}
-
-/** 停止等待计时 */
-function stopWaitTimer(): void {
-  if (waitTimerId !== null) {
-    window.clearInterval(waitTimerId)
-    waitTimerId = null
-  }
-}
-
-/** 滚动消息流到底部 */
-function scrollMessagesToBottom(): void {
-  void nextTick(() => {
-    if (messagesHost.value) {
-      messagesHost.value.scrollTop = messagesHost.value.scrollHeight
+    } catch {
+      capability.value = null
     }
-  })
-}
-
-/** 发送消息：落用户气泡 + 占位助手气泡后发起流 */
-function handleSend(payload: NWChatSendPayload): void {
-  if (modelOptionList.value.length === 0) {
-    ElMessage.warning(t('workspace.ai.modelUnavailable'))
-    return
   }
-  const createdAtText = new Date().toISOString()
-  messageList.value.push(
-    {
-      message_ulid: '',
-      role_code: 'user',
-      content_text: payload.content_text,
-      reasoning_text: '',
-      skill_code: payload.skill_code,
-      created_at: createdAtText,
-      reference_list: [],
-      error_message: '',
-      streaming_flag: false,
-      waited_ms: 0,
-      retry_payload: null,
-    },
-    {
-      message_ulid: '',
-      role_code: 'assistant',
-      content_text: '',
-      reasoning_text: '',
-      skill_code: '',
-      created_at: createdAtText,
-      reference_list: [],
-      error_message: '',
-      streaming_flag: true,
-      waited_ms: 0,
-      retry_payload: payload,
-    },
-  )
-  const assistantMessage = messageList.value[messageList.value.length - 1]
-  scrollMessagesToBottom()
-  void runStream(buildStreamRequest(payload), assistantMessage)
-}
 
-/** 失败重试：原样重发保存的请求载荷 */
-function handleRetry(message: NWChatDisplayMessage): void {
-  if (streamingFlag.value || !message.retry_payload) {
-    return
-  }
-  void runStream(buildStreamRequest(message.retry_payload), message)
-}
-
-/** 停止生成（AbortController 中止 SSE 流） */
-function handleStop(): void {
-  if (!streamingFlag.value) {
-    return
-  }
-  stopStream()
-  ElMessage.success(t('workspace.ai.stopSuccess'))
-}
-
-/** 加载会话列表（无当前会话时选中第一个） */
-async function loadSessions(): Promise<void> {
-  try {
-    const listData = await listChatSessions(props.projectUlid)
-    sessionList.value = Array.isArray(listData) ? listData : []
-    if (!currentSessionUlid.value && sessionList.value.length > 0) {
-      await selectSession(sessionList.value[0].session_ulid)
+  const loadSkills = async () => {
+    if (!props.projectUlid) return
+    try {
+      skillList.value = await listSkills({ project_ulid: props.projectUlid, enabled_only: true })
+    } catch {
+      skillList.value = []
     }
-    if (sessionList.value.length === 0) {
-      currentSessionUlid.value = ''
+  }
+
+  const loadProfiles = async () => {
+    try {
+      profileList.value = await listPromptProfiles({
+        project_ulid: props.projectUlid,
+        enabled_only: true
+      })
+    } catch {
+      profileList.value = []
+    }
+  }
+
+  const loadHistory = async (sessionUlid: string) => {
+    currentSessionUlid.value = sessionUlid
+    historyLoading.value = true
+    try {
+      const page = await getChatHistory({ session_ulid: sessionUlid, page_num: 1, page_size: 50 })
+      messageList.value = (page.items ?? []).map((message) => ({
+        message_ulid: message.message_ulid,
+        role_code: message.role_code,
+        content_text: message.content_text,
+        reasoning_text: message.reasoning_text ?? '',
+        skill_code: message.skill_code,
+        created_at: message.created_at,
+        reference_list: [],
+        error_message: '',
+        streaming_flag: false,
+        waited_ms: 0,
+        retry_payload: null
+      }))
+    } catch {
       messageList.value = []
+    } finally {
+      historyLoading.value = false
+      scrollToBottom()
     }
-  } catch {
-    sessionList.value = []
   }
-}
 
-/** 新建会话并切换 */
-async function handleCreateSession(): Promise<void> {
-  if (sessionCreating.value) {
-    return
+  const loadSessions = async () => {
+    try {
+      sessionList.value = await listChatSessions(props.projectUlid)
+      if (!currentSessionUlid.value && sessionList.value.length > 0) {
+        await loadHistory(sessionList.value[0].session_ulid)
+      }
+      if (sessionList.value.length === 0) {
+        currentSessionUlid.value = ''
+        messageList.value = []
+      }
+    } catch {
+      sessionList.value = []
+    }
   }
-  sessionCreating.value = true
-  try {
-    const sessionVo = await createChatSession({ project_ulid: props.projectUlid })
-    sessionList.value.unshift(sessionVo)
-    await selectSession(sessionVo.session_ulid)
-    ElMessage.success(t('workspace.ai.sessionCreateSuccess'))
+
+  const createSession = async () => {
+    const session = await createChatSession({ project_ulid: props.projectUlid })
+    sessionList.value.unshift(session)
+    await loadHistory(session.session_ulid)
     composerRef.value?.focus()
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    sessionCreating.value = false
   }
-}
 
-/** 删除当前会话（二次确认，级联删消息） */
-async function handleDeleteSession(): Promise<void> {
-  if (!currentSessionUlid.value) {
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      t('workspace.ai.sessionDeleteConfirm'),
-      t('workspace.ai.sessionDelete'),
-      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') },
-    )
-  } catch {
-    return
-  }
-  try {
+  const deleteSession = async () => {
+    if (!currentSessionUlid.value) return
+    try {
+      await ElMessageBox.confirm('将删除该会话及其全部消息，确定吗？', '删除会话', {
+        type: 'warning'
+      })
+    } catch {
+      return
+    }
     await deleteChatSession(currentSessionUlid.value)
     messageList.value = []
     currentSessionUlid.value = ''
     await loadSessions()
-    ElMessage.success(t('workspace.ai.sessionDeleteSuccess'))
-  } catch {
-    // 失败提示由 http 层统一弹出
   }
-}
 
-/** 切换会话并加载历史 */
-async function selectSession(sessionUlid: string): Promise<void> {
-  if (streamingFlag.value) {
-    stopStream()
+  /** 组装 /chat/send 请求体（当前章节按开关自动并入引用） */
+  const buildRequest = (payload: ChatSendPayload): NWChatSendReqVo => {
+    const request: NWChatSendReqVo = {
+      session_ulid: currentSessionUlid.value || undefined,
+      project_ulid: props.projectUlid,
+      content_text: payload.content_text,
+      history_count: payload.history_count
+    }
+    if (payload.skill_code) request.skill_code = payload.skill_code
+    if (payload.prompt_profile_ulid) request.prompt_profile_ulid = payload.prompt_profile_ulid
+    if (selectedModelUlid.value) request.model_ulid = selectedModelUlid.value
+
+    const chapterRefs = [...payload.ref_chapter_ulid_list]
+    if (
+      attachChapter.value &&
+      props.currentChapterUlid &&
+      !chapterRefs.includes(props.currentChapterUlid)
+    ) {
+      chapterRefs.unshift(props.currentChapterUlid)
+    }
+    if (payload.ref_doc_ulid_list.length > 0) request.ref_doc_ulid_list = payload.ref_doc_ulid_list
+    if (chapterRefs.length > 0) request.ref_chapter_ulid_list = chapterRefs
+    if (payload.ref_summary_ulid_list.length > 0) {
+      request.ref_summary_ulid_list = payload.ref_summary_ulid_list
+    }
+    if (payload.ref_prompt_ulid_list.length > 0) {
+      request.ref_prompt_ulid_list = payload.ref_prompt_ulid_list
+    }
+    if (payload.ref_message_ulid_list.length > 0) {
+      request.ref_message_ulid_list = payload.ref_message_ulid_list
+    }
+    return request
   }
-  currentSessionUlid.value = sessionUlid
-  historyLoading.value = true
-  try {
-    const pageData = await getChatHistory({
-      session_ulid: sessionUlid,
-      page_num: 1,
-      page_size: NW_HISTORY_PAGE_SIZE,
+
+  let waitTimerId: number | null = null
+
+  const stopWaitTimer = () => {
+    if (waitTimerId !== null) {
+      window.clearInterval(waitTimerId)
+      waitTimerId = null
+    }
+  }
+
+  /** 等待计时：每 200ms 刷新已等待时长，让用户看到界面仍在工作 */
+  const startWaitTimer = (message: ChatDisplayMessage) => {
+    stopWaitTimer()
+    const startedMs = Date.now()
+    message.waited_ms = 0
+    waitTimerId = window.setInterval(() => {
+      message.waited_ms = Date.now() - startedMs
+    }, 200)
+  }
+
+  const runStream = async (request: NWChatSendReqVo, assistant: ChatDisplayMessage) => {
+    assistant.content_text = ''
+    assistant.reasoning_text = ''
+    assistant.error_message = ''
+    assistant.reference_list = []
+    assistant.streaming_flag = true
+    startWaitTimer(assistant)
+
+    await startStream('/chat/send', request, {
+      onEvent: (event) => {
+        if (event.session_ulid && !currentSessionUlid.value) {
+          currentSessionUlid.value = event.session_ulid
+          void loadSessions()
+        }
+        applyStreamEvent(assistant, event, '生成失败，请重试')
+      },
+      onError: () => {
+        assistant.error_message = '生成失败，请重试'
+      }
     })
-    messageList.value = (pageData.items ?? []).map((messageVo) => ({
-      message_ulid: messageVo.message_ulid,
-      role_code: messageVo.role_code,
-      content_text: messageVo.content_text,
-      reasoning_text: messageVo.reasoning_text ?? '',
-      skill_code: messageVo.skill_code,
-      created_at: messageVo.created_at,
-      reference_list: [],
-      error_message: '',
-      streaming_flag: false,
-      waited_ms: 0,
-      retry_payload: null,
-    }))
-  } catch {
-    messageList.value = []
-  } finally {
-    historyLoading.value = false
-    scrollMessagesToBottom()
-  }
-}
 
-/** 外部预置技能与章节引用（AI 续写 / AI 润色入口） */
-function presetSkill(skillCode: string, refChapterUlidList: string[]): void {
-  composerRef.value?.presetSkill(skillCode, refChapterUlidList)
-  composerRef.value?.focus()
-}
-
-/** 套用快捷指令：填技能并写入提示词 */
-function applyQuickPrompt(promptItem: { prompt_text: string; skill_code: string }): void {
-  if (promptItem.skill_code && props.currentChapterUlid) {
-    composerRef.value?.presetSkill(promptItem.skill_code, [props.currentChapterUlid])
-  }
-  composerRef.value?.setInputText(promptItem.prompt_text)
-}
-
-defineExpose({ presetSkill })
-
-watch(
-  () => props.projectUlid,
-  () => {
-    currentSessionUlid.value = ''
-    messageList.value = []
+    stopWaitTimer()
+    assistant.streaming_flag = false
+    if (assistant.error_message) ElMessage.error(assistant.error_message)
     void loadSessions()
-  },
-  { immediate: true },
-)
+    scrollToBottom()
+  }
 
-watch(
-  () => messageList.value.length,
-  () => {
-    scrollMessagesToBottom()
-  },
-)
+  const send = (payload: ChatSendPayload) => {
+    const createdAtText = new Date().toISOString()
+    messageList.value.push(
+      {
+        message_ulid: '',
+        role_code: 'user',
+        content_text: payload.content_text,
+        reasoning_text: '',
+        skill_code: payload.skill_code,
+        created_at: createdAtText,
+        reference_list: [],
+        error_message: '',
+        streaming_flag: false,
+        waited_ms: 0,
+        retry_payload: null
+      },
+      {
+        message_ulid: '',
+        role_code: 'assistant',
+        content_text: '',
+        reasoning_text: '',
+        skill_code: '',
+        created_at: createdAtText,
+        reference_list: [],
+        error_message: '',
+        streaming_flag: true,
+        waited_ms: 0,
+        retry_payload: payload
+      }
+    )
+    const assistant = messageList.value[messageList.value.length - 1]
+    scrollToBottom()
+    void runStream(buildRequest(payload), assistant)
+  }
 
-onMounted(() => {
-  void loadModelOptions()
-})
+  const retry = (message: ChatDisplayMessage) => {
+    if (streamingFlag.value || !message.retry_payload) return
+    void runStream(buildRequest(message.retry_payload), message)
+  }
 
-onBeforeUnmount(() => {
-  stopWaitTimer()
-})
+  const stop = () => {
+    if (!streamingFlag.value) return
+    stopStream()
+    ElMessage.success('已停止生成')
+  }
+
+  watch(
+    () => props.projectUlid,
+    () => {
+      currentSessionUlid.value = ''
+      messageList.value = []
+      void loadSessions()
+      void loadSkills()
+      void loadProfiles()
+    },
+    { immediate: true }
+  )
+
+  watch(() => messageList.value.length, scrollToBottom)
+
+  onMounted(() => void loadModelOptions())
+  onBeforeUnmount(stopWaitTimer)
+
+  defineExpose({
+    presetSkill: (skillCode: string, chapterUlidList: string[]) =>
+      composerRef.value?.presetSkill(skillCode, chapterUlidList)
+  })
 </script>
 
 <template>
-  <div class="ai-panel">
-    <AiPanelHeader
-      v-model:current-session-ulid="currentSessionUlid"
-      v-model:selected-model-ulid="selectedModelUlid"
-      v-model:attach-chapter-flag="attachChapterFlag"
-      :session-list="sessionList"
-      :session-deletable-flag="Boolean(currentSessionVo)"
-      :model-option-list="modelOptionList"
-      :current-chapter-ulid="currentChapterUlid"
-      :current-chapter-name="currentChapterName"
-      :message-count="messageList.length"
-      @select-session="selectSession"
-      @create-session="handleCreateSession"
-      @delete-session="handleDeleteSession"
-    />
-
-    <div ref="messagesHost" class="ai-panel__messages">
-      <NWLoading v-if="historyLoading" />
-      <template v-else>
-        <div v-if="messageList.length === 0" class="ai-panel__welcome">
-          <div class="ai-panel__welcome-head">
-            <span class="ai-panel__welcome-icon"><NWIcon icon_code="wand" :size_px="22" /></span>
-            <div>
-              <h3 class="ai-panel__welcome-title">{{ t('workspace.ai.emptyTitle') }}</h3>
-              <p class="ai-panel__welcome-desc">{{ t('workspace.ai.emptyDesc') }}</p>
-            </div>
-          </div>
-          <div class="ai-panel__quick-grid">
-            <button
-              v-for="promptItem in quickPromptList"
-              :key="promptItem.prompt_code"
-              type="button"
-              class="ai-panel__quick-card"
-              @click="applyQuickPrompt(promptItem)"
-            >
-              <strong>{{ promptItem.prompt_title }}</strong>
-              <small>{{ promptItem.prompt_desc }}</small>
-            </button>
-          </div>
-        </div>
-        <ChatMessage
-          v-for="(messageItem, messageIndex) in messageList"
-          :key="messageIndex"
-          :message="messageItem"
-          @retry="handleRetry(messageItem)"
-          @insert-to-chapter="(contentText) => emit('insert-to-chapter', contentText)"
-          @replace-chapter="(contentText) => emit('replace-chapter', contentText)"
+  <section class="ai-panel">
+    <header class="ai-panel__head">
+      <ElSelect
+        v-model="currentSessionUlid"
+        class="ai-panel__session"
+        placeholder="会话"
+        @change="loadHistory"
+      >
+        <ElOption
+          v-for="session in sessionList"
+          :key="session.session_ulid"
+          :label="session.session_name || '未命名会话'"
+          :value="session.session_ulid"
         />
-      </template>
+      </ElSelect>
+      <ElButton size="small" plain @click="createSession">
+        <Icon icon="mdi:plus" :size="14" />
+      </ElButton>
+      <ElButton size="small" plain :disabled="!currentSessionUlid" @click="deleteSession">
+        <Icon icon="mdi:delete-outline" :size="14" />
+      </ElButton>
+    </header>
+
+    <div class="ai-panel__models">
+      <ElSelect
+        v-model="selectedModelUlid"
+        size="small"
+        class="ai-panel__model"
+        placeholder="选择模型"
+      >
+        <ElOption
+          v-for="model in modelOptions"
+          :key="model.model_ulid"
+          :label="model.model_label || model.model_name"
+          :value="model.model_ulid"
+        />
+      </ElSelect>
+      <ElCheckbox v-model="attachChapter" size="small">
+        附带当前章节{{ currentChapterName ? `：${currentChapterName}` : '' }}
+      </ElCheckbox>
+    </div>
+
+    <div ref="messagesHost" v-loading="historyLoading" class="ai-panel__messages">
+      <div v-if="messageList.length === 0 && !historyLoading" class="ai-panel__welcome">
+        <p class="ai-panel__welcome-title">开始一次创作对话</p>
+        <ul class="ai-panel__tips">
+          <li>输入 <code>/</code> 唤起技能（续写、润色、质检…）</li>
+          <li>输入 <code>@</code> 引用文档、章节、摘要、档案或历史消息</li>
+          <li><code>Ctrl/⌘ + Enter</code> 发送</li>
+        </ul>
+      </div>
+
+      <ChatMessage
+        v-for="(message, index) in messageList"
+        :key="message.message_ulid || index"
+        :message="message"
+        @retry="retry(message)"
+        @insert-to-chapter="(text) => emit('insert-to-chapter', text)"
+        @replace-chapter="(text) => emit('replace-chapter', text)"
+      />
     </div>
 
     <ChatComposer
@@ -443,11 +373,66 @@ onBeforeUnmount(() => {
       :project-ulid="projectUlid"
       :chapter-list="chapterList"
       :message-list="messageList"
-      :disabled-flag="streamingFlag"
-      @send="handleSend"
-      @stop="handleStop"
+      :skill-list="skillList"
+      :profile-list="profileList"
+      :streaming="streamingFlag"
+      :can-send="canSend"
+      @send="send"
+      @stop="stop"
     />
-  </div>
+  </section>
 </template>
 
-<style scoped src="./AiPanel.css"></style>
+<style lang="less" scoped>
+  .ai-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    background: var(--nw-surface);
+    border-left: 1px solid var(--nw-border);
+
+    &__head,
+    &__models {
+      display: flex;
+      flex: none;
+      gap: 6px;
+      align-items: center;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--nw-border-soft);
+    }
+
+    &__session,
+    &__model {
+      flex: 1;
+      min-width: 0;
+    }
+
+    &__messages {
+      flex: 1;
+      min-height: 0;
+      padding: 12px;
+      overflow-y: auto;
+    }
+
+    &__welcome {
+      padding: 18px;
+      background: var(--nw-surface-subtle);
+      border: 1px solid var(--nw-border-soft);
+      border-radius: var(--nw-radius-lg);
+    }
+
+    &__welcome-title {
+      margin-bottom: 8px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    &__tips {
+      padding-left: 16px;
+      font-size: 12px;
+      line-height: 1.9;
+      color: var(--el-text-color-secondary);
+    }
+  }
+</style>

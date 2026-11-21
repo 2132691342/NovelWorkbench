@@ -1,49 +1,75 @@
-import { fileURLToPath, URL } from 'node:url'
-import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
+import { resolve } from 'path'
+import { loadEnv } from 'vite'
+import type { UserConfig, ConfigEnv } from 'vite'
+import Vue from '@vitejs/plugin-vue'
+import VueJsx from '@vitejs/plugin-vue-jsx'
+import VueI18nPlugin from '@intlify/unplugin-vue-i18n/vite'
 import UnoCSS from 'unocss/vite'
 
-/**
- * 手动分包：把体积大的三方库拆成独立 chunk，避免首屏主包过大。
- * - element-plus：组件库
- * - echarts：图表（连同其渲染引擎 zrender）
- * - x6：图编辑引擎（连同 @antv 系列依赖）
- */
-function manualChunks(moduleId: string): string | undefined {
-  if (moduleId.includes('node_modules/element-plus')) {
-    return 'element-plus'
-  }
-  if (moduleId.includes('node_modules/echarts') || moduleId.includes('node_modules/zrender')) {
-    return 'echarts'
-  }
-  if (moduleId.includes('node_modules/@antv')) {
-    return 'x6'
-  }
-  return undefined
-}
+const root = process.cwd()
 
-export default defineConfig({
-  plugins: [vue(), UnoCSS()],
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+export default ({ mode }: ConfigEnv): UserConfig => {
+  const env = loadEnv(mode, root)
+  return {
+    base: env.VITE_BASE_PATH,
+    plugins: [
+      Vue(),
+      VueJsx(),
+      VueI18nPlugin({
+        runtimeOnly: true,
+        compositionOnly: true,
+        include: [resolve(import.meta.dirname, 'src/locales/**')]
+      }),
+      UnoCSS()
+    ],
+
+    resolve: {
+      alias: [
+        {
+          find: /@\//,
+          replacement: `${resolve(root, 'src')}/`
+        }
+      ]
     },
-  },
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': {
-        // 本地无后端时指向远端部署（NW_DEV_PROXY_TARGET=http://主机）联调
-        target: process.env.NW_DEV_PROXY_TARGET || 'http://127.0.0.1:8080',
-        changeOrigin: true,
+    build: {
+      target: 'es2015',
+      outDir: env.VITE_OUT_DIR || 'dist',
+      sourcemap: env.VITE_SOURCEMAP === 'true',
+      cssCodeSplit: !(env.VITE_USE_CSS_SPLIT === 'false'),
+      cssTarget: ['chrome31'],
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            // 大体积三方库单独成块：首屏不背编辑器与画布，访问对应页面时才下载
+            groups: [
+              { name: 'vendor-vue', test: /node_modules[\\/](vue|vue-router|pinia|@vue)[\\/]/ },
+              { name: 'vendor-element', test: /node_modules[\\/](element-plus|@floating-ui)[\\/]/ },
+              {
+                name: 'vendor-editor',
+                test: /node_modules[\\/](@codemirror|@lezer|mavon-editor|@wangeditor|turndown)[\\/]/
+              },
+              { name: 'vendor-canvas', test: /node_modules[\\/](echarts|zrender|@antv)[\\/]/ },
+              {
+                name: 'vendor-doc',
+                test: /node_modules[\\/](docx-preview|vue-pdf-embed|pdfjs-dist|marked|xlsx)[\\/]/
+              }
+            ]
+          }
+        }
+      }
+    },
+    server: {
+      port: 4000,
+      proxy: {
+        '/api': {
+          target: process.env.NW_DEV_PROXY_TARGET || 'http://127.0.0.1:8080',
+          changeOrigin: true
+        }
       },
-    },
-  },
-  build: {
-    rollupOptions: {
-      output: {
-        manualChunks,
+      hmr: {
+        overlay: false
       },
-    },
-  },
-})
+      host: '0.0.0.0'
+    }
+  }
+}

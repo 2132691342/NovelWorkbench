@@ -55,7 +55,7 @@ flowchart LR
 | 镜像 | Dockerfile | 构建层 | 运行层 | 要点 |
 | --- | --- | --- | --- | --- |
 | 后端（Compose / GHCR） | `backend/Dockerfile` | `golang:1.24-alpine` | `alpine:3.20` | `GOTOOLCHAIN=local`、`CGO_ENABLED=0`、`go build -tags "netgo osusergo" -ldflags="-s -w" -o /out/novel-workbench-server ./cmd/server`；运行层装 `ca-certificates`、`tzdata`，非 root 用户 `appuser`(10001) |
-| 前端（Compose / GHCR） | `frontend/Dockerfile` | `node:22-slim` | `nginx:1.27-alpine` | `npm ci --no-audit --no-fund` + `npm run build`（`vue-tsc && vite build`）；`ENV NGINX_RESOLVER=127.0.0.11`、`API_UPSTREAM=http://backend:8080`、`NW_LISTEN_PORT=80`、`NW_CLIENT_MAX_BODY_SIZE=20m` |
+| 前端（Compose / GHCR） | `frontend/Dockerfile` | `node:22-slim` | `nginx:1.27-alpine` | `corepack` 启用 pnpm 10 → `pnpm install --frozen-lockfile` → `pnpm build`（`vue-tsc --noEmit && vite build --mode pro`）；`ENV NGINX_RESOLVER=127.0.0.11`、`API_UPSTREAM=http://backend:8080`、`NW_LISTEN_PORT=80`、`NW_CLIENT_MAX_BODY_SIZE=20m` |
 | 后端（Podman） | `deploy/podman/Dockerfile.backend` | 无（只用预构建产物） | `${BASE_IMAGE}`，默认 `docker.io/library/alpine:3.20` | 拷入 `ca-certificates.crt`、`nw-server`、`configs/config.yaml`；创建 `appuser`(10001)；`ENTRYPOINT ["/app/nw-server"]` |
 | 前端（Podman） | `deploy/podman/Dockerfile.frontend` | 无（只用预构建产物） | `${BASE_IMAGE}`，默认 `docker.io/library/nginx:1.27-alpine` | 拷入 `dist/` 到 `/usr/share/nginx/html`、`nginx.conf.template` 到 `/etc/nginx/templates/default.conf.template` |
 
@@ -293,7 +293,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
   -o build/nw-server-linux-amd64 ./cmd/server
 
 cd ../frontend
-npm ci && npm run build
+corepack enable && pnpm install --frozen-lockfile && pnpm build
 ```
 
 上传后路径需与脚本期望一致：`backend/build/nw-server-linux-amd64`、`frontend/dist/index.html`、`frontend/nginx.conf.template`、`backend/configs/config.yaml`。
@@ -357,7 +357,7 @@ Podman 下写成裸 `backend` 会导致 nginx 解析失败、`/api/` 返回 502�
 | 工作流 | 触发 | Job | 内容 |
 | --- | --- | --- | --- |
 | `ci.yml` | `push` 到 `main`、`pull_request` 目标 `main` | `backend` | `go vet ./...`、`CGO_ENABLED=0 go build -tags "netgo osusergo" ./...`、`CGO_ENABLED=0 go test -short -count=1 -shuffle=on ./...` |
-| `ci.yml` | 同上 | `frontend` | `npm ci`、`npm run test`（`vitest run`）、`npm run build`（`vue-tsc && vite build`） |
+| `ci.yml` | 同上 | `frontend` | `pnpm/action-setup` 安装 pnpm 10、`pnpm install --frozen-lockfile`、`pnpm test`（vitest）、`pnpm build`（`vue-tsc --noEmit && vite build --mode pro`） |
 | `ci.yml` | 同上 | `docker`（`needs: [backend, frontend]`） | `docker build -t novel-workbench-backend:ci ./backend`、`docker build -t novel-workbench-frontend:ci ./frontend` |
 | `release.yml` | 推送 `v*` tag | `release` | 归一镜像前缀 → 登录 GHCR → 构建并推送 backend / frontend |
 
@@ -370,7 +370,7 @@ CI 关键设置：
 | `go-version` | `1.24` | 与 `go.mod`、镜像构建层一致 |
 | `node-version` | `22` | 与 `frontend/Dockerfile` 构建层一致 |
 | `cache-dependency-path`（Go） | `backend/go.sum` | job 级 `working-directory: backend` |
-| `cache-dependency-path`（Node） | `frontend/package-lock.json` | `setup-node` 的缓存路径相对仓库根解析 |
+| `cache-dependency-path`（Node） | `frontend/pnpm-lock.yaml` | `setup-node` 的 pnpm 缓存路径相对仓库根解析 |
 
 ### 9.2 GHCR 小写归一
 
@@ -396,6 +396,7 @@ echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 | `actions/checkout` | v5 |
 | `actions/setup-go` | v6 |
 | `actions/setup-node` | v5 |
+| `pnpm/action-setup` | v4 |
 | `docker/setup-buildx-action` | v4 |
 | `docker/login-action` | v4 |
 | `docker/build-push-action` | v7 |

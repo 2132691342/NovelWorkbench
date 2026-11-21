@@ -1,403 +1,283 @@
-<!--
-  仪表盘：创作概览 + 趋势 + 今日目标 + 项目卡片。
-  项目卡片是主入口，点击进入写作台；新建/编辑复用独立抽屉组件。
--->
+<!-- 仪表盘：统计卡、趋势图与项目卡片网格。 -->
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
-import { get } from '@/api/http'
-import { deleteProject, listProjects } from '@/api/project'
-import type { NWProjectVo, NWSettingItemVo, NWStatsOverviewVo } from '@/api/contracts'
-import NWButton from '@/components/NWButton.vue'
-import { readDesignToken } from '@/utils/designToken'
-import NWEmpty from '@/components/NWEmpty.vue'
-import NWIcon from '@/components/NWIcon.vue'
-import NWPageHeader from '@/components/NWPageHeader.vue'
-import NWStatTile from '@/components/NWStatTile.vue'
-import { parseTimeText } from '@/utils/time'
-import { useAuthStore } from '@/stores/auth'
-import { useProjectStore } from '@/stores/project'
-import DashboardProjectCard from './DashboardProjectCard.vue'
-import DashboardProjectDrawer from './DashboardProjectDrawer.vue'
-import DashboardTrendCard from './DashboardTrendCard.vue'
+  import { onMounted, ref } from 'vue'
+  import { useRouter } from 'vue-router'
+  import { ElMessage, ElMessageBox } from 'element-plus'
+  import { useI18n } from 'vue-i18n'
+  import { deleteProject, listProjects } from '@/api/project'
+  import { getStatsOverview } from '@/api/stats'
+  import type { NWProjectVo, NWStatsOverviewVo } from '@/api/contracts'
+  import { usePageQuery } from '@/composables/usePageQuery'
+  import { useProjectStore } from '@/store/modules/project'
+  import ProjectFormDialog from './components/ProjectFormDialog.vue'
+  import TrendChart from './components/TrendChart.vue'
 
-const { t, locale } = useI18n()
-const router = useRouter()
-const authStore = useAuthStore()
-const projectStore = useProjectStore()
+  const { t } = useI18n()
+  const router = useRouter()
+  const projectStore = useProjectStore()
 
-const NW_PROJECT_PAGE_SIZE = 12
-
-const statsLoading = ref(false)
-const projectLoading = ref(false)
-const projectList = ref<NWProjectVo[]>([])
-const projectTotal = ref(0)
-const projectPageNum = ref(1)
-const statusFilter = ref('')
-const keywordText = ref('')
-const dailyGoal = ref(2000)
-const drawerVisible = ref(false)
-const editingProject = ref<NWProjectVo | null>(null)
-
-const statsOverview = ref<NWStatsOverviewVo>({
-  project_count: 0,
-  total_word_count: 0,
-  today_word_delta: 0,
-  ai_word_total: 0,
-  trend_list: [],
-})
-
-const projectStatusOptions = computed(() => [
-  { value: '', label: t('dashboard.statusAll') },
-  { value: 'draft', label: t('dashboard.statusDraft') },
-  { value: 'serial', label: t('dashboard.statusSerial') },
-  { value: 'completed', label: t('dashboard.statusCompleted') },
-])
-
-const greetText = computed(() => {
-  const hour = new Date().getHours()
-  if (hour < 6) return t('dashboard.greetNight')
-  if (hour < 12) return t('dashboard.greetMorning')
-  if (hour < 18) return t('dashboard.greetAfternoon')
-  return t('dashboard.greetEvening')
-})
-
-const todayDateText = computed(() =>
-  new Date().toLocaleDateString(locale.value, { month: 'long', day: 'numeric', weekday: 'long' }),
-)
-
-const goalPercent = computed(() => {
-  if (dailyGoal.value <= 0) return 0
-  return Math.min(100, Math.round((statsOverview.value.today_word_delta / dailyGoal.value) * 100))
-})
-
-const continueProject = computed(() => {
-  const currentUlid = projectStore.current_project_ulid
-  return (
-    projectList.value.find((item) => item.project_ulid === currentUlid) ??
-    projectList.value[0] ??
-    null
+  const { items, total, pageNum, pageSize, loading, query, load, search, changePage } = usePageQuery(
+    listProjects,
+    { keyword_text: '', project_status: '' }
   )
-})
 
-function genreLabel(genreCode: string): string {
-  const genreKeyMap: Record<string, string> = {
-    fantasy: t('dashboard.genreFantasy'),
-    scifi: t('dashboard.genreScifi'),
-    romance: t('dashboard.genreRomance'),
-    suspense: t('dashboard.genreSuspense'),
-    wuxia: t('dashboard.genreWuxia'),
-    urban: t('dashboard.genreUrban'),
-    history: t('dashboard.genreHistory'),
-  }
-  return genreKeyMap[genreCode] ?? (genreCode || t('dashboard.genreUnset'))
-}
+  const stats = ref<NWStatsOverviewVo>({
+    project_count: 0,
+    total_word_count: 0,
+    today_word_delta: 0,
+    ai_word_total: 0,
+    trend_list: []
+  })
 
-function statusLabel(statusCode: string): string {
-  return projectStatusOptions.value.find((option) => option.value === statusCode)?.label ?? statusCode
-}
+  const formDialog = ref<InstanceType<typeof ProjectFormDialog>>()
 
-function statusBadgeClass(statusCode: string): string {
-  if (statusCode === 'serial') return 'nw-badge--success'
-  if (statusCode === 'completed') return 'nw-badge--info'
-  return 'nw-badge--warning'
-}
-
-/** 相对时间（沿用 dashboard 文案键） */
-function formatProjectTime(timeText: string): string {
-  const parsedDate = parseTimeText(timeText)
-  if (!parsedDate) return '—'
-  const diffMs = Date.now() - parsedDate.getTime()
-  const minuteMs = 60 * 1000
-  const hourMs = 60 * minuteMs
-  const dayMs = 24 * hourMs
-  if (diffMs < minuteMs) return t('dashboard.timeJustNow')
-  if (diffMs < hourMs) return t('dashboard.timeMinutesAgo', { count: Math.floor(diffMs / minuteMs) })
-  if (diffMs < dayMs) return t('dashboard.timeHoursAgo', { count: Math.floor(diffMs / hourMs) })
-  if (diffMs < 7 * dayMs) return t('dashboard.timeDaysAgo', { count: Math.floor(diffMs / dayMs) })
-  return parsedDate.toLocaleDateString()
-}
-
-/** 封面色（按书名稳定散列，刷新不跳变）：色板取设计令牌，避免页面内硬编码品牌色 */
-function coverGradient(projectName: string): string {
-  const paletteList = [
-    [readDesignToken('--primary', '#6366f1'), readDesignToken('--primary-hover', '#818cf8')],
-    [readDesignToken('--text-strong', '#0f172a'), readDesignToken('--text-secondary', '#475569')],
-    [readDesignToken('--info', '#3b82f6'), readDesignToken('--primary-hover', '#38bdf8')],
-    [readDesignToken('--success', '#10b981'), readDesignToken('--success-text', '#34d399')],
-    [readDesignToken('--warning', '#f59e0b'), readDesignToken('--warning-strong', '#fbbf24')],
-    [readDesignToken('--primary-active', '#4f46e5'), readDesignToken('--primary-light', '#a78bfa')],
+  const statusOptions = [
+    { value: '', label: '全部状态' },
+    { value: 'draft', label: '草稿' },
+    { value: 'serial', label: '连载中' },
+    { value: 'completed', label: '已完结' }
   ]
-  let hashValue = 0
-  for (const charText of projectName) {
-    hashValue = (hashValue * 31 + (charText.codePointAt(0) ?? 0)) % 997
-  }
-  const [fromColor, toColor] = paletteList[hashValue % paletteList.length]
-  return `linear-gradient(150deg, ${fromColor}, ${toColor})`
-}
 
-async function loadStatsOverview(): Promise<void> {
-  statsLoading.value = true
-  try {
-    const statsData = await get<NWStatsOverviewVo>('/stats/overview')
-    statsOverview.value = {
-      project_count: statsData.project_count ?? 0,
-      total_word_count: statsData.total_word_count ?? 0,
-      today_word_delta: statsData.today_word_delta ?? 0,
-      ai_word_total: statsData.ai_word_total ?? 0,
-      trend_list: Array.isArray(statsData.trend_list) ? statsData.trend_list : [],
+  const statusLabel = (statusCode: string) =>
+    statusOptions.find((item) => item.value === statusCode)?.label ?? statusCode
+
+  const statusBadge = (statusCode: string) =>
+    statusCode === 'serial' ? 'success' : statusCode === 'completed' ? 'neutral' : 'warning'
+
+  const loadStats = async () => {
+    stats.value = await getStatsOverview()
+  }
+
+  const refreshAll = () => Promise.all([load(), loadStats(), projectStore.loadProjectOptions()])
+
+  const remove = async (row: NWProjectVo) => {
+    try {
+      await ElMessageBox.confirm(
+        `将删除「${row.project_name}」及其全部卷章、设定与知识库文档，${t('common.confirmDelete')}`,
+        t('common.reminder'),
+        { type: 'warning' }
+      )
+    } catch {
+      return
     }
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    statsLoading.value = false
+    await deleteProject(row.project_ulid)
+    ElMessage.success(t('common.deleteSuccess'))
+    await refreshAll()
   }
-}
 
-async function loadDailyGoal(): Promise<void> {
-  try {
-    const settingList = await get<NWSettingItemVo[]>('/setting/list')
-    const goalValue = Number(
-      settingList.find((item) => item.setting_key === 'daily_word_goal')?.setting_value ?? '',
-    )
-    dailyGoal.value = Number.isFinite(goalValue) && goalValue > 0 ? goalValue : 2000
-  } catch {
-    dailyGoal.value = 2000
+  const enterProject = (path: string, row: NWProjectVo) => {
+    projectStore.selectProject(row.project_ulid)
+    void router.push(`/${path}/${row.project_ulid}`)
   }
-}
 
-async function loadProjectList(): Promise<void> {
-  projectLoading.value = true
-  try {
-    const pageData = await listProjects({
-      page_num: projectPageNum.value,
-      page_size: NW_PROJECT_PAGE_SIZE,
-      keyword_text: keywordText.value.trim() || undefined,
-      project_status: statusFilter.value || undefined,
-    })
-    projectList.value = pageData.items ?? []
-    projectTotal.value = pageData.total ?? 0
-  } catch {
-    projectList.value = []
-    projectTotal.value = 0
-  } finally {
-    projectLoading.value = false
-  }
-}
-
-function handleSearch(): void {
-  projectPageNum.value = 1
-  void loadProjectList()
-}
-
-function handleStatusChange(statusCode: string): void {
-  statusFilter.value = statusCode
-  handleSearch()
-}
-
-function openProjectDrawer(projectVo?: NWProjectVo): void {
-  editingProject.value = projectVo ?? null
-  drawerVisible.value = true
-}
-
-async function handleProjectSaved(): Promise<void> {
-  await Promise.all([loadProjectList(), loadStatsOverview(), projectStore.loadProjectList()])
-}
-
-async function handleDeleteProject(projectVo: NWProjectVo): Promise<void> {
-  try {
-    await ElMessageBox.confirm(
-      t('dashboard.deleteProjectConfirm'),
-      t('dashboard.deleteProject'),
-      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') },
-    )
-  } catch {
-    return
-  }
-  try {
-    await deleteProject(projectVo.project_ulid)
-    ElMessage.success(t('dashboard.deleteSuccess'))
-    await Promise.all([loadProjectList(), loadStatsOverview(), projectStore.loadProjectList()])
-  } catch {
-    // 失败提示由 http 层统一弹出
-  }
-}
-
-function openProject(projectVo: NWProjectVo): void {
-  projectStore.setCurrentProject(projectVo.project_ulid)
-  void router.push(`/workspace/${projectVo.project_ulid}`)
-}
-
-function handlePageChange(pageNum: number): void {
-  projectPageNum.value = pageNum
-  void loadProjectList()
-}
-
-onMounted(() => {
-  void loadStatsOverview()
-  void loadDailyGoal()
-  void loadProjectList()
-})
+  onMounted(() => {
+    void load()
+    void loadStats()
+  })
 </script>
 
 <template>
-  <div class="nw-page dashboard-page">
-    <NWPageHeader
-      :eyebrow_text="todayDateText"
-      :title_text="t('dashboard.greetTitle', { name: authStore.user_vo?.user_name || t('dashboard.greetWriter'), greet: greetText })"
-      :subtitle_text="t('dashboard.greetSubtitle')"
-      icon_code="sparkles"
-    >
-      <template #actions>
-        <NWButton @click="openProjectDrawer()">
-          <NWIcon icon_code="plus" :size_px="15" />
-          {{ t('dashboard.createProject') }}
-        </NWButton>
-        <NWButton v-if="continueProject" type="primary" @click="openProject(continueProject)">
-          <NWIcon icon_code="play" :size_px="14" />
-          {{ t('dashboard.continueWriting') }}
-        </NWButton>
-      </template>
-    </NWPageHeader>
-
-    <div class="nw-stat-grid">
-      <NWStatTile :label_text="t('dashboard.projectCount')" :value_number="statsOverview.project_count" :hint_text="t('dashboard.projectCountHint')" icon_code="bookOpen" tone_code="primary" />
-      <NWStatTile :label_text="t('dashboard.totalWords')" :value_number="statsOverview.total_word_count" :hint_text="t('dashboard.totalWordsHint')" icon_code="pen" tone_code="neutral" />
-      <NWStatTile :label_text="t('dashboard.todayWords')" :value_number="statsOverview.today_word_delta" :hint_text="t('dashboard.todayWordsHint')" icon_code="flame" tone_code="warning" />
-      <NWStatTile :label_text="t('dashboard.aiWords')" :value_number="statsOverview.ai_word_total" :hint_text="t('dashboard.aiWordsHint')" icon_code="sparkles" tone_code="info" />
+  <div class="nw-page">
+    <div class="nw-toolbar">
+      <ElInput
+        v-model="query.keyword_text"
+        placeholder="搜索项目名"
+        clearable
+        class="dashboard__search"
+        @keyup.enter="search()"
+        @clear="search()"
+      />
+      <ElSelect v-model="query.project_status" class="dashboard__status" @change="search()">
+        <ElOption
+          v-for="item in statusOptions"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+        />
+      </ElSelect>
+      <ElButton type="primary" plain @click="formDialog?.open()">
+        <Icon icon="mdi:plus" :size="15" />
+        <span class="ml-4px">新建项目</span>
+      </ElButton>
+      <div class="dashboard__spacer" />
+      <span class="nw-hint">{{ t('common.total', { total }) }}</span>
     </div>
 
-    <div class="dashboard-page__main-grid">
-      <DashboardTrendCard :overview="statsOverview" :loading="statsLoading" />
-
-      <section class="nw-panel dashboard-page__goal-panel">
-        <header class="nw-panel__header">
-          <div>
-            <h3 class="nw-panel__title">{{ t('dashboard.todayGoal') }}</h3>
-            <p class="nw-panel__subtitle">{{ t('dashboard.todayGoalSubtitle') }}</p>
-          </div>
-        </header>
-        <div class="nw-panel__body">
-          <div class="dashboard-page__goal-value">
-            <strong>{{ statsOverview.today_word_delta }}</strong>
-            <span>/ {{ dailyGoal.toLocaleString() }} {{ t('dashboard.goalUnit') }}</span>
-          </div>
-          <el-progress :percentage="goalPercent" :stroke-width="9" :show-text="false" class="dashboard-page__goal-progress" />
-          <p class="nw-hint">
-            {{ goalPercent >= 100 ? t('dashboard.goalDone') : t('dashboard.goalRemain', { count: Math.max(0, dailyGoal - statsOverview.today_word_delta) }) }}
-          </p>
-
-          <div class="dashboard-page__quick-list">
-            <button v-if="continueProject" type="button" class="dashboard-page__quick-item" @click="openProject(continueProject)">
-              <span class="dashboard-page__quick-icon"><NWIcon icon_code="edit" :size_px="16" /></span>
-              <span class="dashboard-page__quick-text">
-                <strong>{{ t('dashboard.quickContinue') }}</strong>
-                <small>{{ continueProject.project_name }}</small>
-              </span>
-              <NWIcon icon_code="chevronRight" :size_px="14" />
-            </button>
-            <button type="button" class="dashboard-page__quick-item" @click="openProjectDrawer()">
-              <span class="dashboard-page__quick-icon"><NWIcon icon_code="plus" :size_px="16" /></span>
-              <span class="dashboard-page__quick-text">
-                <strong>{{ t('dashboard.quickNewProject') }}</strong>
-                <small>{{ t('dashboard.quickNewProjectHint') }}</small>
-              </span>
-              <NWIcon icon_code="chevronRight" :size_px="14" />
-            </button>
-            <button v-if="continueProject" type="button" class="dashboard-page__quick-item" @click="router.push(`/knowledge/${continueProject.project_ulid}`)">
-              <span class="dashboard-page__quick-icon"><NWIcon icon_code="database" :size_px="16" /></span>
-              <span class="dashboard-page__quick-text">
-                <strong>{{ t('dashboard.quickKnowledge') }}</strong>
-                <small>{{ t('dashboard.quickKnowledgeHint') }}</small>
-              </span>
-              <NWIcon icon_code="chevronRight" :size_px="14" />
-            </button>
-          </div>
-        </div>
-      </section>
+    <div class="dashboard__stats">
+      <ElCard shadow="never" class="dashboard__stat">
+        <span class="dashboard__stat-label">项目数</span>
+        <strong class="dashboard__stat-value">{{ stats.project_count }}</strong>
+      </ElCard>
+      <ElCard shadow="never" class="dashboard__stat">
+        <span class="dashboard__stat-label">总字数</span>
+        <strong class="dashboard__stat-value">{{ stats.total_word_count.toLocaleString() }}</strong>
+      </ElCard>
+      <ElCard shadow="never" class="dashboard__stat">
+        <span class="dashboard__stat-label">今日新增</span>
+        <strong class="dashboard__stat-value is-accent">
+          {{ stats.today_word_delta.toLocaleString() }}
+        </strong>
+      </ElCard>
+      <ElCard shadow="never" class="dashboard__stat">
+        <span class="dashboard__stat-label">AI 产出</span>
+        <strong class="dashboard__stat-value">{{ stats.ai_word_total.toLocaleString() }}</strong>
+      </ElCard>
     </div>
 
-    <section class="nw-panel dashboard-page__project-panel">
-      <header class="nw-panel__header">
-        <div>
-          <h3 class="nw-panel__title">{{ t('dashboard.myProjects') }}</h3>
-          <p class="nw-panel__subtitle">{{ t('dashboard.myProjectsSubtitle', { count: projectTotal }) }}</p>
-        </div>
-        <div class="dashboard-page__project-actions">
-          <el-input v-model="keywordText" class="dashboard-page__search" clearable :placeholder="t('dashboard.searchProject')" @keyup.enter="handleSearch" @clear="handleSearch">
-            <template #prefix><NWIcon icon_code="search" :size_px="14" /></template>
-          </el-input>
-          <div class="dashboard-page__status-tabs">
-            <button
-              v-for="statusOption in projectStatusOptions"
-              :key="statusOption.value"
-              type="button"
-              class="dashboard-page__status-tab"
-              :class="{ 'is-active': statusFilter === statusOption.value }"
-              @click="handleStatusChange(statusOption.value)"
-            >
-              {{ statusOption.label }}
-            </button>
-          </div>
-          <NWButton size="small" type="primary" @click="openProjectDrawer()">
-            <NWIcon icon_code="plus" :size_px="14" />
-            {{ t('dashboard.createProject') }}
-          </NWButton>
-        </div>
-      </header>
+    <TrendChart :trend-list="stats.trend_list" />
 
-      <div class="nw-panel__body">
-        <div v-if="projectLoading" class="dashboard-page__project-skeleton">
-          <div v-for="index in 3" :key="index" class="dashboard-page__project-skeleton-item" />
+    <div v-loading="loading" class="dashboard__grid">
+      <ElCard v-for="row in items" :key="row.project_ulid" shadow="hover" class="project-card">
+        <div class="project-card__head">
+          <h3 class="project-card__name" :title="row.project_name">{{ row.project_name }}</h3>
+          <span class="nw-badge" :class="`nw-badge--${statusBadge(row.project_status)}`">
+            {{ statusLabel(row.project_status) }}
+          </span>
         </div>
-        <NWEmpty
-          v-else-if="projectList.length === 0"
-          icon_code="bookOpen"
-          :title_text="t('dashboard.projectEmptyTitle')"
-          :description_text="t('dashboard.projectEmptyDesc')"
-        >
-          <template #actions>
-            <NWButton type="primary" @click="openProjectDrawer()">
-              <NWIcon icon_code="plus" :size_px="14" />
-              {{ t('dashboard.createProject') }}
-            </NWButton>
-          </template>
-        </NWEmpty>
-        <template v-else>
-          <div class="dashboard-page__project-grid">
-            <DashboardProjectCard
-              v-for="projectVo in projectList"
-              :key="projectVo.project_ulid"
-              :project="projectVo"
-              :genre_text="genreLabel(projectVo.genre_code)"
-              :status_text="statusLabel(projectVo.project_status)"
-              :status_class="statusBadgeClass(projectVo.project_status)"
-              :cover_style="coverGradient(projectVo.project_name)"
-              :relative_text="formatProjectTime(projectVo.updated_at)"
-              @open="openProject(projectVo)"
-              @edit="openProjectDrawer(projectVo)"
-              @remove="handleDeleteProject(projectVo)"
-            />
-          </div>
+        <p class="project-card__synopsis">
+          {{ row.synopsis_text || '还没有简介，点「编辑」补一句。' }}
+        </p>
+        <div class="project-card__meta">
+          <span>{{ row.volume_count }} 卷 / {{ row.chapter_count }} 章</span>
+          <span>{{ row.total_word_count.toLocaleString() }} 字</span>
+        </div>
+        <div class="project-card__actions">
+          <ElButton type="primary" plain size="small" @click="enterProject('workspace', row)">
+            <Icon icon="mdi:pencil-outline" :size="14" />
+            <span class="ml-4px">写作台</span>
+          </ElButton>
+          <ElButton size="small" plain @click="enterProject('outline', row)">大纲</ElButton>
+          <ElButton size="small" plain @click="enterProject('character', row)">角色</ElButton>
+          <ElButton size="small" plain @click="enterProject('knowledge', row)">知识库</ElButton>
+          <div class="project-card__spacer" />
+          <ElButton size="small" text @click="formDialog?.open(row)">编辑</ElButton>
+          <ElButton size="small" text type="danger" @click="remove(row)">删除</ElButton>
+        </div>
+      </ElCard>
 
-          <el-pagination
-            v-if="projectTotal > NW_PROJECT_PAGE_SIZE"
-            class="dashboard-page__pagination"
-            layout="total, prev, pager, next"
-            :total="projectTotal"
-            :page-size="NW_PROJECT_PAGE_SIZE"
-            :current-page="projectPageNum"
-            background
-            @current-change="handlePageChange"
-          />
-        </template>
-      </div>
-    </section>
+      <ElEmpty v-if="!loading && items.length === 0" description="还没有项目，先建一个吧" />
+    </div>
 
-    <DashboardProjectDrawer v-model:visible="drawerVisible" :project="editingProject" @saved="handleProjectSaved" />
+    <div v-if="total > pageSize" class="dashboard__pager">
+      <ElPagination
+        :current-page="pageNum"
+        :page-size="pageSize"
+        :total="total"
+        layout="prev, pager, next"
+        background
+        @current-change="changePage"
+      />
+    </div>
+
+    <ProjectFormDialog ref="formDialog" @saved="refreshAll" />
   </div>
 </template>
 
-<style scoped src="./dashboard.css"></style>
+<style lang="less" scoped>
+  .dashboard {
+    &__search {
+      width: 220px;
+    }
+
+    &__status {
+      width: 140px;
+    }
+
+    &__spacer {
+      flex: 1;
+    }
+
+    &__stats {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+
+    &__stat {
+      :deep(.el-card__body) {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 16px 18px;
+      }
+    }
+
+    &__stat-label {
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+    }
+
+    &__stat-value {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--nw-ink);
+      font-variant-numeric: tabular-nums;
+
+      &.is-accent {
+        color: var(--el-color-primary);
+      }
+    }
+
+    &__grid {
+      display: grid;
+      gap: 14px;
+      min-height: 120px;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    }
+
+    &__pager {
+      display: flex;
+      justify-content: flex-end;
+    }
+  }
+
+  .project-card {
+    border-radius: var(--nw-radius-lg);
+
+    &__head {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    &__name {
+      overflow: hidden;
+      font-size: 15px;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &__synopsis {
+      display: -webkit-box;
+      min-height: 38px;
+      margin: 8px 0 10px;
+      overflow: hidden;
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: var(--el-text-color-secondary);
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    &__meta {
+      display: flex;
+      gap: 14px;
+      font-size: 12px;
+      color: var(--el-text-color-placeholder);
+    }
+
+    &__actions {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      margin-top: 14px;
+    }
+
+    &__spacer {
+      flex: 1;
+    }
+  }
+</style>

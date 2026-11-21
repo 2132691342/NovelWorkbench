@@ -44,6 +44,11 @@ export async function deleteLore(loreUlid: string): Promise<void> {
   await post('/lore/delete', { lore_ulid: loreUlid })
 }
 
+/** 设定列表（可按类型与关键词过滤，note 为创作笔记） */
+export function listLore(req: NWLoreListReqVo): Promise<NWLoreVo[]> {
+  return post<NWLoreVo[]>('/lore/list', req)
+}
+
 /** 创作笔记列表（lore_type_code 固定 note） */
 export function listLoreNotes(projectUlid: string): Promise<NWLoreVo[]> {
   return post<NWLoreVo[]>('/lore/list', {

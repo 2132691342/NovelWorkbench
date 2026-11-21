@@ -27,7 +27,7 @@
 | 18 | 数据总览 | `word_count_stats`、`projects` | `service/stats_service.go` |
 | 19 | 用量分析 | `model_usage_stats` | `service/model_usage_service.go` |
 | 20 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
-| 21 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/stores`、`frontend/src/views/workspace` |
+| 21 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/store`、`frontend/src/views/Workspace` |
 
 后端在 `backend/internal/api/router.go` 内注册 111 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、18 个内置技能（`backend/internal/ai/domain_<域>.go`，每域两个）与 9 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
 
@@ -115,12 +115,12 @@
 
 ### 3.2 实现路径
 
-- `MenuService.SeedDefaults`：按 `menu_code` 查缺补插，父级编码先于子级解析，缺父直接报错，保证播种顺序敏感且幂等。
+- `MenuService.SeedDefaults`：按 `menu_code` 查缺补插，父级编码先于子级解析，缺父直接报错；已存在的行由 `syncSeed` 校正名称、类型、作用域、路由、图标、权限码与排序，保证升级后导航与权限不漂移（展示开关与备注保留作者改动）。
 - `MenuService.Nav`：`roleSvc.PermCodesOfUser` 取权限并集 → `menuRepo.ListEnabled` → `filterVisibleMenus`（剔除动作节点、隐藏节点、未命中权限码的节点，`*` 全放行）→ `buildMenuTree` 按 `parent_ulid` 递归装配，返回 `menu_tree_list` 与 `perm_code_list`。
 - `MenuService.Save`：分组不能配路由；`validateParent` 阻止指向自己或自己的下级（成环检测，深度上限 32）；`menu_code` 由 `GetByCode` 判重，`perm_code` 由 `CountByPermCode` 判重（排除自身）。
 - `MenuService.Delete`：存在下级时返回 `ERR_CONFLICT`，不做级联。
 - `MenuService.PermissionCatalog` / `buildPermCatalog`：把菜单行上的非空 `perm_code` 按首段分组（`permGroupCode` / `permGroupLabel`），`*` 单独登记为「全部权限」，同一权限码重复登记只展示一次。
-- 前端 `frontend/src/stores/menu.ts` 的 `loadNav` 拉取 `GET /menu/nav`，把树与权限码同时写入 menu store 与 auth store；`frontend/src/layout/AdminLayout.vue` 侧边栏按 `menu_tree_list` 渲染，项目内菜单在未选项目时置灰。
+- 前端 `frontend/src/store/modules/menu.ts` 的 `loadNav` 拉取 `GET /menu/nav`，把树与权限码同时写入 menu store 与 user store；`frontend/src/layout/components/NavMenu.vue` 按 `menu_tree_list` 渲染侧边栏，项目内菜单在未选项目时置灰。
 
 ### 3.3 边界
 
@@ -188,7 +188,7 @@
 
 ### 5.4 权衡
 
-「配置即表 + 每次读」让保存后立即生效，不需要重启或广播失效，也不需要配置中心。代价是热路径（每次对话、每次检索）多一次小表查询，并且配置项必须编译期登记——这是一次有意的收紧：运行时只能改值，不能改结构，避免出现无人认识的配置键。前端 `views/settings/index.vue` 里另有一份展示元数据（分组、单位、区间），与后端区间重复，改动时需要两边同步。
+「配置即表 + 每次读」让保存后立即生效，不需要重启或广播失效，也不需要配置中心。代价是热路径（每次对话、每次检索）多一次小表查询，并且配置项必须编译期登记——这是一次有意的收紧：运行时只能改值，不能改结构，避免出现无人认识的配置键。前端 `views/Settings/index.vue` 里另有一份展示元数据（分组、单位、区间），与后端区间重复，改动时需要两边同步。
 
 ## 6. 站内通知
 
@@ -208,7 +208,7 @@
 - `NotificationService.Notify`：`user_ulid` 为空直接返回（如项目已删除导致接收人缺失）；标题 128、正文 512、链接 256 字符截断（`pkg.TruncateText`）；类型缺省 `system`。
 - `ListPage` / `UnreadCount` / `MarkRead` / `MarkAllRead` / `Delete` 全部以 `user_ulid` 作为查询条件，不接受跨用户 ID。
 - `DeleteByUser` 在账号删除时清理该用户全部通知。
-- 前端 `frontend/src/stores/notification.ts` 统一维护 `unread_count` 与最近 5 条；`layout/NotificationBell.vue` 挂载时刷新并每 60 秒轮询一次；`views/notification/index.vue` 提供状态/类型筛选与单条、批量已读。
+- 前端 `frontend/src/store/modules/notification.ts` 维护未读数；`layout/components/NotificationBell.vue` 挂载时刷新并每 60 秒轮询一次；`views/Notifications/index.vue` 提供状态筛选与单条、批量已读。
 
 ### 6.3 边界
 
@@ -232,7 +232,7 @@
 - `service/knowledge_worker.go` 的 `Run`：启动时 `ensureManticoreSchema`，结构升级返回 `true` 时 `rebuildManticoreIndex` 从 PostgreSQL 回灌；随后阻塞消费，消费中断按 `consumeReconnectInterval`（5 秒）重连，`ctx` 取消时优雅退出。
 - `handleIndexJob`：`GetPendingByDoc` 找回任务行 → 文档置 `indexing` → 内部重试至多 `maxIndexRetryCount`（3）次，退避为 1s/2s/3s → 成功置 `success` 并发通知，全部失败置 `failed` 并回写 `error_message`，随后 `ack`（毒消息不重投）。
 - `service/job_service.go` 的 `ListPage`：解析载荷批量取文档名（`GetDocumentsByULIDs`），避免 N+1；`Stats` 按状态计数；`Retry` 只接受 `failed`，把任务重置为 `queued`、文档重置为 `pending` 后重新投递。
-- 前端 `views/admin/jobs.vue` 展示四张状态卡 + 筛选表 + 失败重试（二次确认）。
+- 前端 `views/Admin/Jobs.vue` 展示四张状态卡 + 筛选表 + 失败重试（二次确认）。
 
 ### 7.3 边界
 
@@ -267,7 +267,7 @@
 - `service/chapter_service.go` 的 `Create` 校验卷属于该项目，`chapter_order` 取 `MaxOrder+1`，初始状态 `draft`。
 - `ChapterService.Update`：单事务内按非空字段更新；正文变化时用 `pkg.CountWords` 重算，差值经 `applyWordDelta` 同时调整 `projects.total_word_count`（`AdjustTotalWordCount` 用 SQL 表达式增减）与当日 `word_count_stats.word_delta`。
 - `SnapshotRestore`：回滚前先把当前正文写成一条 `manual` 快照（`change_note` 为「restore 自动留档」），再覆盖正文并重算字数差。
-- 字数口径在 `pkg/text.go` 的 `CountWords`：汉字逐字计数，连续拉丁字符算一个词，前端 `views/workspace/wordCount.ts` 与后端同口径。
+- 字数口径在 `pkg/text.go` 的 `CountWords`：汉字逐字计数，连续拉丁字符算一个词，前端 `views/Workspace/wordCount.ts` 与后端同口径。
 
 ### 8.3 边界
 
@@ -293,7 +293,7 @@
 - `Delete`：单事务内先 `DeleteRelationsByCharacter` 再删角色，避免悬挂边。
 - `Graph`：一次取全项目角色与全项目关系，装配 `CharacterGraphVO{NodeList, EdgeList}`，节点只带 `character_ulid` / `character_name` / `role_type_code`。
 - `RelationSave`：拒绝自环（两端相同 ULID）；两端角色必须存在且都属本项目；`RelationDelete` 按关系行反查项目做归属校验。
-- 前端 `views/character/index.vue` 为卡片网格 + 编辑抽屉；`CharacterGraphTab.vue` 用 `await import('@antv/x6')` 懒加载渲染关系图，卸载时 `dispose`。
+- 前端 `views/Character/index.vue` 为卡片网格 + 编辑抽屉；`views/Character/components` 下的关系图页签 用 `await import('@antv/x6')` 懒加载渲染关系图，卸载时 `dispose`。
 - 角色卡同时是 AI 上下文素材：`service/chat_context.go` 的 `formatCharacterBlock` 把每个角色的性格截断 120 字、背景截断 200 字后注入（优先级 `ai.PriorityCharacter`）。
 
 ### 9.3 边界
@@ -317,8 +317,8 @@
 - `service/lore_service.go` 的 `Save`：新建时 `content_mode_code` 缺省 `rich`；更新时只覆盖非空字段，`content_mode_code` 传空表示保持原值。
 - `Delete` / `List` 均先经 `mustOwnProject`；列表支持按 `lore_type_code` 与关键词过滤，按 `sort_order` 升序。
 - 笔记隔离有两道闸：`repo/chat_repo.go` 的 `ListLoreBriefsByProject` 在 SQL 层 `WHERE lore_type_code != 'note'`；`service/chat_context.go` 的 `formatLoreBlock` 再跳过一次 `note`。
-- 前端 `views/lore/index.vue` 按分类展示设定卡片；`views/notes/index.vue` 只查 `NW_LORE_TYPE_NOTE`，标题与正文 2 秒防抖自动保存（`POST /lore/save`），切换笔记前 `flushSave`，保存状态分 `idle/saving/saved/failed`。
-- 笔记双模式由 `views/notes/noteContent.ts` 桥接：`rich` 用 WangEditor，`markdown` 用 MavonEditor，切换模式时用 turndown / marked 做 HTML 与 Markdown 互转，模式随 `content_mode_code` 持久化。
+- 前端 `views/Lore/index.vue` 按分类展示设定卡片；`views/Notes/index.vue` 只查 `NW_LORE_TYPE_NOTE`，标题与正文 2 秒防抖自动保存（`POST /lore/save`），切换笔记前 `flushSave`，保存状态分 `idle/saving/saved/failed`。
+- 笔记双模式由 `views/Notes/components/NoteEditor.vue` 实现：`markdown` 模式用 `marked` 渲染预览，`rich` 模式直接按 HTML 渲染原文；两种模式共用同一个 textarea 与自动保存通道，模式随 `content_mode_code` 持久化。
 
 ### 10.3 边界
 
@@ -344,7 +344,7 @@
 - `DeleteNode`：先 `CountNodesByParent`，有子节点返回 `ERR_CONFLICT`，不做级联删除。
 - `ListTree`：一次取全项目节点，按 `parent_outline_ulid` 分桶后由 `attachOutlineChildren` 递归拼装，根节点为 `parent_outline_ulid = ''`。
 - `SaveScene`：先 `loadOwnedNode` 校验节点，`encodeCharacterULIDs` 把角色列表序列化为 JSON；新建时排序取 `MaxSceneOrder+1`；更新时 `loadOwnedScene` 确认场景属本项目。
-- 前端 `views/outline/index.vue` 左树右场景卡；节点类型/状态/节奏选项集中在 `views/outline/outlineOptions.ts`。
+- 前端 `views/Outline/index.vue` 左树右场景卡；节点类型/状态/节奏选项集中在 `views/Outline/components` 下的选项常量。
 
 ### 11.3 边界
 
@@ -376,7 +376,7 @@
 - `ReviewFact`：只接受 `confirmed` / `superseded` / `stale` 三种目标状态，明确不允许退回 `candidate`；`note_text` 非空时覆盖备注。
 - `SaveHook`：状态随显式保存推进，不做自动流转；重要度缺省 `medium`。
 - `SaveSummary`：无 `summary_ulid` 时先按 `(project_ulid, chapter_ulid)` 查既有记录，存在则更新，保证「一章一条摘要」；`source_hash_text` 只是原样存储。
-- 前端 `views/continuity/index.vue` 三个页签各自筛选与加载；事实行提供「确认 / 取代 / 标记过期」下拉，摘要状态在 `ContinuityDialogs.vue` 里选择。
+- 前端 `views/Continuity/index.vue` 三个页签各自筛选与加载；事实行提供「确认 / 取代 / 标记过期」下拉，摘要状态在 `views/Continuity/components` 下的弹窗组件 里选择。
 
 ### 12.3 边界
 
@@ -469,7 +469,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - `resolveSkillCode` / `parseSlashToken`：显式 `skill_code` 优先，否则只解析正文**首个 token** 的 `/code`，命中才剥离命令，未命中正文原样返回。
 - `resolveSkillVariables`：按变量声明取请求值，缺省值兜底，必填缺失进 `missing_list`，由 `Resolve` 原样返回给前端提示补全；对话链路只取 `SkillTemplate` 的模板文本，变量渲染发生在 `buildContextBlocks`。
 - 参考资料：`skill_reference_service.go` 的 `matchReferences` → `selectSkillReferences`：关键词为空总是命中，否则任一关键词出现在正文中即命中；按排序累计字符，超过 `skillReferenceBudgetChars`（4000）即停止（后续资料一律不取）。
-- 前端 `views/skills/index.vue` 支持作用域切换（全局 / 当前项目）+ 分类关键词筛选 + 编辑抽屉；`SkillReferencePanel.vue` 管理参考资料。
+- 前端 `views/Skills/index.vue` 支持作用域切换（全局 / 当前项目）+ 分类关键词筛选 + 编辑抽屉；`views/Skills/components` 下的参考资料面板 管理参考资料。
 
 ### 15.3 边界
 
@@ -497,7 +497,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - `ai.ComposeSystemPrompt(profileText, styleText)`：档案正文 + 「本项目文风约束」段落。有档案时不再拼内置人设，避免两套身份打架。
 - `Save`：作用域缺省 `global`；项目档案必须带项目并经 `mustOwnProject` 校验归属；`CountByCode` 保证作用域内编码唯一；内置档案可改正文与名称，但编码与作用域不可变。
 - `Delete`：内置档案拒绝删除（可停用），停用后使用它的对话自动回退到默认档案。
-- 前端 `views/prompts/index.vue` 管理档案，`views/workspace/ChatComposer.vue` 提供对话期档案选择（清空即用默认）。
+- 前端 `views/Prompts/index.vue` 管理档案，`views/Workspace/ChatComposer.vue` 提供对话期档案选择（清空即用默认）。
 
 ### 16.3 边界
 
@@ -555,7 +555,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - `service/stats_service.go` 的 `Overview`：`project_ulid` 非空时先 `mustOwnProject`；随后 `CountProjects`、`SumTotalWordCount`、`SumWordDeltaByDate`（今日）、`SumAIWordTotal`、`trendList` 五次查询。
 - `trendList`：`SumDailyBetween` 取区间内有数据的日期，再按天循环补零，保证 30 个点连续。
 - `repo/stats_repo.go` 的所有查询都 `JOIN projects` 并按 `user_ulid` 过滤，`project_ulid` 作为可选收窄条件。
-- 前端 `views/dashboard/index.vue` 用 ECharts 画柱（`word_delta`）+ 折线（`ai_word_delta`）双系列；每日目标读 `daily_word_goal` 配置。
+- 前端 `views/Dashboard/index.vue` 用 ECharts 画柱（`word_delta`）+ 折线（`ai_word_delta`）双系列；每日目标读 `daily_word_goal` 配置。
 
 ### 18.3 边界
 
@@ -579,7 +579,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - `flushLoop` 每 `usageFlushInterval`（5 秒）`Flush` 一次，`ctx` 取消时做最后一次落库；`Flush` 先整体换出新 map 再逐条 `UpsertIncrement`，单条失败只告警并丢弃该批。
 - `Overview`：查询前先 `Flush`，避免刚发生的调用看不到；`resolveUsageRange` 缺省近 14 天、非法日期回退默认、起止倒置自动交换；`fillUsageDaily` 补零；`weightedAvgLatency` 用每日调用数加权求平均延迟（整数运算）；成功率 = `(总调用 - 失败) / 总调用`。
 - 上报方：`ai/client.go` 的 `record` 与 `RecordStreamUsage` 通过 `ai.UsageRecorder` 接口调用 `ModelUsageService.RecordUsage`，`cmd/server/main.go` 用 `aiClient.SetUsageRecorder(usageService)` 注入，避免 `ai` 依赖存储层。
-- 前端 `views/admin/usage.vue` 提供 7/14/30 天预设、四项指标、双轴趋势图与两张分布表。
+- 前端 `views/Admin/Usage.vue` 提供 7/14/30 天预设、四项指标、双轴趋势图与两张分布表。
 
 ### 19.3 边界
 
@@ -613,7 +613,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - `probeDependency`：探针为 `nil` 记 `degraded`「未配置」；执行成功记 `up` 并记录耗时；失败时必需依赖记 `down`、其余记 `degraded`，消息截断 200 字符。
 - `NewSystemStatusService` 在 `BuildVersion` 为空时补 `dev`，并用构造时刻作为启动时刻。
 - 探针由 `cmd/server/main.go` 以闭包形式注入（`SystemProbeDeps`），service 不直接持有各中间件客户端。
-- 前端 `views/admin/status.vue` 手动刷新，不做自动轮询。
+- 前端 `views/Admin/Status.vue` 手动刷新，不做自动轮询。
 
 ### 20.3 边界
 
@@ -636,18 +636,18 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 | 装配点 | 数据来源 | 消费位置 |
 | --- | --- | --- |
-| 侧边栏导航 | `GET /menu/nav` 的 `menu_tree_list` / `perm_code_list` | `stores/menu.ts` 的 `loadNav` → `layout/AdminLayout.vue` |
-| 项目上下文 | 路由参数 `:project_ulid` 优先，其次 `stores/project.ts` 的选中态 | `AdminLayout.vue` 的 `effectiveProjectUlid` |
-| 可用模型 | `GET /model/capability` | `views/workspace/AiPanel.vue` 的 `modelOptionList` |
-| 会话与消息 | `POST /chat/session/list`、`POST /chat/history` | `AiPanel.vue` |
+| 侧边栏导航 | `GET /menu/nav` 的 `menu_tree_list` / `perm_code_list` | `store/modules/menu.ts` 的 `loadNav` → `layout/components/NavMenu.vue` |
+| 项目上下文 | 路由参数 `:project_ulid` 优先，其次 `store/modules/project.ts` 的选中态 | `layout/Layout.vue` 的 `syncFromRoute`、`layout/useNavMenu.ts` |
+| 可用模型 | `GET /model/capability` | `views/Workspace/AiPanel.vue` 的 `modelOptions` |
+| 会话与消息 | `POST /chat/session/list`、`POST /chat/history` | `views/Workspace/AiPanel.vue` |
 | 流式生成 | `POST /chat/send`（fetch + `ReadableStream`） | `composables/useSSE.ts` 的 `streamSsePost` / `parseSseBuffer` |
-| 章节正文 | `GET /chapter/detail/{ChapterULID}`、`POST /chapter/update` | `views/workspace/ChapterEditor.vue`（CodeMirror 6，2 秒防抖保存） |
-| 目录树 | `GET /project/tree/{ProjectULID}` | `views/workspace/WorkspaceTree.vue`（含 XLSX 导出） |
-| 未读通知 | `GET /notification/unread_count`、`POST /notification/list` | `stores/notification.ts` → `layout/NotificationBell.vue` |
+| 章节正文 | `GET /chapter/detail/{ChapterULID}`、`POST /chapter/update` | `views/Workspace/ChapterEditor.vue`（CodeMirror 6，2 秒防抖保存） |
+| 目录树 | `GET /project/tree/{ProjectULID}` | `views/Workspace/WorkspaceTree.vue` |
+| 未读通知 | `GET /notification/unread_count`、`POST /notification/list` | `store/modules/notification.ts` → `layout/components/NotificationBell.vue` |
 
-- 写作台三栏：`views/workspace/index.vue` 组合 `WorkspaceTree` / `ChapterEditor` / `AiPanel`，左右栏可独立折叠。
+- 写作台三栏：`views/Workspace/index.vue` 组合 `WorkspaceTree` / `ChapterEditor` / `AiPanel`，左右栏可独立折叠。
 - AI 回复落正文是纯前端动作：`AiPanel` 发 `insert-to-chapter` 事件 → `index.vue` 的 `handleInsertToChapter` → `ChapterEditor.insertTextAtCursor`，随后走编辑器同一自动保存通道；「替换整章」多一次 `ElMessageBox.confirm`。
-- 权限判断只读 `perm_code_list`（含 `*`）：路由守卫调 `stores/menu.ts` 的 `hasPerm`（`stores/auth.ts` 有同名 getter 与同一份数据），前端不做角色推断。
+- 权限判断只读 `perm_code_list`（含 `*`）：路由守卫调 `store/modules/user.ts` 的 `hasPerm`，菜单可见性由后端导航树预先过滤，前端不做角色推断。
 
 ### 21.3 边界
 

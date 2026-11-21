@@ -1,5 +1,5 @@
-// AI 对话链路的场景回归：技能解析与覆盖 → 上下文装配与预算 → 消息序列 → 流式事件契约。
-// 每条用例讲一条完整链路，环节之间用「环节N」分隔，便于用 -run 精确定位失败环节。
+// AI 对话链路的场景回归：技能解析 → 上下文装配 → 消息成型 → 流式事件契约。
+// 每条用例讲一条完整链路，环节之间用「步骤N」分隔，便于用 -run 精确定位失败环节。
 
 package service
 
@@ -49,7 +49,7 @@ func (s *eventSink) Ping() error { return nil }
 // TestSkillResolutionChain 覆盖一次请求里技能从「命中」到「可渲染」的完整解析链路：
 // 编码解析 → 作用域优先级 → 变量取值 → 模板占位符校验 → 参考资料命中与预算 → 全局覆盖标记。
 func TestSkillResolutionChain(t *testing.T) {
-	// 环节1：编码解析。显式编码优先于正文首 token，正文命令不在开头时不命中。
+	// 步骤1：编码解析。显式编码优先于正文首 token，正文命令不在开头时不命中。
 	cases := []struct {
 		caseName   string
 		explicit   string
@@ -64,15 +64,13 @@ func TestSkillResolutionChain(t *testing.T) {
 		{"命令不在开头", "", "续写 /continue", "", "续写 /continue"},
 	}
 	for _, testCase := range cases {
-		t.Run(testCase.caseName, func(t *testing.T) {
-			code, remain := resolveSkillCode(testCase.explicit, testCase.content)
-			if code != testCase.wantCode || remain != testCase.wantRemain {
-				t.Fatalf("resolveSkillCode = %q %q, want %q %q", code, remain, testCase.wantCode, testCase.wantRemain)
-			}
-		})
+		code, remain := resolveSkillCode(testCase.explicit, testCase.content)
+		if code != testCase.wantCode || remain != testCase.wantRemain {
+			t.Fatalf("resolveSkillCode = %q %q, want %q %q", code, remain, testCase.wantCode, testCase.wantRemain)
+		}
 	}
 
-	// 环节2：作用域优先级。项目技能胜过全局；项目技能停用回退全局；全局停用则不命中。
+	// 步骤2：作用域优先级。项目技能胜过全局；项目技能停用回退全局；全局停用则不命中。
 	project := skillDO("SKL_P", domain.SkillScopeProject, "PRJ_1", "polish", true)
 	global := skillDO("SKL_G", domain.SkillScopeGlobal, "", "polish", true)
 	disabledProject := skillDO("SKL_P", domain.SkillScopeProject, "PRJ_1", "polish", false)
@@ -88,7 +86,7 @@ func TestSkillResolutionChain(t *testing.T) {
 		t.Fatalf("停用全局技能不应命中: %+v", got)
 	}
 
-	// 环节3：变量取值。显式值 > 声明缺省 > 必填缺失；显式空值回落缺省；内置变量自动注入。
+	// 步骤3：变量取值。显式值 > 声明缺省 > 必填缺失；显式空值回落缺省；内置变量自动注入。
 	declared := []domain.SkillVariableDO{
 		{VariableName: "tone", VariableLabel: "语气", DefaultValue: "克制"},
 		{VariableName: "scene", VariableLabel: "场景", RequiredFlag: true},
@@ -105,7 +103,7 @@ func TestSkillResolutionChain(t *testing.T) {
 		t.Fatalf("显式空值应回落缺省: %+v", valueMap)
 	}
 
-	// 环节4：模板占位符白名单。已声明放行，未声明拒绝。
+	// 步骤4：模板占位符白名单。已声明放行，未声明拒绝。
 	if err := validateSkillTemplate("润色 {{user_input}} 与 {{tone}}", declared); err != nil {
 		t.Fatalf("已声明占位符不应报错: %v", err)
 	}
@@ -113,7 +111,7 @@ func TestSkillResolutionChain(t *testing.T) {
 		t.Fatal("未声明占位符必须被拒绝")
 	}
 
-	// 环节5：参考资料命中与预算。空关键词总命中；多关键词任一命中；超预算不注入。
+	// 步骤5：参考资料命中与预算。空关键词总命中；多关键词任一命中；超预算不注入。
 	if !matchSkillReferenceKeywords("", []string{"任意正文"}) {
 		t.Fatal("空关键词应总是命中")
 	}
@@ -137,7 +135,7 @@ func TestSkillResolutionChain(t *testing.T) {
 		t.Fatalf("参考资料注入格式错误: %v", selected)
 	}
 
-	// 环节6：全局覆盖标记。同编码且启用的项目技能覆盖全局；停用或异编码不覆盖。
+	// 步骤6：全局覆盖标记。同编码且启用的项目技能覆盖全局；停用或异编码不覆盖。
 	otherCode := skillDO("SKL_O", domain.SkillScopeProject, "PRJ_1", "continue", true)
 	if !isOverriddenGlobalSkill(&global, []domain.SkillDO{global, project}) {
 		t.Fatal("同编码项目技能应标记覆盖")
@@ -151,9 +149,9 @@ func TestSkillResolutionChain(t *testing.T) {
 }
 
 // TestChatContextChain 覆盖一次请求里上下文从「素材」到「消息序列」的完整装配链路：
-// 技能模板渲染 → 引用分优先级 → 设定过滤 → 摘要与档案注入 → 预算裁剪 → 历史选取 → 消息成型 → 引用校验。
+// 技能模板渲染 → 引用分优先级 → 摘要与档案注入 → 预算裁剪 → 历史选取 → 消息成型 → 引用校验。
 func TestChatContextChain(t *testing.T) {
-	// 环节1：技能命中时渲染模板并产出最终指令；未命中时直接用用户正文。
+	// 步骤1：技能命中时渲染模板并产出最终指令；未命中时直接用用户正文。
 	blocks, instruction := buildContextBlocks(chatContextInput{
 		SkillTemplate: "润色指令：{{user_input}}｜语气：{{tone}}｜章节：{{chapter_content}}｜依据：{{context}}",
 		SkillVariable: map[string]string{"tone": "克制"},
@@ -183,7 +181,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("技能未命中应直接用用户正文: %q", freeInstruction)
 	}
 
-	// 环节2：引用分优先级。当前章 90，引用章与文档 80，私人笔记不进上下文。
+	// 步骤2：引用分优先级。当前章 90，引用章与文档 80，私人笔记不进上下文。
 	blocks, _ = buildContextBlocks(chatContextInput{
 		UserInput: "提问",
 		ChapterList: []chapterSource{
@@ -216,7 +214,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("私人笔记不应注入: %q", lore.ContentText)
 	}
 
-	// 环节3：显式引用摘要与档案按 80 注入，与自动梗概（60）并存；未引用时不产生空块。
+	// 步骤3：显式引用摘要与档案按 80 注入，与自动梗概（60）并存；未引用时不产生空块。
 	blocks, _ = buildContextBlocks(chatContextInput{
 		UserInput:      "提问",
 		RefSummaryList: []string{"第一章：主角取得钥匙"},
@@ -242,7 +240,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatal("未引用摘要/提示词时不应产生对应块")
 	}
 
-	// 环节4：预算裁剪。同优先级保持输入顺序；超预算按优先级丢块；历史不重复注入。
+	// 步骤4：预算裁剪。同优先级保持输入顺序；超预算按优先级丢块；历史不重复注入。
 	blocks, _ = buildContextBlocks(chatContextInput{
 		UserInput:     "提问",
 		CharacterList: []domain.CharacterDO{{CharacterName: "林澈"}},
@@ -274,7 +272,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("历史不应注入上下文块: %q", assembled)
 	}
 
-	// 环节5：历史选取。最近 N 条旧到新；显式引用去重并置尾；N 为 0 时只注入引用消息。
+	// 步骤5：历史选取。最近 N 条旧到新；显式引用去重并置尾；N 为 0 时只注入引用消息。
 	messages := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),
@@ -300,7 +298,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("N 为 0 只应注入引用消息: %v", got)
 	}
 
-	// 环节6：消息序列成型。system(含文风) → 上下文 → 历史 role 映射 → 最终指令。
+	// 步骤6：消息序列成型。system(含文风) → 上下文 → 历史 role 映射 → 最终指令。
 	history := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "历史问"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "历史答"),
@@ -326,7 +324,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("装配文本为空应省略上下文消息: %+v", out)
 	}
 
-	// 环节7：显式引用必须属于当前会话，去重后保序。
+	// 步骤7：显式引用必须属于当前会话，去重后保序。
 	sessionMessages := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),

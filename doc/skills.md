@@ -36,8 +36,9 @@
 
 ### 1.2 技能编码与前端入口的契约
 
-`/continue`、`/polish`、`/summary`、`/deai`、`/review` 这五个编码被写作台快捷按钮与 `Skills` 页示例直接引用，
-`internal/ai/builtin_assets_test.go` 会断言它们始终存在。改编码等于改前端契约，必须同步改前端。
+`/continue`、`/polish`、`/summary` 这三个编码被写作台的快捷按钮直接引用
+（`frontend/src/views/Workspace/index.vue`），改编码等于改前端契约，必须同步改前端。
+其余编码只在技能列表与试用入口出现，不构成硬编码依赖。
 
 ## 2. 提示词的构造规则
 

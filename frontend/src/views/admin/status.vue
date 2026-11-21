@@ -1,257 +1,208 @@
-<!--
-  运行状态页：进程信息（版本/启动时间/运行时长）+ 依赖健康（PostgreSQL/Redis/RabbitMQ/MinIO/Manticore/模型）
-  + AI 能力就绪结论。手动刷新，避免频繁探测打爆依赖。
--->
+<!-- 运行状态页：手动探测各中间件与模型网关的可用性。 -->
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { getSystemStatus, type NWSystemStatusVo } from '@/api/model'
-import NWButton from '@/components/NWButton.vue'
-import NWCard from '@/components/NWCard.vue'
-import NWEmpty from '@/components/NWEmpty.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import { formatTime } from '@/utils/time'
+  import { computed, onMounted, ref } from 'vue'
+  import { ElButton, ElCard, ElEmpty } from 'element-plus'
+  import { getSystemStatus } from '@/api/model'
+  import type { NWDependencyHealthVo, NWSystemStatusVo } from '@/api/model'
+  import { formatTime } from '@/utils/time'
 
-const { t } = useI18n()
+  const status = ref<NWSystemStatusVo | null>(null)
+  const loading = ref(false)
 
-const loading = ref(false)
-const statusVo = ref<NWSystemStatusVo | null>(null)
-const loadError = ref(false)
-/** 加载运行状态 */
-async function loadStatus(): Promise<void> {
-  loading.value = true
-  loadError.value = false
-  try {
-    statusVo.value = await getSystemStatus()
-  } catch {
-    loadError.value = true
-    statusVo.value = null
-  } finally {
-    loading.value = false
+  const healthBadge = (statusCode: string) => {
+    if (statusCode === 'up') return 'success'
+    if (statusCode === 'degraded') return 'warning'
+    return 'danger'
   }
-}
 
-/** 运行时长文案（天/小时/分钟） */
-const uptimeText = computed(() => {
-  const uptimeSec = statusVo.value?.server_uptime_sec ?? 0
-  const days = Math.floor(uptimeSec / 86400)
-  const hours = Math.floor((uptimeSec % 86400) / 3600)
-  const minutes = Math.floor((uptimeSec % 3600) / 60)
-  if (days > 0) {
-    return `${days}d ${hours}h ${minutes}m`
+  const healthLabel = (statusCode: string) => {
+    if (statusCode === 'up') return '正常'
+    if (statusCode === 'degraded') return '降级'
+    return '异常'
   }
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`
-  }
-  return `${minutes}m`
-})
 
-/** 状态展示文案 */
-function statusText(statusCode: string): string {
-  switch (statusCode) {
-    case 'up':
-      return t('status.up')
-    case 'degraded':
-      return t('status.degraded')
-    default:
-      return t('status.down')
-  }
-}
+  /** 运行时长：天/时/分 */
+  const uptimeText = computed(() => {
+    const totalSec = status.value?.server_uptime_sec ?? 0
+    const days = Math.floor(totalSec / 86400)
+    const hours = Math.floor((totalSec % 86400) / 3600)
+    const minutes = Math.floor((totalSec % 3600) / 60)
+    const parts: string[] = []
+    if (days > 0) parts.push(`${days} 天`)
+    if (hours > 0) parts.push(`${hours} 小时`)
+    parts.push(`${minutes} 分钟`)
+    return parts.join(' ')
+  })
 
-onMounted(() => {
-  void loadStatus()
-})
+  const dependencyList = computed<NWDependencyHealthVo[]>(() => status.value?.dependency_list ?? [])
+
+  const load = async () => {
+    loading.value = true
+    try {
+      status.value = await getSystemStatus()
+    } catch {
+      // 失败提示由请求层统一弹出
+    } finally {
+      loading.value = false
+    }
+  }
+
+  onMounted(() => {
+    void load()
+  })
 </script>
 
 <template>
-  <div class="nw-page status-page">
-    <header class="status-page__header">
-      <div>
-        <h2 class="status-page__title">{{ t('status.title') }}</h2>
-        <p class="status-page__subtitle">{{ t('status.subtitle') }}</p>
-      </div>
-      <NWButton :loading="loading" @click="loadStatus">{{ t('status.refresh') }}</NWButton>
-    </header>
-
-    <NWLoading v-if="loading && !statusVo" />
-    <div v-else-if="loadError" class="status-page__error">
-      <NWEmpty :description_text="t('status.loadFailed')" />
-      <NWButton type="primary" @click="loadStatus">{{ t('status.retry') }}</NWButton>
+  <div class="nw-page">
+    <div class="nw-toolbar">
+      <ElButton type="primary" plain :loading="loading" @click="load()">
+        <Icon icon="mdi:refresh" :size="15" />
+        <span class="admin-status__btn-text">刷新状态</span>
+      </ElButton>
+      <div class="admin-status__spacer" />
+      <span v-if="status" class="nw-hint">采集于 {{ formatTime(status.server_started_at) }} 启动的实例</span>
     </div>
-    <template v-else-if="statusVo">
-      <div class="status-page__summary">
-        <NWCard :title="t('status.processTitle')">
-          <dl class="status-dl">
-            <div>
-              <dt>{{ t('status.buildVersion') }}</dt>
-              <dd>{{ statusVo.build_version_text }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('status.goVersion') }}</dt>
-              <dd>{{ statusVo.go_version_text }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('status.startedAt') }}</dt>
-              <dd>{{ new Date(formatTime(statusVo.server_started_at)).toLocaleString() }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('status.uptime') }}</dt>
-              <dd>{{ uptimeText }}</dd>
-            </div>
-          </dl>
-        </NWCard>
 
-        <NWCard :title="t('status.aiCapabilityTitle')">
-          <div class="status-ai">
-            <span class="status-ai__item" :class="statusVo.chat_ready ? 'is-up' : 'is-down'">
-              {{ t('status.chatReady') }}：{{ statusVo.chat_ready ? t('status.up') : t('status.down') }}
-            </span>
-            <span class="status-ai__item" :class="statusVo.chat_ready ? 'is-up' : 'is-degraded'">
-              {{ t('status.searchReady') }}：{{
-                statusVo.chat_ready ? t('status.up') : t('status.degraded')
-              }}
-            </span>
-            <p class="status-ai__hint">{{ statusVo.hint_text }}</p>
-          </div>
-        </NWCard>
-      </div>
+    <div v-loading="loading" class="admin-status__summary">
+      <ElCard shadow="never" class="admin-status__card">
+        <span class="admin-status__label">构建版本</span>
+        <strong class="admin-status__value">{{ status?.build_version_text || '—' }}</strong>
+      </ElCard>
+      <ElCard shadow="never" class="admin-status__card">
+        <span class="admin-status__label">Go 运行时</span>
+        <strong class="admin-status__value">{{ status?.go_version_text || '—' }}</strong>
+      </ElCard>
+      <ElCard shadow="never" class="admin-status__card">
+        <span class="admin-status__label">已运行</span>
+        <strong class="admin-status__value">{{ uptimeText }}</strong>
+      </ElCard>
+      <ElCard shadow="never" class="admin-status__card">
+        <span class="admin-status__label">对话链路</span>
+        <span
+          class="nw-badge"
+          :class="status?.chat_ready ? 'nw-badge--success' : 'nw-badge--danger'"
+        >
+          {{ status?.chat_ready ? '可用' : '不可用' }}
+        </span>
+      </ElCard>
+    </div>
 
-      <NWCard :title="t('status.dependencyTitle')">
-        <el-table :data="statusVo.dependency_list" size="small">
-          <el-table-column prop="dependency_name" :label="t('status.dependencyName')" min-width="240" />
-          <el-table-column :label="t('status.dependencyStatus')" width="140">
-            <template #default="{ row }">
-              <span class="status-badge" :class="`is-${row.status_code}`">
-                {{ statusText(row.status_code) }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('status.latency')" width="120">
-            <template #default="{ row }">
-              {{ row.latency_ms > 0 ? `${row.latency_ms} ms` : '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="message_text" :label="t('status.message')" min-width="280" />
-        </el-table>
-      </NWCard>
-    </template>
+    <p v-if="status?.hint_text" class="nw-hint">{{ status.hint_text }}</p>
+
+    <div class="admin-status__deps">
+      <ElCard
+        v-for="item in dependencyList"
+        :key="item.dependency_code"
+        shadow="never"
+        class="dep-card"
+      >
+        <div class="dep-card__head">
+          <span class="dep-card__name">{{ item.dependency_name || item.dependency_code }}</span>
+          <span class="nw-badge" :class="`nw-badge--${healthBadge(item.status_code)}`">
+            {{ healthLabel(item.status_code) }}
+          </span>
+        </div>
+        <p class="dep-card__message">{{ item.message_text || '—' }}</p>
+        <div class="dep-card__meta">
+          <span class="dep-card__code">{{ item.dependency_code }}</span>
+          <span class="nw-hint">{{ item.latency_ms }} ms</span>
+        </div>
+      </ElCard>
+
+      <ElEmpty
+        v-if="!loading && dependencyList.length === 0"
+        description="暂无依赖健康数据"
+        :image-size="70"
+      />
+    </div>
   </div>
 </template>
 
-<style scoped>
-.status-page__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
+<style lang="less" scoped>
+  .admin-status {
+    &__btn-text {
+      margin-left: 4px;
+    }
 
-.status-page__title {
-  margin: 0 0 4px;
-  font-size: 20px;
-  color: var(--text-main);
-}
+    &__spacer {
+      flex: 1;
+    }
 
-.status-page__subtitle {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
+    &__summary {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
 
-.status-page__summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 16px;
-  margin-bottom: 16px;
-}
+    &__card {
+      border-radius: var(--nw-radius-lg);
 
-.status-dl {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px 16px;
-  margin: 0;
-}
+      :deep(.el-card__body) {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-start;
+        padding: 14px 18px;
+      }
+    }
 
-.status-dl dt {
-  color: var(--text-placeholder);
-  font-size: 12px;
-  margin-bottom: 2px;
-}
+    &__label {
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+    }
 
-.status-dl dd {
-  margin: 0;
-  color: var(--text-main);
-  font-size: 14px;
-}
+    &__value {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--nw-ink);
+      word-break: break-all;
+    }
 
-.status-ai {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+    &__deps {
+      display: grid;
+      gap: 14px;
+      min-height: 120px;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    }
+  }
 
-.status-ai__item {
-  padding: 8px 12px;
-  border-radius: var(--radius-base);
-  font-size: 13px;
-  background-color: var(--bg-page);
-}
+  .dep-card {
+    border-radius: var(--nw-radius-lg);
 
-.status-ai__item.is-up {
-  background-color: var(--success-bg);
-  color: var(--success-text);
-}
+    &__head {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+    }
 
-.status-ai__item.is-degraded {
-  background-color: var(--warning-bg);
-  color: var(--warning-text);
-}
+    &__name {
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--nw-ink);
+    }
 
-.status-ai__item.is-down {
-  background-color: var(--error-bg);
-  color: var(--error-text);
-}
+    &__message {
+      margin: 8px 0 10px;
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: var(--nw-text-secondary);
+    }
 
+    &__meta {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
 
-.status-ai__hint {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.status-badge {
-  padding: 2px 10px;
-  border-radius: var(--radius-pill);
-  font-size: 12px;
-  background-color: var(--border-light);
-  color: var(--text-secondary);
-}
-
-.status-badge.is-up {
-  background-color: var(--success-border);
-  color: var(--success-text);
-}
-
-.status-badge.is-degraded {
-  background-color: var(--warning-border);
-  color: var(--warning-text);
-}
-
-.status-badge.is-down {
-  background-color: var(--error-border);
-  color: var(--error-text);
-}
-
-.status-page__error {
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  padding: 8px 0 24px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
+    &__code {
+      padding: 1px 6px;
+      font-family: var(--el-font-family-mono, monospace);
+      font-size: 11.5px;
+      color: var(--nw-text-muted);
+      background: var(--nw-surface-subtle);
+      border-radius: var(--nw-radius-sm);
+    }
+  }
 </style>

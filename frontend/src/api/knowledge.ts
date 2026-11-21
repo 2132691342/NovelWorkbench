@@ -70,12 +70,7 @@ export function uploadKnowledgeDocument(params: {
   formData.append('doc_name', params.file.name)
   return post<NWKnowledgeDocumentVo>('/knowledge/upload', formData, {
     timeout: 120000,
-    onUploadProgress: (event) => {
-      if (!params.onUploadProgress || !event.total) {
-        return
-      }
-      params.onUploadProgress(Math.round((event.loaded / event.total) * 100))
-    },
+    onUploadProgress: params.onUploadProgress,
   })
 }
 

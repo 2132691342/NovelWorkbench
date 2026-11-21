@@ -1,396 +1,435 @@
-<!--
-  AI 输入区：正文输入 + 技能斜杠菜单（/ 触发）+ @引用选择器（文档/章节/摘要/提示词/历史消息五页签）+
-  提示词档案选择 + 历史条数 + 发送/停止生成。子组件负责弹层渲染，本组件只维护输入态。
--->
+<!-- 对话输入区：斜杠命令、@ 引用与上下文开关。 -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { listPromptProfiles } from '@/api/prompt'
-import { listSkills } from '@/api/skill'
-import type { NWChapterBriefVo, NWPromptProfileVo, NWSkillVo } from '@/api/contracts'
-import NWButton from '@/components/NWButton.vue'
-import NWIcon from '@/components/NWIcon.vue'
-import type { NWChatDisplayMessage, NWChatRefItem, NWChatSendPayload } from './chatTypes'
-import { useChatRefs } from './useChatRefs'
-import ComposerToolbar from './ComposerToolbar.vue'
-import RefPicker from './RefPicker.vue'
-import SlashMenu from './SlashMenu.vue'
+  import { computed, ref, watch } from 'vue'
+  import type { NWPromptProfileVo, NWSkillVo } from '@/api/contracts'
+  import type { ChatRefItem, ChatRefTabCode, ChatSendPayload } from './types'
+  import { useChatRefs } from './useChatRefs'
+  import type { NWChapterBriefVo } from '@/api/contracts'
+  import type { ChatDisplayMessage } from './types'
 
-const props = defineProps<{
-  projectUlid: string
-  chapterList: NWChapterBriefVo[]
-  messageList: NWChatDisplayMessage[]
-  disabledFlag: boolean
-}>()
+  const props = defineProps<{
+    projectUlid: string
+    chapterList: NWChapterBriefVo[]
+    messageList: ChatDisplayMessage[]
+    skillList: NWSkillVo[]
+    profileList: NWPromptProfileVo[]
+    streaming: boolean
+    canSend: boolean
+  }>()
 
-const emit = defineEmits<{
-  send: [payload: NWChatSendPayload]
-  stop: []
-}>()
+  const emit = defineEmits<{
+    send: [payload: ChatSendPayload]
+    stop: []
+  }>()
 
-const { t } = useI18n()
+  const inputText = ref('')
+  const skillCode = ref('')
+  const historyCount = ref(0)
+  const promptProfileUlid = ref('')
+  const inputRef = ref<HTMLTextAreaElement | null>(null)
+  const slashVisible = ref(false)
+  const slashFilter = ref('')
+  const slashActiveIndex = ref(0)
 
-/** 技能触发词（行首或空白后 /xxx） */
-const SLASH_TOKEN_REGEXP = /(^|\s)\/([^\s]*)$/
-/** 引用触发词（行首或空白后 @xxx） */
-const AT_TOKEN_REGEXP = /(^|\s)@([^\s]*)$/
+  const {
+    refDocList,
+    refChapterList,
+    refSummaryList,
+    refPromptList,
+    refMessageList,
+    refPickerVisible,
+    refPickerTab,
+    refPickerFilter,
+    refCandidateList,
+    refSelectedUlidList,
+    loadKnowledgeList,
+    switchTab,
+    togglePicker,
+    closePicker,
+    toggleRefItem,
+    removeRefItem,
+    clearRefs,
+    toRefPayload,
+    pushChapterRef
+  } = useChatRefs({
+    projectUlid: () => props.projectUlid,
+    chapterList: () => props.chapterList,
+    messageList: () => props.messageList,
+    profileList: () => props.profileList
+  })
 
-const inputRef = ref<HTMLTextAreaElement | null>(null)
-const inputText = ref('')
-const cursorPos = ref(0)
-const skillCode = ref('')
-const historyCount = ref(0)
-const promptProfileUlid = ref('')
-const slashList = ref<NWSkillVo[]>([])
-const profileList = ref<NWPromptProfileVo[]>([])
-const slashPopupVisible = ref(false)
-const slashFilter = ref('')
-const slashActiveIndex = ref(0)
+  const filteredSkillList = computed(() => {
+    const filterText = slashFilter.value.toLowerCase()
+    return props.skillList.filter(
+      (skill) =>
+        skill.skill_code.toLowerCase().includes(filterText) ||
+        skill.skill_name.toLowerCase().includes(filterText)
+    )
+  })
 
-// @ 引用（文档/章节/摘要/提示词/历史消息）的状态与候选装配
-const {
-  refDocList,
-  refChapterList,
-  refSummaryList,
-  refPromptList,
-  refMessageList,
-  refPickerVisible,
-  refPickerPinned,
-  refPickerTab,
-  refPickerFilter,
-  refCandidateList,
-  refSelectedUlidList,
-  refEmptyHint,
-  loadKnowledgeList,
-  switchTab,
-  togglePicker,
-  closePicker,
-  toggleRefItem,
-  removeRefItem,
-  clearRefs,
-  toRefPayload,
-  pushChapterRef,
-} = useChatRefs({
-  projectUlid: () => props.projectUlid,
-  chapterList: () => props.chapterList,
-  messageList: () => props.messageList,
-  profileList,
-})
+  const chipList = computed(() => [
+    ...refDocList.value.map((item) => ({ tab: 'doc' as const, label: '文档', ...item })),
+    ...refChapterList.value.map((item) => ({ tab: 'chapter' as const, label: '章节', ...item })),
+    ...refSummaryList.value.map((item) => ({ tab: 'summary' as const, label: '摘要', ...item })),
+    ...refPromptList.value.map((item) => ({ tab: 'prompt' as const, label: '档案', ...item })),
+    ...refMessageList.value.map((item) => ({ tab: 'message' as const, label: '消息', ...item }))
+  ])
 
-/** 按输入过滤的技能列表 */
-const filteredSlashList = computed(() => {
-  const filterText = slashFilter.value.toLowerCase()
-  return slashList.value.filter(
-    (item) =>
-      item.skill_code.toLowerCase().includes(filterText) ||
-      item.skill_name.toLowerCase().includes(filterText),
-  )
-})
+  const refTabs: Array<{ code: ChatRefTabCode; label: string }> = [
+    { code: 'doc', label: '文档' },
+    { code: 'chapter', label: '章节' },
+    { code: 'summary', label: '摘要' },
+    { code: 'prompt', label: '档案' },
+    { code: 'message', label: '消息' }
+  ]
 
+  const SLASH_TOKEN_REGEXP = /(^|\s)\/([^\s]*)$/
+  const AT_TOKEN_REGEXP = /(^|\s)@([^\s]*)$/
 
+  /** 删除光标前的 /xxx 或 @xxx 触发词 */
+  const removeTriggerToken = (tokenRegexp: RegExp) => {
+    const cursorPos = inputRef.value?.selectionStart ?? inputText.value.length
+    const beforeCursor = inputText.value.slice(0, cursorPos)
+    inputText.value = beforeCursor.replace(tokenRegexp, '$1') + inputText.value.slice(cursorPos)
+  }
 
+  const handleInput = () => {
+    const cursorPos = inputRef.value?.selectionStart ?? inputText.value.length
+    const beforeCursor = inputText.value.slice(0, cursorPos)
 
-const canSend = computed(
-  () => inputText.value.trim().length > 0 && !props.disabledFlag,
-)
-
-/** 已选中的提示词档案名（无档案时不展示徽标） */
-const selectedProfileName = computed(
-  () => profileList.value.find((item) => item.prompt_profile_ulid === promptProfileUlid.value)?.prompt_profile_name ?? '',
-)
-
-/** 输入事件：跟踪光标并按 / 与 @ 触发弹层 */
-function handleInput(event: Event): void {
-  const target = event.target as HTMLTextAreaElement
-  cursorPos.value = target.selectionStart ?? inputText.value.length
-  const beforeCursor = inputText.value.slice(0, cursorPos.value)
-
-  const slashMatch = SLASH_TOKEN_REGEXP.exec(beforeCursor)
-  if (slashMatch) {
-    slashFilter.value = slashMatch[2]
+    const slashMatch = SLASH_TOKEN_REGEXP.exec(beforeCursor)
+    slashFilter.value = slashMatch ? slashMatch[2] : ''
+    slashVisible.value = Boolean(slashMatch)
     slashActiveIndex.value = 0
-    slashPopupVisible.value = true
-  } else {
-    slashPopupVisible.value = false
+
+    const atMatch = AT_TOKEN_REGEXP.exec(beforeCursor)
+    if (atMatch) {
+      refPickerFilter.value = atMatch[2]
+      refPickerVisible.value = true
+      void loadKnowledgeList()
+    }
   }
 
-  const atMatch = AT_TOKEN_REGEXP.exec(beforeCursor)
-  if (atMatch) {
-    refPickerFilter.value = atMatch[2]
-    refPickerPinned.value = true
-    refPickerVisible.value = true
-  } else if (!refPickerPinned.value) {
-    refPickerVisible.value = false
+  const selectSkill = (skill: NWSkillVo) => {
+    skillCode.value = skill.skill_code
+    removeTriggerToken(SLASH_TOKEN_REGEXP)
+    slashVisible.value = false
+    inputRef.value?.focus()
   }
-}
 
-/** 移除光标前的触发词（/xxx 或 @xxx） */
-function removeTriggerTokenBeforeCursor(tokenRegexp: RegExp): void {
-  const beforeCursor = inputText.value.slice(0, cursorPos.value)
-  const afterCursor = inputText.value.slice(cursorPos.value)
-  inputText.value = beforeCursor.replace(tokenRegexp, '$1') + afterCursor
-}
+  const selectRef = (item: ChatRefItem) => {
+    toggleRefItem(item)
+    removeTriggerToken(AT_TOKEN_REGEXP)
+    inputRef.value?.focus()
+  }
 
-/** 键盘交互：弹层导航与技能徽标移除 */
-function handleKeydown(event: KeyboardEvent): void {
-  if (slashPopupVisible.value) {
-    const optionCount = filteredSlashList.value.length
-    if (event.key === 'ArrowDown' && optionCount > 0) {
-      event.preventDefault()
-      slashActiveIndex.value = (slashActiveIndex.value + 1) % optionCount
-      return
-    }
-    if (event.key === 'ArrowUp' && optionCount > 0) {
-      event.preventDefault()
-      slashActiveIndex.value = (slashActiveIndex.value - 1 + optionCount) % optionCount
-      return
-    }
-    if ((event.key === 'Enter' || event.key === 'Tab') && optionCount > 0) {
-      event.preventDefault()
-      selectSlashOption(filteredSlashList.value[slashActiveIndex.value])
-      return
+  const submit = () => {
+    if (!props.canSend) return
+    emit('send', {
+      content_text: inputText.value.trim(),
+      skill_code: skillCode.value,
+      ...toRefPayload(),
+      history_count: historyCount.value,
+      prompt_profile_ulid: promptProfileUlid.value
+    })
+    inputText.value = ''
+    skillCode.value = ''
+    slashVisible.value = false
+    clearRefs()
+    closePicker()
+  }
+
+  const handleKeydown = (event: KeyboardEvent) => {
+    if (slashVisible.value && filteredSkillList.value.length > 0) {
+      const optionCount = filteredSkillList.value.length
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        slashActiveIndex.value = (slashActiveIndex.value + 1) % optionCount
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        slashActiveIndex.value = (slashActiveIndex.value - 1 + optionCount) % optionCount
+        return
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        selectSkill(filteredSkillList.value[slashActiveIndex.value])
+        return
+      }
     }
     if (event.key === 'Escape') {
-      event.preventDefault()
-      slashPopupVisible.value = false
+      slashVisible.value = false
+      closePicker()
       return
     }
-  }
-  if (refPickerVisible.value && event.key === 'Escape') {
-    event.preventDefault()
-    closePicker()
-    return
-  }
-  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault()
-    if (canSend.value) {
-      handleSend()
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      submit()
+      return
     }
-    return
-  }
-  // 输入为空时 Backspace 移除技能徽标
-  if (event.key === 'Backspace' && inputText.value.length === 0 && skillCode.value) {
-    skillCode.value = ''
-  }
-}
-
-/** 选中引用：切换选中态并清掉光标前的 @ 触发词（选择器保持打开可继续多选） */
-function handleSelectRef(item: NWChatRefItem): void {
-  toggleRefItem(item)
-  removeTriggerTokenBeforeCursor(AT_TOKEN_REGEXP)
-}
-
-/** 选中技能：填入 skill_code 徽标并清掉触发词 */
-function selectSlashOption(item: NWSkillVo): void {
-  skillCode.value = item.skill_code
-  removeTriggerTokenBeforeCursor(SLASH_TOKEN_REGEXP)
-  slashPopupVisible.value = false
-}
-
-/** 移除技能徽标 */
-function removeSkill(): void {
-  skillCode.value = ''
-}
-
-
-/** 切换引用选择器（@ 按钮） */
-
-/** 关闭引用选择器 */
-
-/** 按页签取对应的已选列表 */
-
-/** 页签切换：摘要页签按需加载 */
-
-/** 多选引用：加入 chips 并清掉触发词（选择器保持打开可继续多选） */
-
-/** 移除引用 chip */
-
-/** 组装载荷并发送，随后清空输入态（保留历史条数与档案选择） */
-/** 组装载荷并发送，随后清空输入态（保留历史条数与档案选择） */
-function handleSend(): void {
-  if (!canSend.value) {
-    return
-  }
-  emit('send', {
-    content_text: inputText.value.trim(),
-    skill_code: skillCode.value,
-    ...toRefPayload(),
-    history_count: historyCount.value,
-    prompt_profile_ulid: promptProfileUlid.value,
-  })
-  inputText.value = ''
-  cursorPos.value = 0
-  skillCode.value = ''
-  clearRefs()
-  slashPopupVisible.value = false
-  closePicker()
-}
-
-/** 外部预置技能与章节引用（AI 续写 / AI 润色入口） */
-/** 外部预置技能与章节引用（AI 续写 / AI 润色入口） */
-function presetSkill(newSkillCode: string, refChapterUlidList: string[]): void {
-  skillCode.value = newSkillCode
-  for (const chapterUlid of refChapterUlidList) {
-    const chapterItem = props.chapterList.find((item) => item.chapter_ulid === chapterUlid)
-    if (!chapterItem) {
-      continue
+    if (event.key === 'Backspace' && inputText.value.length === 0 && skillCode.value) {
+      skillCode.value = ''
     }
-    pushChapterRef(
-      chapterUlid,
-      chapterItem.chapter_name,
-      t('workspace.ai.composer.chapterOrder', { order: chapterItem.chapter_order }),
-    )
   }
-}
 
-/** 外部填入输入框（快捷提示词入口） */
-function setInputText(text: string): void {
-  inputText.value = text
-  void nextTick(() => {
+  /** 外部预置技能与章节引用（编辑器 AI 续写/润色/梗概入口） */
+  const presetSkill = (newSkillCode: string, chapterUlidList: string[]) => {
+    skillCode.value = newSkillCode
+    for (const chapterUlid of chapterUlidList) {
+      const chapter = props.chapterList.find((item) => item.chapter_ulid === chapterUlid)
+      if (chapter) pushChapterRef(chapterUlid, chapter.chapter_name, `第 ${chapter.chapter_order} 章`)
+    }
     inputRef.value?.focus()
-    inputRef.value?.setSelectionRange(text.length, text.length)
-  })
-}
-
-/** 聚焦输入框 */
-function focus(): void {
-  inputRef.value?.focus()
-}
-
-defineExpose({ presetSkill, setInputText, focus })
-
-
-/** 加载技能候选（含当前项目技能与全局技能） */
-async function loadSkillList(): Promise<void> {
-  if (!props.projectUlid) {
-    slashList.value = []
-    return
   }
-  try {
-    const listData = await listSkills({ project_ulid: props.projectUlid, enabled_only: true })
-    slashList.value = Array.isArray(listData) ? listData : []
-  } catch {
-    slashList.value = []
-  }
-}
 
-/** 加载提示词档案（含全局档案；失败降级为空，不影响对话） */
-async function loadProfileList(): Promise<void> {
-  try {
-    const listData = await listPromptProfiles({ project_ulid: props.projectUlid, enabled_only: true })
-    profileList.value = Array.isArray(listData) ? listData : []
-  } catch {
-    profileList.value = []
-  }
-}
+  watch(
+    () => props.projectUlid,
+    () => {
+      promptProfileUlid.value = ''
+    }
+  )
 
-watch(
-  () => props.projectUlid,
-  () => {
-    promptProfileUlid.value = ''
-    void loadKnowledgeList()
-    void loadSkillList()
-    void loadProfileList()
-  },
-  { immediate: true },
-)
-
-onMounted(() => {
-  void loadSkillList()
-})
+  defineExpose({ presetSkill, focus: () => inputRef.value?.focus() })
 </script>
 
 <template>
-  <div class="chat-composer">
-    <!-- 技能与档案徽标 -->
-    <div v-if="skillCode || selectedProfileName" class="chat-composer__badge">
-      <span v-if="skillCode" class="chat-composer__badge-text">/{{ skillCode }}</span>
-      <NWButton v-if="skillCode" type="text" size="small" class="chat-composer__badge-close" @click="removeSkill">
-        {{ t('workspace.ai.composer.removeSkill') }}
-      </NWButton>
-      <span v-if="selectedProfileName" class="chat-composer__badge-profile">
-        <NWIcon icon_code="sparkles" :size_px="11" />
-        {{ selectedProfileName }}
-      </span>
+  <div class="composer">
+    <div v-if="skillCode || chipList.length > 0" class="composer__chips">
+      <ElTag v-if="skillCode" closable size="small" @close="skillCode = ''">/{{ skillCode }}</ElTag>
+      <ElTag
+        v-for="chip in chipList"
+        :key="`${chip.tab}-${chip.ref_ulid}`"
+        closable
+        size="small"
+        type="info"
+        @close="removeRefItem(chip.tab, chip.ref_ulid)"
+      >
+        {{ chip.label }}: {{ chip.ref_name }}
+      </ElTag>
     </div>
 
-    <!-- 引用 chips -->
-    <div
-      v-if="refDocList.length + refChapterList.length + refSummaryList.length + refPromptList.length + refMessageList.length > 0"
-      class="chat-composer__chips"
-    >
-      <span v-for="refItem in refDocList" :key="`doc-${refItem.ref_ulid}`" class="chat-composer__chip">
-        {{ t('workspace.ai.composer.atDocs') }}: {{ refItem.ref_name }}
-        <NWButton type="text" size="small" class="chat-composer__chip-close" @click="removeRefItem('doc', refItem.ref_ulid)">x</NWButton>
-      </span>
-      <span v-for="refItem in refChapterList" :key="`chp-${refItem.ref_ulid}`" class="chat-composer__chip">
-        {{ t('workspace.ai.composer.atChapters') }}: {{ refItem.ref_name }}
-        <NWButton type="text" size="small" class="chat-composer__chip-close" @click="removeRefItem('chapter', refItem.ref_ulid)">x</NWButton>
-      </span>
-      <span v-for="refItem in refSummaryList" :key="`sum-${refItem.ref_ulid}`" class="chat-composer__chip">
-        {{ t('workspace.ai.composer.atSummaries') }}: {{ refItem.ref_name }}
-        <NWButton type="text" size="small" class="chat-composer__chip-close" @click="removeRefItem('summary', refItem.ref_ulid)">x</NWButton>
-      </span>
-      <span v-for="refItem in refPromptList" :key="`prm-${refItem.ref_ulid}`" class="chat-composer__chip">
-        {{ t('workspace.ai.composer.atPrompts') }}: {{ refItem.ref_name }}
-        <NWButton type="text" size="small" class="chat-composer__chip-close" @click="removeRefItem('prompt', refItem.ref_ulid)">x</NWButton>
-      </span>
-      <span v-for="refItem in refMessageList" :key="`msg-${refItem.ref_ulid}`" class="chat-composer__chip">
-        {{ t('workspace.ai.composer.atMessages') }}: {{ refItem.ref_name }}
-        <NWButton type="text" size="small" class="chat-composer__chip-close" @click="removeRefItem('message', refItem.ref_ulid)">x</NWButton>
-      </span>
-    </div>
-
-    <div class="chat-composer__input-wrap">
-      <!-- 技能斜杠菜单 -->
-      <div v-if="slashPopupVisible" class="chat-composer__popup chat-composer__popup--slash">
-        <SlashMenu
-          :option-list="filteredSlashList"
-          :active-index="slashActiveIndex"
-          @select="selectSlashOption"
-          @hover="slashActiveIndex = $event"
-        />
+    <div class="composer__input-wrap">
+      <div v-if="slashVisible" class="composer__popup">
+        <button
+          v-for="(skill, index) in filteredSkillList"
+          :key="skill.skill_ulid"
+          type="button"
+          :class="['composer__item', { 'is-active': index === slashActiveIndex }]"
+          @mouseenter="slashActiveIndex = index"
+          @click="selectSkill(skill)"
+        >
+          <strong>/{{ skill.skill_code }}</strong>
+          <span>{{ skill.skill_name }}</span>
+          <small>{{ skill.description_text }}</small>
+        </button>
+        <p v-if="filteredSkillList.length === 0" class="composer__empty">没有匹配的技能</p>
       </div>
 
-      <!-- @ 引用选择器 -->
-      <div v-if="refPickerVisible" class="chat-composer__popup chat-composer__popup--ref">
-        <RefPicker
-          :tab-code="refPickerTab"
-          :filter-text="refPickerFilter"
-          :candidate-list="refCandidateList"
-          :selected-ulid-list="refSelectedUlidList"
-          :empty-hint-text="refEmptyHint"
-          @update:tab-code="switchTab"
-          @update:filter-text="refPickerFilter = $event"
-          @select="handleSelectRef"
-          @close="closePicker"
-        />
+      <div v-if="refPickerVisible" class="composer__popup">
+        <div class="composer__tabs">
+          <button
+            v-for="tab in refTabs"
+            :key="tab.code"
+            type="button"
+            :class="['composer__tab', { 'is-active': refPickerTab === tab.code }]"
+            @click="switchTab(tab.code)"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+        <button
+          v-for="item in refCandidateList"
+          :key="item.ref_ulid"
+          type="button"
+          :class="['composer__item', { 'is-active': refSelectedUlidList.includes(item.ref_ulid) }]"
+          @click="selectRef(item)"
+        >
+          <strong>{{ item.ref_name }}</strong>
+          <small>{{ item.ref_desc }}</small>
+        </button>
+        <p v-if="refCandidateList.length === 0" class="composer__empty">暂无可引用内容</p>
       </div>
 
       <textarea
         ref="inputRef"
         v-model="inputText"
-        class="chat-composer__textarea"
+        class="composer__textarea"
         rows="3"
-        :disabled="disabledFlag"
-        :placeholder="t('workspace.ai.composer.placeholder')"
+        :disabled="streaming"
+        placeholder="写下你的要求；/ 唤起技能，@ 引用素材"
         @input="handleInput"
         @keydown="handleKeydown"
       />
     </div>
 
-    <ComposerToolbar
-      v-model:prompt-profile-ulid="promptProfileUlid"
-      v-model:history-count="historyCount"
-      :profile-list="profileList"
-      :can-send-flag="canSend"
-      :streaming-flag="disabledFlag"
-      @open-ref-picker="togglePicker"
-      @send="handleSend"
-      @stop="emit('stop')"
-    />
-
+    <div class="composer__toolbar">
+      <ElSelect
+        v-model="promptProfileUlid"
+        size="small"
+        clearable
+        placeholder="提示词档案"
+        class="composer__profile"
+      >
+        <ElOption
+          v-for="profile in profileList"
+          :key="profile.prompt_profile_ulid"
+          :label="profile.prompt_profile_name"
+          :value="profile.prompt_profile_ulid"
+        />
+      </ElSelect>
+      <ElSelect v-model="historyCount" size="small" class="composer__history">
+        <ElOption :value="0" label="历史：默认" />
+        <ElOption :value="3" label="历史：3 条" />
+        <ElOption :value="5" label="历史：5 条" />
+        <ElOption :value="10" label="历史：10 条" />
+      </ElSelect>
+      <ElButton size="small" plain @click="togglePicker">@ 引用</ElButton>
+      <div class="composer__spacer" />
+      <ElButton v-if="streaming" size="small" plain type="danger" @click="emit('stop')">
+        <Icon icon="mdi:stop" :size="14" />
+        <span class="ml-4px">停止</span>
+      </ElButton>
+      <ElButton v-else size="small" type="primary" plain :disabled="!canSend" @click="submit">
+        <Icon icon="mdi:send" :size="14" />
+        <span class="ml-4px">发送</span>
+      </ElButton>
+    </div>
   </div>
 </template>
 
-<style scoped src="./ChatComposer.css"></style>
+<style lang="less" scoped>
+  .composer {
+    padding: 8px 10px 10px;
+    border-top: 1px solid var(--nw-border-soft);
+
+    &__chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+
+    &__input-wrap {
+      position: relative;
+    }
+
+    &__textarea {
+      width: 100%;
+      padding: 8px 10px;
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--nw-ink);
+      resize: vertical;
+      background: var(--nw-surface-subtle);
+      border: 1px solid var(--nw-border);
+      border-radius: var(--nw-radius-md);
+      outline: none;
+
+      &:focus {
+        border-color: var(--el-color-primary);
+        box-shadow: 0 0 0 3px var(--nw-primary-soft);
+      }
+    }
+
+    &__popup {
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 6px);
+      left: 0;
+      z-index: 20;
+      max-height: 260px;
+      padding: 6px;
+      overflow-y: auto;
+      background: var(--el-bg-color-overlay);
+      border: 1px solid var(--nw-border);
+      border-radius: var(--nw-radius-lg);
+      box-shadow: 0 14px 36px rgb(15 23 42 / 14%);
+    }
+
+    &__item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      width: 100%;
+      padding: 7px 9px;
+      text-align: left;
+      cursor: pointer;
+      background: transparent;
+      border: 0;
+      border-radius: var(--nw-radius-base);
+
+      strong {
+        font-size: 12.5px;
+        color: var(--nw-ink);
+      }
+
+      span {
+        font-size: 12px;
+        color: var(--el-text-color-regular);
+      }
+
+      small {
+        overflow: hidden;
+        font-size: 11px;
+        color: var(--el-text-color-placeholder);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      &:hover,
+      &.is-active {
+        background: var(--nw-primary-soft);
+      }
+    }
+
+    &__empty {
+      padding: 10px;
+      font-size: 12px;
+      color: var(--el-text-color-placeholder);
+      text-align: center;
+    }
+
+    &__tabs {
+      display: flex;
+      gap: 4px;
+      padding: 2px 2px 6px;
+      border-bottom: 1px solid var(--nw-border-soft);
+    }
+
+    &__tab {
+      padding: 3px 9px;
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+      cursor: pointer;
+      background: transparent;
+      border: 0;
+      border-radius: 999px;
+
+      &.is-active {
+        color: var(--el-color-primary);
+        background: var(--nw-primary-soft);
+      }
+    }
+
+    &__toolbar {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    &__profile {
+      width: 132px;
+    }
+
+    &__history {
+      width: 112px;
+    }
+
+    &__spacer {
+      flex: 1;
+    }
+  }
+</style>

@@ -1,479 +1,380 @@
-<!--
-  技能管理页：作用域切换（全局 / 当前项目）+ 分类与关键词筛选 + 技能表格 + 编辑抽屉。
-  抽屉内含提示词模板、变量声明与参考资料面板（按关键词命中注入上下文）。
--->
+<!-- 技能管理页：按流程域分组展示技能并支持编辑。 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { useI18n } from 'vue-i18n'
-import { deleteSkill, listSkills, saveSkill, type NWSkillSaveReqVo } from '@/api/skill'
-import type { NWSkillVariableVo, NWSkillVo } from '@/api/contracts'
-import { useProjectStore } from '@/stores/project'
-import NWButton from '@/components/NWButton.vue'
-import NWIcon from '@/components/NWIcon.vue'
-import NWPageHeader from '@/components/NWPageHeader.vue'
-import NWCard from '@/components/NWCard.vue'
-import NWEmpty from '@/components/NWEmpty.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import SkillReferencePanel from './SkillReferencePanel.vue'
+  import { computed, onMounted, ref, watch } from 'vue'
+  import {
+    ElButton,
+    ElCard,
+    ElEmpty,
+    ElInput,
+    ElMessage,
+    ElMessageBox,
+    ElOption,
+    ElSelect,
+    ElSwitch,
+    ElTable,
+    ElTableColumn,
+    ElTag
+  } from 'element-plus'
+  import { deleteSkill, listSkills, saveSkill } from '@/api/skill'
+  import type { NWSkillVo } from '@/api/contracts'
+  import { useProjectStore } from '@/store/modules/project'
+  import SkillEditDrawer from './components/SkillEditDrawer.vue'
+  import SkillTrialDialog from './components/SkillTrialDialog.vue'
 
-const { t } = useI18n()
-const projectStore = useProjectStore()
-
-/** 分类编码选项（对齐后端 SkillCategory*） */
-const NW_CATEGORY_CODE_LIST = ['write', 'revise', 'outline', 'setting', 'review', 'other'] as const
-/** 作用域选项 */
-const NW_SCOPE_LIST = ['global', 'project'] as const
-
-/** 内置占位符清单（与后端 validateSkillTemplate 的 known 集合一致，用于表单提示） */
-const BUILTIN_PLACEHOLDER_LIST = ['user_input', 'chapter_content', 'context', 'skill_code'] as const
-
-const skillList = ref<NWSkillVo[]>([])
-const listLoading = ref(false)
-const scopeFilter = ref<'global' | 'project'>('project')
-const categoryFilter = ref('')
-const keywordText = ref('')
-const enabledOnlyFilter = ref(false)
-
-const drawerVisible = ref(false)
-const saving = ref(false)
-const deletingKey = ref('')
-const formRef = ref<FormInstance>()
-
-/** 技能表单状态（variable_list 直接绑定数组） */
-const formState = reactive({
-  skill_ulid: '',
-  skill_code: '',
-  skill_name: '',
-  scope_code: 'global' as string,
-  project_ulid: '',
-  category_code: 'write',
-  description_text: '',
-  prompt_template: '',
-  variable_list: [] as NWSkillVariableVo[],
-  enabled_flag: true,
-  sort_order: 0,
-})
-
-const formRules = computed<FormRules>(() => ({
-  skill_code: [{ required: true, message: t('skills.ruleCodeRequired'), trigger: 'blur' }],
-  skill_name: [{ required: true, message: t('skills.ruleNameRequired'), trigger: 'blur' }],
-  prompt_template: [{ required: true, message: t('skills.rulePromptRequired'), trigger: 'blur' }],
-}))
-
-/** 当前查询用的项目 ULID（项目视图下列出「项目技能 + 全局技能」） */
-const queryProjectUlid = computed(() =>
-  scopeFilter.value === 'project' ? projectStore.current_project_ulid : '',
-)
-
-function categoryLabel(categoryCode: string): string {
-  switch (categoryCode) {
-    case 'write':
-      return t('skills.categoryWrite')
-    case 'revise':
-      return t('skills.categoryRevise')
-    case 'outline':
-      return t('skills.categoryOutline')
-    case 'setting':
-      return t('skills.categorySetting')
-    case 'review':
-      return t('skills.categoryReview')
-    default:
-      return t('skills.categoryOther')
+  /** 分组结构：流程域优先，没有流程域时按分类归组 */
+  interface SkillGroup {
+    groupKey: string
+    groupName: string
+    rows: NWSkillVo[]
   }
-}
 
-function scopeLabel(scopeCode: string): string {
-  return scopeCode === 'project' ? t('skills.scopeProject') : t('skills.scopeGlobal')
-}
+  const projectStore = useProjectStore()
 
-async function loadSkillList(): Promise<void> {
-  listLoading.value = true
-  try {
-    skillList.value = await listSkills({
-      project_ulid: queryProjectUlid.value || undefined,
-      scope_code: queryProjectUlid.value ? undefined : scopeFilter.value,
-      category_code: categoryFilter.value || undefined,
-      keyword_text: keywordText.value.trim() || undefined,
-      enabled_only: enabledOnlyFilter.value,
-    })
-  } catch {
-    // 失败提示由 http 层统一弹出，保留当前列表
-  } finally {
-    listLoading.value = false
-  }
-}
+  const loading = ref(false)
+  const rows = ref<NWSkillVo[]>([])
+  const keywordText = ref('')
+  const scopeCode = ref('')
+  const categoryCode = ref('')
+  const projectUlid = ref(projectStore.currentProjectUlid)
+  const togglingUlid = ref('')
 
-/** 切换作用域：项目视图需要已选项目 */
-function handleScopeChange(scopeCode: 'global' | 'project'): void {
-  if (scopeCode === 'project' && !projectStore.current_project_ulid) {
-    ElMessage.warning(t('skills.needProject'))
-    return
-  }
-  scopeFilter.value = scopeCode
-  void loadSkillList()
-}
+  const drawer = ref<InstanceType<typeof SkillEditDrawer>>()
+  const trialDialog = ref<InstanceType<typeof SkillTrialDialog>>()
 
-function resetFormState(): void {
-  formState.skill_ulid = ''
-  formState.skill_code = ''
-  formState.skill_name = ''
-  formState.scope_code = scopeFilter.value
-  formState.project_ulid = scopeFilter.value === 'project' ? projectStore.current_project_ulid : ''
-  formState.category_code = categoryFilter.value || 'write'
-  formState.description_text = ''
-  formState.prompt_template = ''
-  formState.variable_list = []
-  formState.enabled_flag = true
-  formState.sort_order = 0
-}
+  const categoryOptions = [
+    { value: 'write', label: '写作' },
+    { value: 'revise', label: '修订' },
+    { value: 'outline', label: '规划' },
+    { value: 'setting', label: '设定' },
+    { value: 'review', label: '审稿' },
+    { value: 'other', label: '其他' }
+  ]
 
-/** 新建：项目视图默认创建项目技能，全局视图创建全局技能 */
-function handleCreateSkill(): void {
-  resetFormState()
-  if (formState.scope_code === 'project' && !formState.project_ulid) {
-    ElMessage.warning(t('skills.needProject'))
-    return
-  }
-  drawerVisible.value = true
-}
+  const categoryLabel = (code: string) =>
+    categoryOptions.find((item) => item.value === code)?.label ?? (code || '未分类')
 
-function handleEditSkill(skillItem: NWSkillVo): void {
-  resetFormState()
-  formState.skill_ulid = skillItem.skill_ulid
-  formState.skill_code = skillItem.skill_code
-  formState.skill_name = skillItem.skill_name
-  formState.scope_code = skillItem.scope_code
-  formState.project_ulid = skillItem.project_ulid
-  formState.category_code = skillItem.category_code || 'other'
-  formState.description_text = skillItem.description_text
-  formState.prompt_template = skillItem.prompt_template
-  formState.variable_list = (skillItem.variable_list ?? []).map((variableItem) => ({ ...variableItem }))
-  formState.enabled_flag = skillItem.enabled_flag
-  formState.sort_order = skillItem.sort_order
-  drawerVisible.value = true
-}
+  const projectNameOf = (ulid: string) =>
+    projectStore.projectOptions.find((item) => item.project_ulid === ulid)?.project_name ?? ''
 
-async function handleSaveSkill(): Promise<void> {
-  if (!formRef.value) {
-    return
-  }
-  try {
-    await formRef.value.validate()
-  } catch {
-    return
-  }
-  saving.value = true
-  try {
-    const saveReqVo: NWSkillSaveReqVo = {
-      skill_code: formState.skill_code.trim(),
-      skill_name: formState.skill_name.trim(),
-      scope_code: formState.scope_code,
-      category_code: formState.category_code,
-      description_text: formState.description_text,
-      prompt_template: formState.prompt_template,
-      variable_list: formState.variable_list.filter((variableItem) => variableItem.variable_name.trim()),
-      enabled_flag: formState.enabled_flag,
-      sort_order: formState.sort_order,
+  const load = async () => {
+    loading.value = true
+    try {
+      const result = await listSkills({
+        keyword_text: keywordText.value || undefined,
+        scope_code: scopeCode.value || undefined,
+        category_code: categoryCode.value || undefined,
+        project_ulid: projectUlid.value || undefined
+      })
+      // 指定项目时后端会合并全局技能，作用域筛选在这里二次收敛
+      rows.value = scopeCode.value
+        ? result.filter((row) => row.scope_code === scopeCode.value)
+        : result
+    } catch {
+      rows.value = []
+    } finally {
+      loading.value = false
     }
-    if (formState.scope_code === 'project') {
-      saveReqVo.project_ulid = formState.project_ulid
-    }
-    if (formState.skill_ulid) {
-      saveReqVo.skill_ulid = formState.skill_ulid
-    }
-    const savedSkill = await saveSkill(saveReqVo)
-    ElMessage.success(t('skills.saveSuccess'))
-    formState.skill_ulid = savedSkill.skill_ulid
-    await loadSkillList()
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    saving.value = false
   }
-}
 
-async function handleDeleteSkill(skillItem: NWSkillVo): Promise<void> {
-  try {
-    await ElMessageBox.confirm(
-      t('skills.deleteConfirm', { name: skillItem.skill_name }),
-      t('common.confirm'),
-      { confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel'), type: 'warning' },
+  const groups = computed<SkillGroup[]>(() => {
+    const groupMap = new Map<string, SkillGroup>()
+    for (const row of rows.value) {
+      const groupName = row.domain_name || categoryLabel(row.category_code)
+      const groupKey = row.domain_name || `category:${row.category_code}`
+      const existing = groupMap.get(groupKey)
+      if (existing) {
+        existing.rows.push(row)
+      } else {
+        groupMap.set(groupKey, { groupKey, groupName, rows: [row] })
+      }
+    }
+    return [...groupMap.values()].sort((left, right) =>
+      left.groupName.localeCompare(right.groupName, 'zh-CN')
     )
-  } catch {
-    return
-  }
-  deletingKey.value = skillItem.skill_ulid
-  try {
-    await deleteSkill(skillItem.skill_ulid)
-    ElMessage.success(t('skills.deleteSuccess'))
-    if (formState.skill_ulid === skillItem.skill_ulid) {
-      drawerVisible.value = false
-    }
-    await loadSkillList()
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    deletingKey.value = ''
-  }
-}
-
-/** 变量声明：增删行 */
-function handleAddVariable(): void {
-  formState.variable_list.push({
-    variable_name: '',
-    variable_label: '',
-    default_value: '',
-    required_flag: false,
-    description_text: '',
   })
-}
 
-function handleRemoveVariable(variableIndex: number): void {
-  formState.variable_list.splice(variableIndex, 1)
-}
+  const builtinCount = computed(() => rows.value.filter((row) => row.builtin_flag).length)
+  const enabledCount = computed(() => rows.value.filter((row) => row.enabled_flag).length)
 
-function handleSearch(): void {
-  void loadSkillList()
-}
+  /** 开关切换需要回传完整技能体（后端保存为整体覆盖） */
+  const toggleEnabled = async (row: NWSkillVo, enabled: boolean) => {
+    togglingUlid.value = row.skill_ulid
+    try {
+      await saveSkill({
+        skill_ulid: row.skill_ulid,
+        skill_code: row.skill_code,
+        skill_name: row.skill_name,
+        scope_code: row.scope_code,
+        project_ulid: row.project_ulid || undefined,
+        category_code: row.category_code,
+        description_text: row.description_text,
+        prompt_template: row.prompt_template,
+        variable_list: row.variable_list,
+        enabled_flag: enabled,
+        sort_order: row.sort_order
+      })
+      ElMessage.success(enabled ? '技能已启用' : '技能已停用')
+      await load()
+    } catch {
+      row.enabled_flag = !enabled
+    } finally {
+      togglingUlid.value = ''
+    }
+  }
 
-function handleResetFilters(): void {
-  categoryFilter.value = ''
-  keywordText.value = ''
-  enabledOnlyFilter.value = false
-  void loadSkillList()
-}
+  const remove = async (row: NWSkillVo) => {
+    try {
+      await ElMessageBox.confirm(
+        `将删除技能「${row.skill_name}」及其参考资料，确定吗？`,
+        '删除技能',
+        { type: 'warning' }
+      )
+    } catch {
+      return
+    }
+    await deleteSkill(row.skill_ulid)
+    ElMessage.success('技能已删除')
+    await load()
+  }
 
-onMounted(() => {
-  void loadSkillList()
-})
+  const openCreate = () => {
+    drawer.value?.open(undefined, projectUlid.value)
+  }
+
+  watch(projectUlid, () => {
+    void load()
+  })
+
+  onMounted(async () => {
+    const initialUlid = projectUlid.value
+    if (projectStore.projectOptions.length === 0) {
+      await projectStore.loadProjectOptions()
+      projectUlid.value = projectStore.currentProjectUlid
+    }
+    // 项目切换会触发 watch 里的加载，这里只处理未切换的情况
+    if (projectUlid.value === initialUlid) await load()
+  })
 </script>
 
 <template>
-  <div class="nw-page skills-page">
-    <NWPageHeader
-      :title_text="t('skills.title')"
-      :subtitle_text="t('skills.hint')"
-      icon_code="wand"
-    >
-      <template #actions>
-        <NWButton type="primary" @click="handleCreateSkill">
-          <NWIcon icon_code="plus" :size_px="15" />
-          {{ t('common.create') }}
-        </NWButton>
-      </template>
-    </NWPageHeader>
+  <div class="nw-page">
+    <div class="nw-toolbar">
+      <ElInput
+        v-model="keywordText"
+        placeholder="搜索名称或编码"
+        clearable
+        class="skills__search"
+        @keyup.enter="load()"
+        @clear="load()"
+      />
+      <ElSelect v-model="scopeCode" placeholder="全部作用域" clearable class="skills__select" @change="load()">
+        <ElOption label="全局" value="global" />
+        <ElOption label="项目" value="project" />
+      </ElSelect>
+      <ElSelect v-model="categoryCode" placeholder="全部分类" clearable class="skills__select" @change="load()">
+        <ElOption
+          v-for="item in categoryOptions"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+        />
+      </ElSelect>
+      <ElSelect
+        v-model="projectUlid"
+        placeholder="仅全局技能"
+        clearable
+        filterable
+        class="skills__project"
+      >
+        <ElOption
+          v-for="item in projectStore.projectOptions"
+          :key="item.project_ulid"
+          :label="item.project_name"
+          :value="item.project_ulid"
+        />
+      </ElSelect>
+      <ElButton type="primary" plain @click="openCreate">
+        <Icon icon="mdi:plus" :size="15" />
+        <span class="ml-4px">新建技能</span>
+      </ElButton>
+      <div class="skills__spacer" />
+      <span class="nw-hint">
+        共 {{ rows.length }} 个技能 · 启用 {{ enabledCount }} · 内置 {{ builtinCount }}
+      </span>
+    </div>
 
-    <NWCard :hoverable="false">
-      <template #header>
-        <div class="skills-page__header-actions">
-          <el-radio-group :model-value="scopeFilter" @change="handleScopeChange">
-            <el-radio-button value="project">{{ t('skills.scopeProject') }}</el-radio-button>
-            <el-radio-button value="global">{{ t('skills.scopeGlobal') }}</el-radio-button>
-          </el-radio-group>
-          <el-input
-            v-model="keywordText"
-            class="skills-page__search"
-            :placeholder="t('skills.keywordPlaceholder')"
-            clearable
-            @keyup.enter="handleSearch"
-          />
-          <el-select v-model="categoryFilter" class="skills-page__filter" :placeholder="t('skills.categoryAll')" clearable>
-            <el-option
-              v-for="categoryCode in NW_CATEGORY_CODE_LIST"
-              :key="categoryCode"
-              :value="categoryCode"
-              :label="categoryLabel(categoryCode)"
-            />
-          </el-select>
-          <el-checkbox v-model="enabledOnlyFilter" @change="handleSearch">{{ t('skills.enabledOnly') }}</el-checkbox>
-          <NWButton @click="handleSearch">{{ t('admin.search') }}</NWButton>
-          <NWButton @click="handleResetFilters">{{ t('admin.reset') }}</NWButton>
-        </div>
-      </template>
-
-
-      <NWLoading v-if="listLoading" />
-      <el-table v-else :data="skillList">
-        <el-table-column :label="t('skills.skillName')" min-width="170">
-          <template #default="{ row }">
-            <div class="skills-page__name-cell">
-              <code class="skills-page__code">/{{ row.skill_code }}</code>
-              <span>{{ row.skill_name }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('skills.scope')" width="100">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.scope_code === 'project' ? 'success' : 'info'">
-              {{ scopeLabel(row.scope_code) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('skills.category')" width="96">
-          <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ categoryLabel(row.category_code) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('skills.domainLabel')" width="96">
-          <template #default="{ row }">
-            <span class="skills-page__domain">{{ row.domain_name || t('skills.domainCustom') }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="description_text" :label="t('skills.description')" min-width="170" show-overflow-tooltip />
-        <el-table-column :label="t('skills.assetCount')" width="86" align="center">
-          <template #default="{ row }">
-            {{ row.variable_list?.length ?? 0 }} · {{ row.ref_count }}
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('skills.status')" width="164">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.enabled_flag ? 'success' : 'info'">
-              {{ row.enabled_flag ? t('skills.enabledTag') : t('skills.disabledTag') }}
-            </el-tag>
-            <el-tag v-if="row.builtin_flag" size="small" type="warning" class="skills-page__tag-gap">
-              {{ t('skills.builtinTag') }}
-            </el-tag>
-            <el-tag v-if="row.customized_flag" size="small" effect="plain" class="skills-page__tag-gap">
-              {{ t('skills.customizedTag') }}
-            </el-tag>
-            <el-tag v-if="row.overridden_flag" size="small" type="warning" effect="plain" class="skills-page__tag-gap">
-              {{ t('skills.overriddenTag') }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('common.action')" width="132" fixed="right">
-          <template #default="{ row }">
-            <NWButton size="small" @click="handleEditSkill(row)">{{ t('common.edit') }}</NWButton>
-            <NWButton
-              type="danger-text"
-              size="small"
-              :disabled="row.builtin_flag"
-              :loading="deletingKey === row.skill_ulid"
-              @click="handleDeleteSkill(row)"
-            >
-              {{ t('common.delete') }}
-            </NWButton>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <NWEmpty :description_text="t('skills.emptyTip')" />
+    <div v-loading="loading" class="skills__groups">
+      <ElCard v-for="group in groups" :key="group.groupKey" shadow="never" class="skills__group">
+        <template #header>
+          <div class="skills__group-head">
+            <span class="skills__group-title">{{ group.groupName }}</span>
+            <span class="nw-hint">{{ group.rows.length }} 个</span>
+          </div>
         </template>
-      </el-table>
-    </NWCard>
 
-    <!-- 技能编辑抽屉 -->
-    <el-drawer
-      v-model="drawerVisible"
-      :title="formState.skill_ulid ? t('skills.editTitle') : t('skills.createTitle')"
-      size="720px"
-      destroy-on-close
-    >
-      <el-form ref="formRef" :model="formState" :rules="formRules" label-position="top">
-        <div class="skills-page__grid">
-          <el-form-item prop="skill_name" :label="t('skills.skillName')">
-            <el-input v-model="formState.skill_name" :maxlength="64" show-word-limit />
-          </el-form-item>
-          <el-form-item prop="skill_code" :label="t('skills.skillCode')">
-            <el-input v-model="formState.skill_code" :maxlength="32" :disabled="Boolean(formState.skill_ulid)" />
-          </el-form-item>
-        </div>
-
-        <div class="skills-page__grid">
-          <el-form-item :label="t('skills.scope')">
-            <el-select v-model="formState.scope_code" class="skills-page__full" :disabled="Boolean(formState.skill_ulid)">
-              <el-option v-for="scopeCode in NW_SCOPE_LIST" :key="scopeCode" :value="scopeCode" :label="scopeLabel(scopeCode)" />
-            </el-select>
-          </el-form-item>
-          <el-form-item :label="t('skills.category')">
-            <el-select v-model="formState.category_code" class="skills-page__full">
-              <el-option
-                v-for="categoryCode in NW_CATEGORY_CODE_LIST"
-                :key="categoryCode"
-                :value="categoryCode"
-                :label="categoryLabel(categoryCode)"
+        <ElTable :data="group.rows" size="small">
+          <ElTableColumn label="技能" min-width="200">
+            <template #default="{ row }">
+              <div class="cell-main">
+                <span class="cell-main__title">
+                  {{ row.skill_name }}
+                  <span class="cell-main__code">/{{ row.skill_code }}</span>
+                </span>
+                <span class="cell-main__sub">{{ row.description_text || '（无说明）' }}</span>
+              </div>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="标记" width="180">
+            <template #default="{ row }">
+              <div class="cell-tags">
+                <ElTag v-if="row.builtin_flag" size="small" type="info" effect="plain">内置</ElTag>
+                <ElTag v-if="row.customized_flag" size="small" type="warning" effect="plain">
+                  已自定义
+                </ElTag>
+                <ElTag v-if="row.overridden_flag" size="small" type="danger" effect="plain">
+                  被项目覆盖
+                </ElTag>
+                <ElTag v-if="!row.builtin_flag" size="small" type="success" effect="plain">自建</ElTag>
+              </div>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="作用域" width="130">
+            <template #default="{ row }">
+              <span v-if="row.scope_code === 'project'" class="cell-scope">
+                项目 · {{ projectNameOf(row.project_ulid) || '未知项目' }}
+              </span>
+              <span v-else class="cell-scope">全局</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="分类" width="80">
+            <template #default="{ row }">{{ categoryLabel(row.category_code) }}</template>
+          </ElTableColumn>
+          <ElTableColumn label="变量/资料" width="100">
+            <template #default="{ row }">
+              {{ row.variable_list.length }} / {{ row.ref_count }}
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="启用" width="70">
+            <template #default="{ row }">
+              <ElSwitch
+                :model-value="row.enabled_flag"
+                size="small"
+                :loading="togglingUlid === row.skill_ulid"
+                @update:model-value="toggleEnabled(row as NWSkillVo, Boolean($event))"
               />
-            </el-select>
-          </el-form-item>
-        </div>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="操作" width="200" fixed="right">
+            <template #default="{ row }">
+              <ElButton size="small" text @click="drawer?.open(row as NWSkillVo, projectUlid)">编辑</ElButton>
+              <ElButton size="small" text @click="trialDialog?.open(row as NWSkillVo)">试用</ElButton>
+              <ElButton
+                size="small"
+                text
+                type="danger"
+                :disabled="row.builtin_flag"
+                @click="remove(row as NWSkillVo)"
+              >
+                删除
+              </ElButton>
+            </template>
+          </ElTableColumn>
+        </ElTable>
+      </ElCard>
 
-        <el-form-item :label="t('skills.description')">
-          <el-input v-model="formState.description_text" :maxlength="256" show-word-limit />
-        </el-form-item>
+      <ElEmpty
+        v-if="!loading && groups.length === 0"
+        description="没有匹配的技能，换个筛选条件或新建一个"
+      />
+    </div>
 
-        <el-form-item prop="prompt_template" :label="t('skills.promptTemplate')">
-          <el-input
-            v-model="formState.prompt_template"
-            type="textarea"
-            :rows="9"
-            :maxlength="8000"
-            show-word-limit
-            class="skills-page__template"
-          />
-          <p class="skills-page__field-hint">
-            {{ t('skills.promptTemplateHint') }}
-            <code v-for="placeholderName in BUILTIN_PLACEHOLDER_LIST" :key="placeholderName" class="skills-page__placeholder">
-              {{ placeholderName }}
-            </code>
-          </p>
-        </el-form-item>
-
-        <!-- 变量声明 -->
-        <div class="skills-page__section">
-          <div class="skills-page__section-head">
-            <span class="skills-page__section-title">{{ t('skills.variableTitle') }}</span>
-            <NWButton size="small" @click="handleAddVariable">{{ t('skills.variableAdd') }}</NWButton>
-          </div>
-          <p class="skills-page__field-hint">{{ t('skills.variableHint') }}</p>
-          <div v-if="formState.variable_list.length" class="skills-page__variable-list">
-            <div
-              v-for="(variableItem, variableIndex) in formState.variable_list"
-              :key="variableIndex"
-              class="skills-page__variable-row"
-            >
-              <el-input
-                v-model="variableItem.variable_name"
-                :placeholder="t('skills.variableName')"
-                class="skills-page__variable-name"
-              />
-              <el-input v-model="variableItem.variable_label" :placeholder="t('skills.variableLabel')" />
-              <el-input v-model="variableItem.default_value" :placeholder="t('skills.variableDefault')" />
-              <el-switch v-model="variableItem.required_flag" :active-text="t('skills.variableRequired')" />
-              <NWButton type="danger-text" size="small" @click="handleRemoveVariable(variableIndex)">
-                {{ t('common.delete') }}
-              </NWButton>
-            </div>
-          </div>
-          <p v-else class="skills-page__muted">{{ t('skills.variableEmpty') }}</p>
-        </div>
-
-        <!-- 参考资料：未保存技能前禁用 -->
-        <div class="skills-page__section">
-          <SkillReferencePanel
-            :skill_ulid="formState.skill_ulid"
-            :disabled_flag="!formState.skill_ulid"
-            @changed="loadSkillList"
-          />
-        </div>
-
-        <div class="skills-page__grid">
-          <el-form-item :label="t('skills.enabledFlag')">
-            <el-switch v-model="formState.enabled_flag" />
-          </el-form-item>
-          <el-form-item :label="t('skills.sortOrder')">
-            <el-input-number v-model="formState.sort_order" :min="0" :max="9999" class="skills-page__full" />
-          </el-form-item>
-        </div>
-      </el-form>
-
-      <template #footer>
-        <div class="skills-page__drawer-footer">
-          <NWButton @click="drawerVisible = false">{{ t('common.cancel') }}</NWButton>
-          <NWButton type="primary" :loading="saving" @click="handleSaveSkill">{{ t('common.save') }}</NWButton>
-        </div>
-      </template>
-    </el-drawer>
+    <SkillEditDrawer
+      ref="drawer"
+      :projects="projectStore.projectOptions"
+      @saved="load"
+    />
+    <SkillTrialDialog ref="trialDialog" :project-ulid="projectUlid || projectStore.currentProjectUlid" />
   </div>
 </template>
 
-<style scoped src="./skills.css"></style>
+<style lang="less" scoped>
+  .skills {
+    &__search {
+      width: 220px;
+    }
+
+    &__select {
+      width: 130px;
+    }
+
+    &__project {
+      width: 170px;
+    }
+
+    &__spacer {
+      flex: 1;
+    }
+
+    &__groups {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    &__group {
+      border-radius: var(--nw-radius-lg);
+    }
+
+    &__group-head {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+    }
+
+    &__group-title {
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--nw-ink);
+    }
+  }
+
+  .cell-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    &__title {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      font-weight: 600;
+      color: var(--nw-ink);
+    }
+
+    &__code {
+      font-family: var(--el-font-family-mono, monospace);
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--nw-primary);
+    }
+
+    &__sub {
+      overflow: hidden;
+      font-size: 11px;
+      color: var(--nw-text-muted);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .cell-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .cell-scope {
+    font-size: 12px;
+    color: var(--nw-text-secondary);
+  }
+</style>

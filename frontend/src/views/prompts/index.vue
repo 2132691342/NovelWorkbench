@@ -1,292 +1,347 @@
-<!--
-  提示词档案管理：系统提示词决定 AI 的身份与底线，与技能（单次任务指令）分工。
-  全局档案所有项目可用，项目档案只对所属项目生效；内置档案可改正文但不可删。
--->
+<!-- 提示词档案页：按流程域分组展示与编辑档案。 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { useI18n } from 'vue-i18n'
-import { deletePromptProfile, listPromptProfiles, savePromptProfile } from '@/api/prompt'
-import type { NWPromptProfileVo } from '@/api/contracts'
-import { useProjectStore } from '@/stores/project'
-import NWButton from '@/components/NWButton.vue'
-import NWCard from '@/components/NWCard.vue'
-import NWEmpty from '@/components/NWEmpty.vue'
-import NWIcon from '@/components/NWIcon.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import NWPageHeader from '@/components/NWPageHeader.vue'
+  import { computed, onMounted, ref, watch } from 'vue'
+  import {
+    ElButton,
+    ElCard,
+    ElEmpty,
+    ElMessage,
+    ElMessageBox,
+    ElOption,
+    ElSelect,
+    ElSwitch,
+    ElTable,
+    ElTableColumn,
+    ElTag
+  } from 'element-plus'
+  import { deletePromptProfile, listPromptProfiles, savePromptProfile } from '@/api/prompt'
+  import type { NWPromptProfileVo } from '@/api/contracts'
+  import { useProjectStore } from '@/store/modules/project'
+  import { formatRelativeTime } from '@/utils/time'
+  import PromptEditDrawer from './components/PromptEditDrawer.vue'
+  import PromptPreviewDialog from './components/PromptPreviewDialog.vue'
 
-const { t } = useI18n()
-const projectStore = useProjectStore()
-
-const profileList = ref<NWPromptProfileVo[]>([])
-const listLoading = ref(false)
-const scopeFilter = ref<'project' | 'global'>('project')
-const drawerVisible = ref(false)
-const savingFlag = ref(false)
-const formRef = ref<FormInstance>()
-
-/** 档案表单状态 */
-const formState = reactive({
-  prompt_profile_ulid: '',
-  prompt_profile_code: '',
-  prompt_profile_name: '',
-  scope_code: 'global',
-  project_ulid: '',
-  description_text: '',
-  system_prompt_text: '',
-  enabled_flag: true,
-  sort_order: 0,
-})
-
-const formRules = computed<FormRules>(() => ({
-  prompt_profile_code: [{ required: true, message: t('prompts.ruleCodeRequired'), trigger: 'blur' }],
-  prompt_profile_name: [{ required: true, message: t('prompts.ruleNameRequired'), trigger: 'blur' }],
-  system_prompt_text: [{ required: true, message: t('prompts.rulePromptRequired'), trigger: 'blur' }],
-}))
-
-/** 当前查询的项目 ULID（全局视图下不传，只看全局档案） */
-const queryProjectUlid = computed(() =>
-  scopeFilter.value === 'project' ? projectStore.current_project_ulid : '',
-)
-
-/** 编辑态判定 */
-const editingFlag = computed(() => formState.prompt_profile_ulid !== '')
-
-/** 加载档案列表 */
-async function loadProfileList(): Promise<void> {
-  listLoading.value = true
-  try {
-    const listData = await listPromptProfiles({ project_ulid: queryProjectUlid.value || undefined })
-    profileList.value = Array.isArray(listData) ? listData : []
-  } catch {
-    profileList.value = []
-  } finally {
-    listLoading.value = false
+  /** 分组结构：按流程域归组，无流程域的自建档案归入「自建档案」 */
+  interface ProfileGroup {
+    groupKey: string
+    groupName: string
+    rows: NWPromptProfileVo[]
   }
-}
 
-/** 新建档案 */
-function handleCreate(): void {
-  formState.prompt_profile_ulid = ''
-  formState.prompt_profile_code = ''
-  formState.prompt_profile_name = ''
-  formState.scope_code = scopeFilter.value
-  formState.project_ulid = queryProjectUlid.value
-  formState.description_text = ''
-  formState.system_prompt_text = ''
-  formState.enabled_flag = true
-  formState.sort_order = (profileList.value.length + 1) * 10
-  drawerVisible.value = true
-  formRef.value?.clearValidate()
-}
+  const projectStore = useProjectStore()
 
-/** 编辑档案 */
-function handleEdit(row: NWPromptProfileVo): void {
-  formState.prompt_profile_ulid = row.prompt_profile_ulid
-  formState.prompt_profile_code = row.prompt_profile_code
-  formState.prompt_profile_name = row.prompt_profile_name
-  formState.scope_code = row.scope_code
-  formState.project_ulid = row.project_ulid
-  formState.description_text = row.description_text
-  formState.system_prompt_text = row.system_prompt_text
-  formState.enabled_flag = row.enabled_flag
-  formState.sort_order = row.sort_order
-  drawerVisible.value = true
-  formRef.value?.clearValidate()
-}
+  const loading = ref(false)
+  const rows = ref<NWPromptProfileVo[]>([])
+  const projectUlid = ref(projectStore.currentProjectUlid)
+  const enabledOnly = ref(false)
+  const togglingUlid = ref('')
 
-/** 保存档案 */
-async function handleSave(): Promise<void> {
-  if (!formRef.value) {
-    return
-  }
-  try {
-    await formRef.value.validate()
-  } catch {
-    return
-  }
-  if (formState.scope_code === 'project' && !formState.project_ulid) {
-    ElMessage.warning(t('prompts.projectRequired'))
-    return
-  }
-  savingFlag.value = true
-  try {
-    await savePromptProfile({
-      prompt_profile_ulid: formState.prompt_profile_ulid || undefined,
-      prompt_profile_code: formState.prompt_profile_code,
-      prompt_profile_name: formState.prompt_profile_name,
-      scope_code: formState.scope_code,
-      project_ulid: formState.scope_code === 'project' ? formState.project_ulid : undefined,
-      description_text: formState.description_text,
-      system_prompt_text: formState.system_prompt_text,
-      enabled_flag: formState.enabled_flag,
-      sort_order: formState.sort_order,
-    })
-    ElMessage.success(editingFlag.value ? t('prompts.updateSuccess') : t('prompts.createSuccess'))
-    drawerVisible.value = false
-    await loadProfileList()
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    savingFlag.value = false
-  }
-}
+  const drawer = ref<InstanceType<typeof PromptEditDrawer>>()
+  const previewVisible = ref(false)
+  const previewProfile = ref<NWPromptProfileVo | null>(null)
 
-/** 删除档案（内置档案不可删，后端同样拦截） */
-async function handleDelete(row: NWPromptProfileVo): Promise<void> {
-  try {
-    await ElMessageBox.confirm(
-      t('prompts.deleteConfirm', { name: row.prompt_profile_name }),
-      t('prompts.deleteTitle'),
-      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') },
-    )
-  } catch {
-    return
+  const projectNameOf = (ulid: string) =>
+    projectStore.projectOptions.find((item) => item.project_ulid === ulid)?.project_name ?? ''
+
+  const load = async () => {
+    loading.value = true
+    try {
+      rows.value = await listPromptProfiles({
+        project_ulid: projectUlid.value || undefined,
+        enabled_only: enabledOnly.value || undefined
+      })
+    } catch {
+      rows.value = []
+    } finally {
+      loading.value = false
+    }
   }
-  try {
+
+  const groups = computed<ProfileGroup[]>(() => {
+    const groupMap = new Map<string, ProfileGroup>()
+    for (const row of rows.value) {
+      const groupKey = row.domain_code || 'custom'
+      const groupName = row.domain_name || '自建档案'
+      const existing = groupMap.get(groupKey)
+      if (existing) {
+        existing.rows.push(row)
+      } else {
+        groupMap.set(groupKey, { groupKey, groupName, rows: [row] })
+      }
+    }
+    return [...groupMap.values()].map((group) => ({
+      ...group,
+      rows: [...group.rows].sort((left, right) => left.sort_order - right.sort_order)
+    }))
+  })
+
+  const builtinCount = computed(() => rows.value.filter((row) => row.builtin_flag).length)
+  const enabledCount = computed(() => rows.value.filter((row) => row.enabled_flag).length)
+
+  /** 开关切换需回传完整档案体（保存为整体覆盖） */
+  const toggleEnabled = async (row: NWPromptProfileVo, enabled: boolean) => {
+    togglingUlid.value = row.prompt_profile_ulid
+    try {
+      await savePromptProfile({
+        prompt_profile_ulid: row.prompt_profile_ulid,
+        prompt_profile_code: row.prompt_profile_code,
+        prompt_profile_name: row.prompt_profile_name,
+        scope_code: row.scope_code,
+        project_ulid: row.project_ulid || undefined,
+        description_text: row.description_text,
+        system_prompt_text: row.system_prompt_text,
+        enabled_flag: enabled,
+        sort_order: row.sort_order
+      })
+      ElMessage.success(enabled ? '档案已启用' : '档案已停用')
+      await load()
+    } catch {
+      row.enabled_flag = !enabled
+    } finally {
+      togglingUlid.value = ''
+    }
+  }
+
+  const remove = async (row: NWPromptProfileVo) => {
+    try {
+      await ElMessageBox.confirm(
+        `将删除提示词档案「${row.prompt_profile_name}」，确定吗？`,
+        '删除档案',
+        { type: 'warning' }
+      )
+    } catch {
+      return
+    }
     await deletePromptProfile(row.prompt_profile_ulid)
-    ElMessage.success(t('prompts.deleteSuccess'))
-    await loadProfileList()
-  } catch {
-    // 失败提示由 http 层统一弹出
+    ElMessage.success('档案已删除')
+    await load()
   }
-}
 
-/** 切换作用域后重新查询 */
-function handleScopeChange(): void {
-  void loadProfileList()
-}
+  const openPreview = (row: NWPromptProfileVo) => {
+    previewProfile.value = row
+    previewVisible.value = true
+  }
 
-onMounted(() => {
-  void loadProfileList()
-})
+  watch(projectUlid, () => {
+    void load()
+  })
+
+  watch(enabledOnly, () => {
+    void load()
+  })
+
+  onMounted(async () => {
+    const initialUlid = projectUlid.value
+    if (projectStore.projectOptions.length === 0) {
+      await projectStore.loadProjectOptions()
+      projectUlid.value = projectStore.currentProjectUlid
+    }
+    // 项目切换会触发 watch 里的加载，这里只处理未切换的情况
+    if (projectUlid.value === initialUlid) await load()
+  })
 </script>
 
 <template>
-  <div class="nw-page prompts-page">
-    <NWPageHeader :title_text="t('prompts.title')" :subtitle_text="t('prompts.hint')" icon_code="sparkles">
-      <template #actions>
-        <NWButton type="primary" @click="handleCreate">
-          <NWIcon icon_code="plus" :size_px="15" />
-          {{ t('common.create') }}
-        </NWButton>
-      </template>
-    </NWPageHeader>
+  <div class="nw-page">
+    <div class="nw-toolbar">
+      <ElSelect
+        v-model="projectUlid"
+        placeholder="仅全局档案"
+        clearable
+        filterable
+        class="prompts__project"
+      >
+        <ElOption
+          v-for="item in projectStore.projectOptions"
+          :key="item.project_ulid"
+          :label="item.project_name"
+          :value="item.project_ulid"
+        />
+      </ElSelect>
+      <ElButton type="primary" plain @click="drawer?.open(undefined, projectUlid)">
+        <Icon icon="mdi:plus" :size="15" />
+        <span class="ml-4px">新建档案</span>
+      </ElButton>
+      <div class="prompts__spacer" />
+      <div class="prompts__filter">
+        <ElSwitch v-model="enabledOnly" size="small" />
+        <span class="nw-hint">仅看启用</span>
+      </div>
+      <span class="nw-hint">
+        共 {{ rows.length }} 个档案 · 启用 {{ enabledCount }} · 内置 {{ builtinCount }}
+      </span>
+    </div>
 
-    <NWCard :hoverable="false">
-      <template #header>
-        <div class="prompts-page__filters">
-          <el-radio-group :model-value="scopeFilter" @change="handleScopeChange">
-            <el-radio-button value="project">{{ t('prompts.scopeProject') }}</el-radio-button>
-            <el-radio-button value="global">{{ t('prompts.scopeGlobal') }}</el-radio-button>
-          </el-radio-group>
-          <span class="prompts-page__count">{{ t('prompts.countLabel', { count: profileList.length }) }}</span>
-        </div>
-      </template>
+    <div v-loading="loading" class="prompts__groups">
+      <ElCard v-for="group in groups" :key="group.groupKey" shadow="never" class="prompts__group">
+        <template #header>
+          <div class="prompts__group-head">
+            <span class="prompts__group-title">{{ group.groupName }}</span>
+            <span class="nw-hint">{{ group.rows.length }} 个</span>
+          </div>
+        </template>
 
-      <NWLoading v-if="listLoading" />
-      <NWEmpty v-else-if="profileList.length === 0" :title_text="t('prompts.emptyTitle')" :description_text="t('prompts.emptyDesc')" />
-      <el-table v-else :data="profileList">
-        <el-table-column :label="t('prompts.profileName')" min-width="180">
-          <template #default="{ row }">
-            <div class="prompts-page__name-cell">
-              <code class="prompts-page__code">{{ row.prompt_profile_code }}</code>
-              <span>{{ row.prompt_profile_name }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('prompts.scope')" width="96">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.scope_code === 'project' ? 'success' : 'info'">
-              {{ row.scope_code === 'project' ? t('prompts.scopeProjectTag') : t('prompts.scopeGlobalTag') }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('prompts.domainLabel')" width="110">
-          <template #default="{ row }">
-            <span class="prompts-page__domain">{{ row.domain_name || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="description_text" :label="t('prompts.description')" min-width="220" show-overflow-tooltip />
-        <el-table-column :label="t('prompts.promptLength')" width="96" align="center">
-          <template #default="{ row }">{{ row.system_prompt_text.length }}</template>
-        </el-table-column>
-        <el-table-column :label="t('prompts.status')" width="190">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.enabled_flag ? 'success' : 'info'">
-              {{ row.enabled_flag ? t('prompts.enabledTag') : t('prompts.disabledTag') }}
-            </el-tag>
-            <el-tag v-if="row.builtin_flag" size="small" type="warning" class="prompts-page__tag-gap">
-              {{ t('prompts.builtinTag') }}
-            </el-tag>
-            <el-tag v-if="row.customized_flag" size="small" effect="plain" class="prompts-page__tag-gap">
-              {{ t('prompts.customizedTag') }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('common.action')" width="150" fixed="right">
-          <template #default="{ row }">
-            <NWButton type="text" size="small" @click="handleEdit(row)">{{ t('common.edit') }}</NWButton>
-            <NWButton
-              type="danger-text"
-              size="small"
-              :disabled="row.builtin_flag"
-              @click="handleDelete(row)"
-            >
-              {{ t('common.delete') }}
-            </NWButton>
-          </template>
-        </el-table-column>
-      </el-table>
-    </NWCard>
+        <ElTable :data="group.rows" size="small">
+          <ElTableColumn label="档案" min-width="200">
+            <template #default="{ row }">
+              <div class="cell-main">
+                <span class="cell-main__title">
+                  {{ row.prompt_profile_name }}
+                  <span class="cell-main__code">{{ row.prompt_profile_code }}</span>
+                </span>
+                <span class="cell-main__sub">
+                  {{ row.description_text || row.system_prompt_text.slice(0, 60) }}
+                </span>
+              </div>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="标记" width="180">
+            <template #default="{ row }">
+              <div class="cell-tags">
+                <ElTag v-if="row.builtin_flag" size="small" type="info" effect="plain">内置</ElTag>
+                <ElTag v-if="row.customized_flag" size="small" type="warning" effect="plain">
+                  已自定义
+                </ElTag>
+                <ElTag v-if="!row.builtin_flag" size="small" type="success" effect="plain">自建</ElTag>
+              </div>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="作用域" width="150">
+            <template #default="{ row }">
+              <span v-if="row.scope_code === 'project'" class="cell-scope">
+                项目 · {{ projectNameOf(row.project_ulid) || '未知项目' }}
+              </span>
+              <span v-else class="cell-scope">全局</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="字数" width="80">
+            <template #default="{ row }">{{ row.system_prompt_text.length }}</template>
+          </ElTableColumn>
+          <ElTableColumn label="排序" width="70">
+            <template #default="{ row }">{{ row.sort_order }}</template>
+          </ElTableColumn>
+          <ElTableColumn label="更新" width="110">
+            <template #default="{ row }">
+              <span class="cell-scope">{{ formatRelativeTime(row.updated_at) }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="启用" width="70">
+            <template #default="{ row }">
+              <ElSwitch
+                :model-value="row.enabled_flag"
+                size="small"
+                :loading="togglingUlid === row.prompt_profile_ulid"
+                @update:model-value="toggleEnabled(row as NWPromptProfileVo, Boolean($event))"
+              />
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="操作" width="180" fixed="right">
+            <template #default="{ row }">
+              <ElButton size="small" text @click="openPreview(row as NWPromptProfileVo)">预览</ElButton>
+              <ElButton size="small" text @click="drawer?.open(row as NWPromptProfileVo, projectUlid)">
+                编辑
+              </ElButton>
+              <ElButton
+                size="small"
+                text
+                type="danger"
+                :disabled="row.builtin_flag"
+                @click="remove(row as NWPromptProfileVo)"
+              >
+                删除
+              </ElButton>
+            </template>
+          </ElTableColumn>
+        </ElTable>
+      </ElCard>
 
-    <el-drawer
-      v-model="drawerVisible"
-      :title="editingFlag ? t('prompts.editTitle') : t('prompts.createTitle')"
-      size="620px"
-      destroy-on-close
-    >
-      <el-form ref="formRef" :model="formState" :rules="formRules" label-position="top">
-        <el-form-item :label="t('prompts.profileCode')" prop="prompt_profile_code">
-          <el-input
-            v-model="formState.prompt_profile_code"
-            maxlength="32"
-            :disabled="editingFlag"
-            :placeholder="t('prompts.profileCodePlaceholder')"
-          />
-        </el-form-item>
-        <el-form-item :label="t('prompts.profileName')" prop="prompt_profile_name">
-          <el-input v-model="formState.prompt_profile_name" maxlength="64" />
-        </el-form-item>
-        <el-form-item :label="t('prompts.description')">
-          <el-input v-model="formState.description_text" maxlength="256" show-word-limit />
-        </el-form-item>
-        <el-form-item :label="t('prompts.systemPrompt')" prop="system_prompt_text">
-          <el-input
-            v-model="formState.system_prompt_text"
-            type="textarea"
-            :rows="16"
-            maxlength="8000"
-            show-word-limit
-            :placeholder="t('prompts.systemPromptPlaceholder')"
-          />
-        </el-form-item>
-        <div class="prompts-page__form-row">
-          <el-form-item :label="t('prompts.sortOrder')">
-            <el-input-number v-model="formState.sort_order" :min="0" :max="9999" :step="10" />
-          </el-form-item>
-          <el-form-item :label="t('prompts.status')">
-            <el-switch v-model="formState.enabled_flag" />
-          </el-form-item>
-        </div>
-      </el-form>
-      <template #footer>
-        <NWButton @click="drawerVisible = false">{{ t('common.cancel') }}</NWButton>
-        <NWButton type="primary" :loading="savingFlag" @click="handleSave">{{ t('common.save') }}</NWButton>
-      </template>
-    </el-drawer>
+      <ElEmpty
+        v-if="!loading && groups.length === 0"
+        description="还没有提示词档案，先建一个吧"
+      />
+    </div>
+
+    <PromptEditDrawer ref="drawer" :projects="projectStore.projectOptions" @saved="load" />
+    <PromptPreviewDialog v-model:visible="previewVisible" :profile="previewProfile" />
   </div>
 </template>
 
-<style scoped src="./prompts.css"></style>
+<style lang="less" scoped>
+  .prompts {
+    &__project {
+      width: 180px;
+    }
+
+    &__spacer {
+      flex: 1;
+    }
+
+    &__filter {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    &__groups {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    &__group {
+      border-radius: var(--nw-radius-lg);
+    }
+
+    &__group-head {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+    }
+
+    &__group-title {
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--nw-ink);
+    }
+  }
+
+  .cell-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    &__title {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      font-weight: 600;
+      color: var(--nw-ink);
+    }
+
+    &__code {
+      font-family: var(--el-font-family-mono, monospace);
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--nw-primary);
+    }
+
+    &__sub {
+      overflow: hidden;
+      font-size: 11px;
+      color: var(--nw-text-muted);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .cell-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .cell-scope {
+    font-size: 12px;
+    color: var(--nw-text-secondary);
+  }
+</style>

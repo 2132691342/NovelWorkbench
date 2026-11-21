@@ -21,7 +21,7 @@ die() { echo "[deploy] $*" >&2; exit 1; }
 
 # ---- 预检：产物与密钥 ----
 [ -f "$BACKEND_BIN" ] || die "缺少后端二进制 $BACKEND_BIN（先在开发机交叉编译并上传）"
-[ -f "$FRONTEND_DIST/index.html" ] || die "缺少前端产物 $FRONTEND_DIST（先 npm run build 并上传）"
+[ -f "$FRONTEND_DIST/index.html" ] || die "缺少前端产物 $FRONTEND_DIST（先在 frontend 执行 pnpm build 并上传）"
 [ -f "$NGINX_CONF" ] || die "缺少 $NGINX_CONF"
 [ -f "$BACKEND_CONF" ] || die "缺少 $BACKEND_CONF"
 [ -f "$ENV_FILE" ] || die "缺少 $ENV_FILE（先 cp .env.example .env 并填好密钥）"

@@ -1,396 +1,358 @@
-<!--
-  个人中心：资料卡 + 基本资料表单 + 密码修改 + 账号信息。
-  仅本人可访问；保存成功后同步刷新顶栏用户信息。
--->
+<!-- 个人中心：查看账号信息、编辑资料与修改密码。 -->
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { useI18n } from 'vue-i18n'
-import { changePassword, fetchProfileDetail, updateProfile, type NWProfileVo } from '@/api/profile'
-import { useAuthStore } from '@/stores/auth'
-import NWButton from '@/components/NWButton.vue'
-import NWCard from '@/components/NWCard.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import { formatTime } from '@/utils/time'
+  import { onMounted, reactive, ref } from 'vue'
+  import {
+    ElAlert,
+    ElButton,
+    ElCard,
+    ElForm,
+    ElFormItem,
+    ElInput,
+    ElMessage,
+    type FormInstance,
+    type FormRules
+  } from 'element-plus'
+  import { changePassword, fetchProfileDetail, updateProfile } from '@/api/profile'
+  import type { NWProfileVo } from '@/api/profile'
+  import { useUserStore } from '@/store/modules/user'
+  import { formatTime } from '@/utils/time'
 
-const { t } = useI18n()
-const authStore = useAuthStore()
+  const userStore = useUserStore()
 
-const profileLoading = ref(false)
-const profileSaving = ref(false)
-const passwordSaving = ref(false)
-const activeTab = ref('profile')
-const profileVo = ref<NWProfileVo | null>(null)
-const profileFormRef = ref<FormInstance>()
-const passwordFormRef = ref<FormInstance>()
+  const profile = ref<NWProfileVo | null>(null)
+  const loading = ref(false)
+  const savingProfile = ref(false)
+  const savingPassword = ref(false)
 
-/** 基本资料表单 */
-const profileForm = reactive({
-  user_email: '',
-  avatar_url: '',
-  remark_text: '',
-})
+  const profileFormRef = ref<FormInstance>()
+  const passwordFormRef = ref<FormInstance>()
 
-/** 密码修改表单 */
-const passwordForm = reactive({
-  old_password_text: '',
-  new_password_text: '',
-  confirm_password_text: '',
-})
+  const profileForm = reactive({
+    user_email: '',
+    avatar_url: '',
+    remark_text: ''
+  })
 
-const profileRules = computed<FormRules>(() => ({
-  user_email: [
-    { required: true, message: t('profile.ruleEmailRequired'), trigger: 'blur' },
-    { type: 'email', message: t('profile.ruleEmailInvalid'), trigger: 'blur' },
-  ],
-}))
+  const passwordForm = reactive({
+    old_password_text: '',
+    new_password_text: '',
+    confirm_password_text: ''
+  })
 
-const passwordRules = computed<FormRules>(() => ({
-  old_password_text: [
-    { required: true, message: t('profile.ruleOldPasswordRequired'), trigger: 'blur' },
-  ],
-  new_password_text: [
-    { required: true, message: t('profile.ruleNewPasswordRequired'), trigger: 'blur' },
-    { min: 6, max: 64, message: t('profile.rulePasswordLength'), trigger: 'blur' },
-  ],
-  confirm_password_text: [
-    { required: true, message: t('profile.ruleConfirmRequired'), trigger: 'blur' },
-    {
-      validator: (_rule, value: string, callback) => {
-        if (value !== passwordForm.new_password_text) {
-          callback(new Error(t('profile.ruleConfirmMismatch')))
-          return
-        }
-        callback()
-      },
-      trigger: 'blur',
-    },
-  ],
-}))
-
-const avatarText = computed(() => (profileVo.value?.user_name ?? '').slice(0, 1).toUpperCase() || '?')
-const roleText = computed(() => (profileVo.value?.role_codes ?? []).join(' / ') || '-')
-
-/** 加载个人资料并回填表单 */
-async function loadProfile(): Promise<void> {
-  profileLoading.value = true
-  try {
-    const data = await fetchProfileDetail()
-    profileVo.value = data
-    profileForm.user_email = data.user_email
-    profileForm.avatar_url = data.avatar_url
-    profileForm.remark_text = data.remark_text
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    profileLoading.value = false
+  const profileRules: FormRules = {
+    user_email: [
+      { required: true, message: '请输入邮箱', trigger: 'blur' },
+      { type: 'email', message: '邮箱格式不正确', trigger: 'blur' }
+    ]
   }
-}
 
-/** 保存基本资料 */
-async function handleProfileSave(): Promise<void> {
-  if (!profileFormRef.value) {
-    return
+  const passwordRules: FormRules = {
+    old_password_text: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
+    new_password_text: [
+      { required: true, message: '请输入新密码', trigger: 'blur' },
+      { min: 6, max: 64, message: '长度 6-64 个字符', trigger: 'blur' }
+    ],
+    confirm_password_text: [
+      { required: true, message: '请再次输入新密码', trigger: 'blur' },
+      {
+        validator: (_rule, value: string, callback: (error?: Error) => void) => {
+          if (value !== passwordForm.new_password_text) {
+            callback(new Error('两次输入的新密码不一致'))
+            return
+          }
+          callback()
+        },
+        trigger: 'blur'
+      }
+    ]
   }
-  try {
-    await profileFormRef.value.validate()
-  } catch {
-    return
-  }
-  profileSaving.value = true
-  try {
-    const data = await updateProfile({
-      user_email: profileForm.user_email.trim(),
-      avatar_url: profileForm.avatar_url.trim(),
-      remark_text: profileForm.remark_text.trim(),
-    })
-    profileVo.value = data
-    await authStore.fetchProfile()
-    ElMessage.success(t('profile.saveSuccess'))
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    profileSaving.value = false
-  }
-}
 
-/** 修改密码：成功后清空表单 */
-async function handlePasswordSave(): Promise<void> {
-  if (!passwordFormRef.value) {
-    return
+  const load = async () => {
+    loading.value = true
+    try {
+      profile.value = await fetchProfileDetail()
+      profileForm.user_email = profile.value.user_email
+      profileForm.avatar_url = profile.value.avatar_url
+      profileForm.remark_text = profile.value.remark_text
+    } catch {
+      profile.value = null
+    } finally {
+      loading.value = false
+    }
   }
-  try {
-    await passwordFormRef.value.validate()
-  } catch {
-    return
-  }
-  passwordSaving.value = true
-  try {
-    await changePassword({
-      old_password_text: passwordForm.old_password_text,
-      new_password_text: passwordForm.new_password_text,
-    })
-    passwordForm.old_password_text = ''
-    passwordForm.new_password_text = ''
-    passwordForm.confirm_password_text = ''
-    passwordFormRef.value.clearValidate()
-    ElMessage.success(t('profile.passwordSuccess'))
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    passwordSaving.value = false
-  }
-}
 
-onMounted(() => {
-  void loadProfile()
-})
+  const saveProfile = async () => {
+    const valid = await profileFormRef.value?.validate().catch(() => false)
+    if (!valid) return
+
+    savingProfile.value = true
+    try {
+      profile.value = await updateProfile({
+        user_email: profileForm.user_email,
+        avatar_url: profileForm.avatar_url,
+        remark_text: profileForm.remark_text
+      })
+      await userStore.fetchProfile()
+      ElMessage.success('资料已更新')
+    } finally {
+      savingProfile.value = false
+    }
+  }
+
+  const savePassword = async () => {
+    const valid = await passwordFormRef.value?.validate().catch(() => false)
+    if (!valid) return
+
+    savingPassword.value = true
+    try {
+      await changePassword({
+        old_password_text: passwordForm.old_password_text,
+        new_password_text: passwordForm.new_password_text
+      })
+      ElMessage.success('密码已修改，请牢记新密码')
+      passwordForm.old_password_text = ''
+      passwordForm.new_password_text = ''
+      passwordForm.confirm_password_text = ''
+      passwordFormRef.value?.clearValidate()
+    } finally {
+      savingPassword.value = false
+    }
+  }
+
+  onMounted(() => {
+    void load()
+  })
 </script>
 
 <template>
-  <div class="nw-page profile-page">
-    <NWLoading v-if="profileLoading" />
-    <template v-else-if="profileVo">
-      <section class="profile-page__hero">
-        <div class="profile-page__identity">
-          <el-avatar :size="72" :src="profileVo.avatar_url" class="profile-page__avatar">
-            {{ avatarText }}
-          </el-avatar>
-          <div class="profile-page__meta">
-            <h2 class="profile-page__name">{{ profileVo.user_name }}</h2>
-            <p class="profile-page__email">{{ profileVo.user_email }}</p>
-            <div class="profile-page__tags">
-              <el-tag size="small" effect="light">{{ roleText }}</el-tag>
-              <el-tag v-if="profileVo.user_status_code === 'active'" size="small" type="success" effect="light">
-                {{ t('profile.statusActive') }}
-              </el-tag>
-              <el-tag v-else size="small" type="danger" effect="light">
-                {{ t('profile.statusDisabled') }}
-              </el-tag>
-            </div>
+  <div class="nw-page">
+    <div v-loading="loading" class="profile__grid">
+      <ElCard shadow="never" class="profile__card">
+        <template #header>
+          <span class="profile__title">账号信息</span>
+        </template>
+        <div v-if="profile" class="profile__account">
+          <span class="profile__avatar">
+            <img v-if="profile.avatar_url" :src="profile.avatar_url" alt="头像" />
+            <template v-else>{{ (profile.user_name || 'U').slice(0, 1).toUpperCase() }}</template>
+          </span>
+          <div class="profile__account-text">
+            <h3 class="profile__name">{{ profile.user_name }}</h3>
+            <p class="nw-hint">{{ profile.user_email }}</p>
           </div>
+          <span
+            class="nw-badge"
+            :class="profile.user_status_code === 'active' ? 'nw-badge--success' : 'nw-badge--danger'"
+          >
+            {{ profile.user_status_code === 'active' ? '正常' : '已禁用' }}
+          </span>
         </div>
-        <div class="profile-page__hero-side">
-          <span class="profile-page__hero-label">{{ t('profile.joinedAt') }}</span>
-          <strong>{{ formatTime(profileVo.created_at) }}</strong>
+
+        <dl v-if="profile" class="profile__meta">
+          <div class="profile__meta-row">
+            <dt>角色</dt>
+            <dd>
+              <span v-if="profile.role_codes?.length" class="profile__roles">
+                <span v-for="code in profile.role_codes" :key="code" class="nw-badge nw-badge--neutral">
+                  {{ code }}
+                </span>
+              </span>
+              <span v-else class="nw-hint">—</span>
+            </dd>
+          </div>
+          <div class="profile__meta-row">
+            <dt>注册时间</dt>
+            <dd>{{ formatTime(profile.created_at) }}</dd>
+          </div>
+          <div class="profile__meta-row">
+            <dt>最近更新</dt>
+            <dd>{{ formatTime(profile.updated_at) }}</dd>
+          </div>
+          <div class="profile__meta-row">
+            <dt>用户标识</dt>
+            <dd><code class="profile__ulid">{{ profile.user_ulid }}</code></dd>
+          </div>
+        </dl>
+      </ElCard>
+
+      <ElCard shadow="never" class="profile__card">
+        <template #header>
+          <span class="profile__title">编辑资料</span>
+        </template>
+        <ElForm ref="profileFormRef" :model="profileForm" :rules="profileRules" label-position="top">
+          <ElFormItem label="登录名">
+            <ElInput :model-value="profile?.user_name ?? ''" disabled />
+          </ElFormItem>
+          <ElFormItem label="邮箱" prop="user_email">
+            <ElInput v-model="profileForm.user_email" maxlength="128" placeholder="name@example.com" />
+          </ElFormItem>
+          <ElFormItem label="头像地址">
+            <ElInput v-model="profileForm.avatar_url" maxlength="256" placeholder="头像图片地址" />
+          </ElFormItem>
+          <ElFormItem label="备注">
+            <ElInput v-model="profileForm.remark_text" type="textarea" :rows="2" maxlength="256" />
+          </ElFormItem>
+        </ElForm>
+        <div class="profile__actions">
+          <ElButton type="primary" :loading="savingProfile" @click="saveProfile()">保存资料</ElButton>
         </div>
-      </section>
+      </ElCard>
 
-      <el-tabs v-model="activeTab" class="profile-page__tabs">
-        <el-tab-pane :label="t('profile.tabProfile')" name="profile">
-          <NWCard :hoverable="false">
-            <el-form
-              ref="profileFormRef"
-              :model="profileForm"
-              :rules="profileRules"
-              label-position="top"
-              class="profile-page__form"
-            >
-              <el-form-item :label="t('profile.userEmail')" prop="user_email">
-                <el-input v-model="profileForm.user_email" maxlength="128" clearable />
-              </el-form-item>
-              <el-form-item :label="t('profile.avatarUrl')" prop="avatar_url">
-                <el-input
-                  v-model="profileForm.avatar_url"
-                  maxlength="256"
-                  clearable
-                  :placeholder="t('profile.avatarUrlPlaceholder')"
-                />
-              </el-form-item>
-              <el-form-item :label="t('profile.remark')" prop="remark_text">
-                <el-input
-                  v-model="profileForm.remark_text"
-                  type="textarea"
-                  :rows="3"
-                  maxlength="256"
-                  show-word-limit
-                  :placeholder="t('profile.remarkPlaceholder')"
-                />
-              </el-form-item>
-              <div class="profile-page__actions">
-                <NWButton type="primary" :loading="profileSaving" @click="handleProfileSave">
-                  {{ t('common.save') }}
-                </NWButton>
-                <NWButton @click="loadProfile">{{ t('profile.reload') }}</NWButton>
-              </div>
-            </el-form>
-          </NWCard>
-        </el-tab-pane>
-
-        <el-tab-pane :label="t('profile.tabSecurity')" name="security">
-          <NWCard :hoverable="false">
-            <el-alert
-              :title="t('profile.passwordHint')"
-              type="info"
-              :closable="false"
-              show-icon
-              class="profile-page__alert"
+      <ElCard shadow="never" class="profile__card">
+        <template #header>
+          <span class="profile__title">修改密码</span>
+        </template>
+        <ElAlert
+          type="warning"
+          :closable="false"
+          show-icon
+          title="修改后需使用新密码重新登录其他设备"
+        />
+        <ElForm
+          ref="passwordFormRef"
+          :model="passwordForm"
+          :rules="passwordRules"
+          label-position="top"
+          class="profile__password-form"
+        >
+          <ElFormItem label="当前密码" prop="old_password_text">
+            <ElInput
+              v-model="passwordForm.old_password_text"
+              type="password"
+              show-password
+              maxlength="64"
             />
-            <el-form
-              ref="passwordFormRef"
-              :model="passwordForm"
-              :rules="passwordRules"
-              label-position="top"
-              class="profile-page__form"
-            >
-              <el-form-item :label="t('profile.oldPassword')" prop="old_password_text">
-                <el-input
-                  v-model="passwordForm.old_password_text"
-                  type="password"
-                  show-password
-                  autocomplete="current-password"
-                />
-              </el-form-item>
-              <el-form-item :label="t('profile.newPassword')" prop="new_password_text">
-                <el-input
-                  v-model="passwordForm.new_password_text"
-                  type="password"
-                  show-password
-                  autocomplete="new-password"
-                />
-              </el-form-item>
-              <el-form-item :label="t('profile.confirmPassword')" prop="confirm_password_text">
-                <el-input
-                  v-model="passwordForm.confirm_password_text"
-                  type="password"
-                  show-password
-                  autocomplete="new-password"
-                />
-              </el-form-item>
-              <div class="profile-page__actions">
-                <NWButton type="primary" :loading="passwordSaving" @click="handlePasswordSave">
-                  {{ t('profile.changePassword') }}
-                </NWButton>
-              </div>
-            </el-form>
-          </NWCard>
-        </el-tab-pane>
-
-        <el-tab-pane :label="t('profile.tabAccount')" name="account">
-          <NWCard :hoverable="false">
-            <el-descriptions :column="1" border>
-              <el-descriptions-item :label="t('profile.userUlid')">
-                {{ profileVo.user_ulid }}
-              </el-descriptions-item>
-              <el-descriptions-item :label="t('profile.userName')">
-                {{ profileVo.user_name }}
-              </el-descriptions-item>
-              <el-descriptions-item :label="t('profile.roles')">
-                {{ roleText }}
-              </el-descriptions-item>
-              <el-descriptions-item :label="t('profile.status')">
-                {{ profileVo.user_status_code === 'active' ? t('profile.statusActive') : t('profile.statusDisabled') }}
-              </el-descriptions-item>
-              <el-descriptions-item :label="t('profile.createdAt')">
-                {{ formatTime(profileVo.created_at) }}
-              </el-descriptions-item>
-              <el-descriptions-item :label="t('profile.updatedAt')">
-                {{ formatTime(profileVo.updated_at) }}
-              </el-descriptions-item>
-            </el-descriptions>
-          </NWCard>
-        </el-tab-pane>
-      </el-tabs>
-    </template>
+          </ElFormItem>
+          <ElFormItem label="新密码" prop="new_password_text">
+            <ElInput
+              v-model="passwordForm.new_password_text"
+              type="password"
+              show-password
+              maxlength="64"
+              placeholder="至少 6 位"
+            />
+          </ElFormItem>
+          <ElFormItem label="确认新密码" prop="confirm_password_text">
+            <ElInput
+              v-model="passwordForm.confirm_password_text"
+              type="password"
+              show-password
+              maxlength="64"
+            />
+          </ElFormItem>
+        </ElForm>
+        <div class="profile__actions">
+          <ElButton type="primary" :loading="savingPassword" @click="savePassword()">
+            修改密码
+          </ElButton>
+        </div>
+      </ElCard>
+    </div>
   </div>
 </template>
 
-<style scoped>
-.profile-page {
-  max-width: 920px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
+<style lang="less" scoped>
+  .profile {
+    &__grid {
+      display: grid;
+      gap: 14px;
+      align-items: start;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    }
 
-.profile-page__hero {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 24px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, var(--saas_dashboard-color-5) 0%, var(--saas_dashboard-color-1) 100%);
-  color: var(--text-inverse);
-  box-shadow: var(--shadow-card);
-}
+    &__card {
+      border-radius: var(--nw-radius-lg);
+    }
 
-.profile-page__identity {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-}
+    &__title {
+      font-size: 14px;
+      font-weight: 650;
+    }
 
-.profile-page__avatar {
-  background-color: rgba(255, 255, 255, 0.18);
-  color: var(--text-inverse);
-  font-size: 26px;
-  font-weight: 700;
-}
+    &__account {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--nw-border-soft);
+    }
 
-.profile-page__name {
-  margin: 0 0 4px;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
+    &__avatar {
+      display: grid;
+      width: 52px;
+      height: 52px;
+      overflow: hidden;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--el-color-primary);
+      background: var(--nw-primary-soft);
+      border-radius: 50%;
+      place-items: center;
 
-.profile-page__email {
-  margin: 0 0 10px;
-  font-size: 13px;
-  opacity: 0.8;
-}
+      img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+    }
 
-.profile-page__tags {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+    &__account-text {
+      flex: 1;
+      min-width: 0;
+    }
 
-.profile-page__hero-side {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  text-align: right;
-  font-size: 13px;
-}
+    &__name {
+      font-size: 16px;
+      font-weight: 650;
+      color: var(--nw-ink);
+    }
 
-.profile-page__hero-label {
-  opacity: 0.7;
-  font-size: 12px;
-}
+    &__meta {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 14px;
+    }
 
-.profile-page__tabs {
-  padding: 6px 18px 18px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  background-color: var(--bg-card);
-  box-shadow: var(--shadow-card);
-}
+    &__meta-row {
+      display: flex;
+      gap: 12px;
+      align-items: baseline;
+      justify-content: space-between;
+      font-size: 12.5px;
 
-.profile-page__form {
-  max-width: 520px;
-}
+      dt {
+        color: var(--nw-text-secondary);
+      }
 
-.profile-page__actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 8px;
-}
+      dd {
+        color: var(--nw-ink);
+        text-align: right;
+        word-break: break-all;
+      }
+    }
 
-.profile-page__alert {
-  margin-bottom: 16px;
-}
+    &__roles {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: flex-end;
+    }
 
-@media (max-width: 720px) {
-  .profile-page__hero {
-    flex-direction: column;
-    align-items: flex-start;
+    &__ulid {
+      font-family: var(--el-font-family-mono, monospace);
+      font-size: 11px;
+      color: var(--nw-text-muted);
+    }
+
+    &__password-form {
+      margin-top: 12px;
+    }
+
+    &__actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 4px;
+    }
   }
-
-  .profile-page__hero-side {
-    text-align: left;
-  }
-}
 </style>

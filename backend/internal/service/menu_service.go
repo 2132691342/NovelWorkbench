@@ -27,7 +27,7 @@ type menuSeed struct {
 
 // menuSeedList 内置菜单清单（导航与权限登记的唯一来源）。
 var menuSeedList = []menuSeed{
-	{MenuCode: "dashboard", MenuName: "仪表盘", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/", IconCode: "dashboard", SortOrder: 10},
+	{MenuCode: "dashboard", MenuName: "仪表盘", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/dashboard", IconCode: "dashboard", SortOrder: 10},
 
 	{MenuCode: "group_project", MenuName: "创作", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "book", SortOrder: 20},
 	{MenuCode: "workspace", ParentCode: "group_project", MenuName: "写作台", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/workspace/:project_ulid", IconCode: "edit", SortOrder: 10},
@@ -71,7 +71,7 @@ func NewMenuService(menuRepo *repo.MenuRepo, roleSvc *RoleService) *MenuService 
 	return &MenuService{menuRepo: menuRepo, roleSvc: roleSvc}
 }
 
-// SeedDefaults 播种内置菜单（幂等：按 menu_code 查缺补插，父级编码在建子级前解析）。
+// SeedDefaults 播种内置菜单（幂等：按 menu_code 查缺补插；已存在则同步内置字段，保证升级后路由与权限不漂移）。
 func (s *MenuService) SeedDefaults(ctx context.Context) error {
 	ulidByCode := make(map[string]string, len(menuSeedList))
 	for _, item := range menuSeedList {
@@ -81,6 +81,9 @@ func (s *MenuService) SeedDefaults(ctx context.Context) error {
 		}
 		if existing != nil {
 			ulidByCode[item.MenuCode] = existing.MenuULID
+			if err := s.syncSeed(ctx, existing, item); err != nil {
+				return err
+			}
 			continue
 		}
 		parentULID := ""
@@ -114,6 +117,36 @@ func (s *MenuService) SeedDefaults(ctx context.Context) error {
 		ulidByCode[item.MenuCode] = do.MenuULID
 	}
 	return nil
+}
+
+// syncSeed 用内置定义校正已存在的菜单行（只改与代码不一致的字段，保留作者调整的展示开关与备注）。
+func (s *MenuService) syncSeed(ctx context.Context, existing *domain.MenuDO, item menuSeed) error {
+	fields := map[string]any{}
+	if existing.MenuName != item.MenuName {
+		fields["menu_name"] = item.MenuName
+	}
+	if existing.MenuTypeCode != item.MenuTypeCode {
+		fields["menu_type_code"] = item.MenuTypeCode
+	}
+	if existing.ScopeCode != item.ScopeCode && item.ScopeCode != "" {
+		fields["scope_code"] = item.ScopeCode
+	}
+	if existing.RoutePath != item.RoutePath {
+		fields["route_path"] = item.RoutePath
+	}
+	if existing.IconCode != item.IconCode {
+		fields["icon_code"] = item.IconCode
+	}
+	if existing.PermCode != item.PermCode {
+		fields["perm_code"] = item.PermCode
+	}
+	if existing.SortOrder != item.SortOrder {
+		fields["sort_order"] = item.SortOrder
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return s.menuRepo.Update(ctx, existing.MenuULID, fields)
 }
 
 // Nav 装配当前用户的导航树与权限码集合（禁用/隐藏菜单与动作节点不进树）。

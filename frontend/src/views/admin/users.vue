@@ -1,264 +1,193 @@
-<!--
-  用户管理页：搜索区 + 用户分页表格（状态/角色标签）+ 新建弹窗 + 编辑抽屉 + 重置密码弹窗 + 删除。
-  角色选项从角色列表加载，供新建/编辑表单多选使用。
--->
+<!-- 用户管理页：创建账号、分配角色与重置密码。 -->
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { useI18n } from 'vue-i18n'
-import {
-  deleteAdminUser,
-  listAdminRoles,
-  listAdminUsers,
-  type NWUserAdminVo,
-} from '@/api/admin'
-import NWButton from '@/components/NWButton.vue'
-import NWIcon from '@/components/NWIcon.vue'
-import NWPageHeader from '@/components/NWPageHeader.vue'
-import NWCard from '@/components/NWCard.vue'
-import NWEmpty from '@/components/NWEmpty.vue'
-import NWLoading from '@/components/NWLoading.vue'
-import UserFormDialogs from './UserFormDialogs.vue'
-import { formatTime } from '@/utils/time'
+  import { onMounted, ref } from 'vue'
+  import {
+    ElButton,
+    ElInput,
+    ElMessage,
+    ElMessageBox,
+    ElOption,
+    ElPagination,
+    ElSelect,
+    ElTable,
+    ElTableColumn
+  } from 'element-plus'
+  import { deleteAdminUser, listAdminUsers, type NWUserAdminVo } from '@/api/admin'
+  import { usePageQuery } from '@/composables/usePageQuery'
+  import { formatTime } from '@/utils/time'
+  import { asRow } from '@/utils/table'
+  import ResetPasswordDialog from './components/ResetPasswordDialog.vue'
+  import UserFormDialog from './components/UserFormDialog.vue'
 
-const { t } = useI18n()
+  const { items, total, pageNum, pageSize, loading, query, load, search, changePage } = usePageQuery(
+    listAdminUsers,
+    { keyword_text: '', user_status_code: '' }
+  )
 
-const NW_USER_STATUS_LIST = ['active', 'disabled'] as const
+  const formDialog = ref<InstanceType<typeof UserFormDialog>>()
+  const resetDialog = ref<InstanceType<typeof ResetPasswordDialog>>()
 
-const userList = ref<NWUserAdminVo[]>([])
-const listLoading = ref(false)
-const total = ref(0)
-const pageNum = ref(1)
-const pageSize = ref(10)
-const keywordText = ref('')
-const statusFilter = ref('')
-const roleOptions = ref<string[]>([])
+  const statusOptions = [
+    { value: '', label: '全部状态' },
+    { value: 'active', label: '正常' },
+    { value: 'disabled', label: '禁用' }
+  ]
 
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
-const activeUser = ref<NWUserAdminVo | undefined>(undefined)
-const deletingKey = ref('')
-const formDialogsRef = ref<InstanceType<typeof UserFormDialogs> | null>(null)
+  const statusLabel = (statusCode: string) =>
+    statusOptions.find((item) => item.value === statusCode)?.label ?? statusCode
 
-function statusLabel(statusCode: string): string {
-  return statusCode === 'disabled'
-    ? t('admin.users.statusDisabled')
-    : t('admin.users.statusActive')
-}
+  const statusBadge = (statusCode: string) =>
+    statusCode === 'active' ? 'success' : 'danger'
 
-async function loadUserList(): Promise<void> {
-  listLoading.value = true
-  try {
-    const pageData = await listAdminUsers({
-      page_num: pageNum.value,
-      page_size: pageSize.value,
-      keyword_text: keywordText.value.trim() || undefined,
-      user_status_code: statusFilter.value || undefined,
-    })
-    userList.value = pageData.items ?? []
-    total.value = pageData.total ?? 0
-  } catch {
-    // 失败提示由 http 层统一弹出（静默），保持当前列表
-  } finally {
-    listLoading.value = false
-  }
-}
-
-async function loadRoleOptions(): Promise<void> {
-  try {
-    const pageData = await listAdminRoles({ page_num: 1, page_size: 500 })
-    roleOptions.value = (pageData.items ?? []).map((roleItem) => roleItem.role_code)
-  } catch {
-    // 失败提示由 http 层统一弹出，选项留空不阻塞页面
-  }
-}
-
-function handleSearch(): void {
-  pageNum.value = 1
-  void loadUserList()
-}
-
-function handleResetFilters(): void {
-  keywordText.value = ''
-  statusFilter.value = ''
-  handleSearch()
-}
-
-function handleCreateUser(): void {
-  dialogMode.value = 'create'
-  activeUser.value = undefined
-  dialogVisible.value = true
-}
-
-function handleEditUser(userItem: NWUserAdminVo): void {
-  dialogMode.value = 'edit'
-  activeUser.value = userItem
-  dialogVisible.value = true
-}
-
-function handleResetPassword(userItem: NWUserAdminVo): void {
-  formDialogsRef.value?.openResetPassword(userItem)
-}
-
-async function handleDeleteUser(userItem: NWUserAdminVo): Promise<void> {
-  try {
-    await ElMessageBox.confirm(t('admin.users.deleteConfirm'), t('common.confirm'), {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning',
-    })
-  } catch {
-    return
-  }
-  deletingKey.value = userItem.user_ulid
-  try {
-    await deleteAdminUser(userItem.user_ulid)
-    ElMessage.success(t('admin.users.deleteSuccess'))
-    if (userList.value.length === 1 && pageNum.value > 1) {
-      pageNum.value -= 1
+  /** 删除用户（禁止删除自己由后端拦截并给出提示） */
+  const remove = async (row: NWUserAdminVo) => {
+    try {
+      await ElMessageBox.confirm(`将永久删除用户「${row.user_name}」，确定吗？`, '删除用户', {
+        type: 'warning'
+      })
+    } catch {
+      return
     }
-    await loadUserList()
-  } catch {
-    // 失败提示由 http 层统一弹出
-  } finally {
-    deletingKey.value = ''
+    await deleteAdminUser(row.user_ulid)
+    ElMessage.success('用户已删除')
+    await load()
   }
-}
 
-function handlePageChange(page: number): void {
-  pageNum.value = page
-  void loadUserList()
-}
+  const handleSaved = () => {
+    void load()
+  }
 
-function handleSizeChange(size: number): void {
-  pageSize.value = size
-  pageNum.value = 1
-  void loadUserList()
-}
-
-onMounted(() => {
-  void loadUserList()
-  void loadRoleOptions()
-})
+  onMounted(() => {
+    void load()
+  })
 </script>
 
 <template>
-  <div class="nw-page admin-users-page">
-    <NWPageHeader
-      :title_text="t('admin.users.title')"
-      :subtitle_text="t('admin.users.pageSubtitle')"
-      icon_code="users"
-    >
-      <template #actions>
-        <NWButton type="primary" @click="handleCreateUser">
-          <NWIcon icon_code="plus" :size_px="15" />
-          {{ t('common.create') }}
-        </NWButton>
-      </template>
-    </NWPageHeader>
-
-    <NWCard :hoverable="false">
-      <template #header>
-        <div class="admin-users-page__toolbar">
-          <el-input
-            v-model="keywordText"
-            class="admin-users-page__keyword"
-            :placeholder="t('admin.users.keywordPlaceholder')"
-            clearable
-            @keyup.enter="handleSearch"
-          />
-          <el-select
-            v-model="statusFilter"
-            class="admin-users-page__status-select"
-            :placeholder="t('admin.users.statusAll')"
-            clearable
-          >
-            <el-option
-              v-for="statusCode in NW_USER_STATUS_LIST"
-              :key="statusCode"
-              :value="statusCode"
-              :label="statusLabel(statusCode)"
-            />
-          </el-select>
-          <NWButton type="primary" @click="handleSearch">{{ t('admin.search') }}</NWButton>
-          <NWButton @click="handleResetFilters">{{ t('admin.reset') }}</NWButton>
-        </div>
-      </template>
-
-      <NWLoading v-if="listLoading" />
-      <template v-else>
-        <el-table :data="userList" stripe>
-          <el-table-column prop="user_name" :label="t('admin.users.userName')" width="150" />
-          <el-table-column prop="user_email" :label="t('admin.users.userEmail')" min-width="200" />
-          <el-table-column :label="t('admin.users.status')" width="100">
-            <template #default="{ row }">
-              <el-tag :type="row.user_status_code === 'disabled' ? 'info' : 'success'">
-                {{ statusLabel(row.user_status_code) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('admin.users.roles')" min-width="180">
-            <template #default="{ row }">
-              <template v-if="row.role_codes && row.role_codes.length > 0">
-                <el-tag
-                  v-for="roleCode in row.role_codes"
-                  :key="roleCode"
-                  class="admin-users-page__role-tag"
-                  size="small"
-                >
-                  {{ roleCode }}
-                </el-tag>
-              </template>
-              <span v-else class="admin-users-page__muted">-</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('admin.users.createdAt')" width="170">
-            <template #default="{ row }">
-              {{ formatTime(row.created_at) }}
-            </template>
-          </el-table-column>
-          <el-table-column :label="t('common.action')" width="270" fixed="right">
-            <template #default="{ row }">
-              <NWButton size="small" @click="handleEditUser(row)">{{ t('common.edit') }}</NWButton>
-              <NWButton size="small" @click="handleResetPassword(row)">
-                {{ t('admin.users.resetPasswordTitle') }}
-              </NWButton>
-              <NWButton
-                type="danger-text"
-                size="small"
-                :loading="deletingKey === row.user_ulid"
-                @click="handleDeleteUser(row)"
-              >
-                {{ t('common.delete') }}
-              </NWButton>
-            </template>
-          </el-table-column>
-          <template #empty>
-            <NWEmpty :description_text="t('admin.users.emptyTip')" />
-          </template>
-        </el-table>
-        <el-pagination
-          v-if="total > 0"
-          class="admin-users-page__pagination"
-          layout="total, prev, pager, next, sizes"
-          :total="total"
-          :current-page="pageNum"
-          :page-size="pageSize"
-          :page-sizes="[10, 20, 50]"
-          @current-change="handlePageChange"
-          @size-change="handleSizeChange"
+  <div class="nw-page">
+    <div class="nw-toolbar">
+      <ElInput
+        v-model="query.keyword_text"
+        placeholder="搜索登录名或邮箱"
+        clearable
+        class="admin-users__search"
+        @keyup.enter="search()"
+        @clear="search()"
+      />
+      <ElSelect v-model="query.user_status_code" class="admin-users__status" @change="search()">
+        <ElOption
+          v-for="item in statusOptions"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
         />
-      </template>
-    </NWCard>
+      </ElSelect>
+      <ElButton type="primary" plain @click="search()">查询</ElButton>
+      <ElButton type="primary" @click="formDialog?.open()">
+        <Icon icon="mdi:plus" :size="15" />
+        <span class="admin-users__btn-text">新建用户</span>
+      </ElButton>
+      <div class="admin-users__spacer" />
+      <span class="nw-hint">共 {{ total }} 个账号</span>
+    </div>
 
-    <UserFormDialogs
-      ref="formDialogsRef"
-      v-model="dialogVisible"
-      :mode="dialogMode"
-      :user-item="activeUser"
-      :role-options="roleOptions"
-      @saved="loadUserList"
-    />
+    <ElTable v-loading="loading" :data="items" class="admin-users__table">
+      <ElTableColumn prop="user_name" label="登录名" min-width="140">
+        <template #default="{ row }">
+          <span class="admin-users__name">{{ row.user_name }}</span>
+          <span v-if="row.remark_text" class="admin-users__remark">{{ row.remark_text }}</span>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn prop="user_email" label="邮箱" min-width="200" show-overflow-tooltip />
+      <ElTableColumn label="状态" width="90">
+        <template #default="{ row }">
+          <span class="nw-badge" :class="`nw-badge--${statusBadge(row.user_status_code)}`">
+            {{ statusLabel(row.user_status_code) }}
+          </span>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="角色" min-width="160">
+        <template #default="{ row }">
+          <div v-if="row.role_codes?.length" class="admin-users__roles">
+            <span v-for="code in row.role_codes" :key="code" class="nw-badge nw-badge--neutral">
+              {{ code }}
+            </span>
+          </div>
+          <span v-else class="nw-hint">—</span>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="创建时间" width="180">
+        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="操作" width="200" fixed="right">
+        <template #default="{ row }">
+          <ElButton size="small" text type="primary" @click="formDialog?.open(asRow<NWUserAdminVo>(row))">编辑</ElButton>
+          <ElButton size="small" text @click="resetDialog?.open(asRow<NWUserAdminVo>(row))">重置密码</ElButton>
+          <ElButton size="small" text type="danger" @click="remove(asRow<NWUserAdminVo>(row))">删除</ElButton>
+        </template>
+      </ElTableColumn>
+      <template #empty>
+        <span class="nw-hint">暂无用户</span>
+      </template>
+    </ElTable>
+
+    <div v-if="total > pageSize" class="admin-users__pager">
+      <ElPagination
+        :current-page="pageNum"
+        :page-size="pageSize"
+        :total="total"
+        layout="prev, pager, next"
+        background
+        @current-change="changePage"
+      />
+    </div>
+
+    <UserFormDialog ref="formDialog" @saved="handleSaved" />
+    <ResetPasswordDialog ref="resetDialog" />
   </div>
 </template>
-<style scoped src="./users.css"></style>
+
+<style lang="less" scoped>
+  .admin-users {
+    &__search {
+      width: 240px;
+    }
+
+    &__status {
+      width: 140px;
+    }
+
+    &__btn-text {
+      margin-left: 4px;
+    }
+
+    &__spacer {
+      flex: 1;
+    }
+
+    &__table {
+      border-radius: var(--nw-radius-lg);
+    }
+
+    &__name {
+      font-weight: 600;
+      color: var(--nw-ink);
+    }
+
+    &__remark {
+      margin-left: 6px;
+      font-size: 11.5px;
+      color: var(--nw-text-muted);
+    }
+
+    &__roles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    &__pager {
+      display: flex;
+      justify-content: flex-end;
+    }
+  }
+</style>
