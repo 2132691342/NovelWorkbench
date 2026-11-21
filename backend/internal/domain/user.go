@@ -37,14 +37,14 @@ type UserVO struct {
 	AvatarURL      string   `json:"avatar_url"`       // 头像地址
 	UserStatusCode string   `json:"user_status_code"` // 状态：active/disabled
 	RoleCodes      []string `json:"role_codes"`       // 角色编码列表
-	CreatedAtMs    int64    `json:"created_at_ms"`    // 注册时间（毫秒时间戳）
+	CreatedAt      string   `json:"created_at"`       // 注册时间（RFC3339）
 }
 
 // UserAdminVO 用户管理视图对象（管理端列表/详情）。
 type UserAdminVO struct {
 	UserVO
-	RemarkText  string `json:"remark_text"`   // 备注
-	UpdatedAtMs int64  `json:"updated_at_ms"` // 更新时间（毫秒时间戳）
+	RemarkText string `json:"remark_text"` // 备注
+	UpdatedAt  string `json:"updated_at"`  // 更新时间（RFC3339）
 }
 
 // UserAdminListREQ 用户管理分页查询请求（POST body）。

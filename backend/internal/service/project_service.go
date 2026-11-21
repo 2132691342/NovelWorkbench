@@ -254,7 +254,7 @@ func toProjectVO(do *domain.ProjectDO, volumeCount, chapterCount int) domain.Pro
 		TotalWordCount: do.TotalWordCount,
 		VolumeCount:    volumeCount,
 		ChapterCount:   chapterCount,
-		CreatedAtMs:    do.CreatedAt.UnixMilli(),
-		UpdatedAtMs:    do.UpdatedAt.UnixMilli(),
+		CreatedAt:      pkg.FormatTime(do.CreatedAt),
+		UpdatedAt:      pkg.FormatTime(do.UpdatedAt),
 	}
 }

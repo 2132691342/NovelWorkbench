@@ -23,28 +23,67 @@ func NewPromptProfileService(profileRepo *repo.PromptProfileRepo, projectRepo *r
 	return &PromptProfileService{profileRepo: profileRepo, projectRepo: projectRepo}
 }
 
-// SeedDefaults 播种内置全局档案（幂等：按编码查缺补插，已存在则保留作者改动）。
+// SeedDefaults 播种并同步内置全局档案：缺则插入；出厂内容有代码新版本时覆盖正文；
+// 作者改过的（customized_flag=true）保留不动；已下线的内置档案直接删除（无引用方）。
 func (s *PromptProfileService) SeedDefaults(ctx context.Context) error {
+	if err := s.dropRetiredBuiltins(ctx); err != nil {
+		return err
+	}
 	for _, builtin := range ai.BuiltinPromptProfiles() {
 		existing, err := s.profileRepo.GetByCode(ctx, domain.PromptProfileScopeGlobal, "", builtin.ProfileCode)
 		if err != nil {
 			return err
 		}
-		if existing != nil {
+		assetHash := builtin.ContentHash()
+		if existing == nil {
+			do := &domain.PromptProfileDO{
+				PromptProfileULID: pkg.NewULID(domain.IDPrefixPromptProfile),
+				PromptProfileCode: builtin.ProfileCode,
+				PromptProfileName: builtin.ProfileName,
+				ScopeCode:         domain.PromptProfileScopeGlobal,
+				DescriptionText:   builtin.DescriptionText,
+				SystemPromptText:  builtin.SystemPrompt,
+				BuiltinFlag:       true,
+				EnabledFlag:       true,
+				AssetHashText:     assetHash,
+				SortOrder:         builtin.SortOrder,
+			}
+			if err := s.profileRepo.Create(ctx, do); err != nil {
+				return err
+			}
 			continue
 		}
-		do := &domain.PromptProfileDO{
-			PromptProfileULID: pkg.NewULID(domain.IDPrefixPromptProfile),
-			PromptProfileCode: builtin.ProfileCode,
-			PromptProfileName: builtin.ProfileName,
-			ScopeCode:         domain.PromptProfileScopeGlobal,
-			DescriptionText:   builtin.DescriptionText,
-			SystemPromptText:  builtin.SystemPrompt,
-			BuiltinFlag:       true,
-			EnabledFlag:       true,
-			SortOrder:         builtin.SortOrder,
+		if existing.CustomizedFlag || existing.AssetHashText == assetHash {
+			continue // 作者改过或已是最新出厂内容：不动
 		}
-		if err := s.profileRepo.Create(ctx, do); err != nil {
+		if err := s.profileRepo.Update(ctx, existing.PromptProfileULID, map[string]any{
+			"prompt_profile_name": builtin.ProfileName,
+			"description_text":    builtin.DescriptionText,
+			"system_prompt_text":  builtin.SystemPrompt,
+			"sort_order":          builtin.SortOrder,
+			"asset_hash_text":     assetHash,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropRetiredBuiltins 删除不在当前内置清单中的旧内置全局档案（用户自建档案不受影响）。
+func (s *PromptProfileService) dropRetiredBuiltins(ctx context.Context) error {
+	builtinList, err := s.profileRepo.ListBuiltinGlobal(ctx)
+	if err != nil {
+		return err
+	}
+	codeSet := make(map[string]bool, 8)
+	for _, profile := range ai.BuiltinPromptProfiles() {
+		codeSet[profile.ProfileCode] = true
+	}
+	for i := range builtinList {
+		if codeSet[builtinList[i].PromptProfileCode] {
+			continue
+		}
+		if err := s.profileRepo.Delete(ctx, builtinList[i].PromptProfileULID); err != nil {
 			return err
 		}
 	}
@@ -150,6 +189,11 @@ func (s *PromptProfileService) Save(ctx context.Context, userULID string, req *d
 	if req.EnabledFlag != nil {
 		fields["enabled_flag"] = *req.EnabledFlag
 	}
+	if current.BuiltinFlag {
+		// 内置档案：与出厂正文一致仍算出厂内容，否则标记作者改动，后续代码升级不再覆盖。
+		assetHash := ai.PromptProfileAssetHash(req.PromptProfileCode, req.PromptProfileName, req.DescriptionText, req.SystemPromptText, req.SortOrder)
+		fields["customized_flag"] = assetHash != ai.BuiltinProfileHashOf(req.PromptProfileCode)
+	}
 	if err := s.profileRepo.Update(ctx, current.PromptProfileULID, fields); err != nil {
 		return domain.PromptProfileVO{}, err
 	}
@@ -205,8 +249,12 @@ func (s *PromptProfileService) mustReadableProfile(ctx context.Context, userULID
 	return do, nil
 }
 
-// toPromptProfileVO 组装档案视图对象。
+// toPromptProfileVO 组装档案视图对象（内置档案带上所属流程域）。
 func toPromptProfileVO(do *domain.PromptProfileDO) domain.PromptProfileVO {
+	domainCode, domainName := "", ""
+	if do.BuiltinFlag {
+		domainCode, domainName = ai.BuiltinProfileDomainOf(do.PromptProfileCode)
+	}
 	return domain.PromptProfileVO{
 		PromptProfileULID: do.PromptProfileULID,
 		PromptProfileCode: do.PromptProfileCode,
@@ -217,7 +265,10 @@ func toPromptProfileVO(do *domain.PromptProfileDO) domain.PromptProfileVO {
 		SystemPromptText:  do.SystemPromptText,
 		BuiltinFlag:       do.BuiltinFlag,
 		EnabledFlag:       do.EnabledFlag,
+		CustomizedFlag:    do.CustomizedFlag,
+		DomainCode:        domainCode,
+		DomainName:        domainName,
 		SortOrder:         do.SortOrder,
-		UpdatedAtMs:       do.UpdatedAt.UnixMilli(),
+		UpdatedAt:         pkg.FormatTime(do.UpdatedAt),
 	}
 }

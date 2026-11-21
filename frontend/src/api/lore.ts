@@ -13,7 +13,7 @@ export interface NWLoreVo {
   content_text: string
   content_mode_code: string
   sort_order: number
-  updated_at_ms: number
+  updated_at: string
 }
 
 /** 设定保存请求（字段对齐后端 LoreREQ，有 lore_ulid 为更新） */

@@ -315,14 +315,18 @@ onMounted(() => {
             <el-tag size="small" effect="plain">{{ categoryLabel(row.category_code) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="description_text" :label="t('skills.description')" min-width="200" show-overflow-tooltip />
-        <el-table-column :label="t('skills.variableCount')" width="80" align="center">
-          <template #default="{ row }">{{ row.variable_list?.length ?? 0 }}</template>
+        <el-table-column :label="t('skills.domainLabel')" width="96">
+          <template #default="{ row }">
+            <span class="skills-page__domain">{{ row.domain_name || t('skills.domainCustom') }}</span>
+          </template>
         </el-table-column>
-        <el-table-column :label="t('skills.refCount')" width="80" align="center">
-          <template #default="{ row }">{{ row.ref_count }}</template>
+        <el-table-column prop="description_text" :label="t('skills.description')" min-width="170" show-overflow-tooltip />
+        <el-table-column :label="t('skills.assetCount')" width="86" align="center">
+          <template #default="{ row }">
+            {{ row.variable_list?.length ?? 0 }} · {{ row.ref_count }}
+          </template>
         </el-table-column>
-        <el-table-column :label="t('skills.status')" width="190">
+        <el-table-column :label="t('skills.status')" width="164">
           <template #default="{ row }">
             <el-tag size="small" :type="row.enabled_flag ? 'success' : 'info'">
               {{ row.enabled_flag ? t('skills.enabledTag') : t('skills.disabledTag') }}
@@ -330,12 +334,15 @@ onMounted(() => {
             <el-tag v-if="row.builtin_flag" size="small" type="warning" class="skills-page__tag-gap">
               {{ t('skills.builtinTag') }}
             </el-tag>
+            <el-tag v-if="row.customized_flag" size="small" effect="plain" class="skills-page__tag-gap">
+              {{ t('skills.customizedTag') }}
+            </el-tag>
             <el-tag v-if="row.overridden_flag" size="small" type="warning" effect="plain" class="skills-page__tag-gap">
               {{ t('skills.overriddenTag') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="t('common.action')" width="160" fixed="right">
+        <el-table-column :label="t('common.action')" width="132" fixed="right">
           <template #default="{ row }">
             <NWButton size="small" @click="handleEditSkill(row)">{{ t('common.edit') }}</NWButton>
             <NWButton

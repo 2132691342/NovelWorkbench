@@ -56,5 +56,5 @@ type LoreVO struct {
 	ContentText     string `json:"content_text"`      // 内容
 	ContentModeCode string `json:"content_mode_code"` // 内容格式：rich/markdown
 	SortOrder       int    `json:"sort_order"`        // 排序号
-	UpdatedAtMs     int64  `json:"updated_at_ms"`     // 更新时间（毫秒时间戳）
+	UpdatedAt       string `json:"updated_at"`        // 更新时间（RFC3339）
 }

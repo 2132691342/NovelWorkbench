@@ -317,7 +317,7 @@ func toOutlineNodeVO(do *domain.OutlineNodeDO) domain.OutlineNodeVO {
 		SummaryText:       do.SummaryText,
 		NodeStatusCode:    do.NodeStatusCode,
 		SortOrder:         do.SortOrder,
-		UpdatedAtMs:       do.UpdatedAt.UnixMilli(),
+		UpdatedAt:         pkg.FormatTime(do.UpdatedAt),
 	}
 }
 
@@ -347,6 +347,6 @@ func toDetailedSceneVO(do *domain.DetailedSceneDO) (domain.DetailedSceneVO, erro
 		OutcomeText:       do.OutcomeText,
 		ExitStateText:     do.ExitStateText,
 		SortOrder:         do.SortOrder,
-		UpdatedAtMs:       do.UpdatedAt.UnixMilli(),
+		UpdatedAt:         pkg.FormatTime(do.UpdatedAt),
 	}, nil
 }

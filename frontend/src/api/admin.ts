@@ -15,8 +15,8 @@ export interface NWUserAdminVo {
   remark_text: string
   user_status_code: string
   role_codes: string[]
-  created_at_ms: number
-  updated_at_ms: number
+  created_at: string
+  updated_at: string
 }
 
 /** 角色视图对象（字段对齐后端 RoleVO） */
@@ -27,8 +27,8 @@ export interface NWRoleVo {
   remark_text: string
   perm_codes: string[]
   builtin_flag: boolean
-  created_at_ms: number
-  updated_at_ms: number
+  created_at: string
+  updated_at: string
 }
 
 /** 审计日志视图对象（字段对齐后端 AuditVO） */
@@ -41,7 +41,7 @@ export interface NWAuditVo {
   target_ulid: string
   detail_text: string
   ip_addr: string
-  created_at_ms: number
+  created_at: string
 }
 
 // ============================================================
@@ -176,7 +176,7 @@ export interface NWLoginLogVo {
   fail_reason_text: string
   ip_addr: string
   user_agent_text: string
-  created_at_ms: number
+  created_at: string
 }
 
 /** 登录日志分页查询请求（字段对齐后端 LoginLogListREQ） */
@@ -207,8 +207,8 @@ export interface NWJobVo {
   doc_name: string
   retry_count: number
   error_message: string
-  created_at_ms: number
-  updated_at_ms: number
+  created_at: string
+  updated_at: string
 }
 
 /** 异步任务分页查询请求（字段对齐后端 JobListREQ） */

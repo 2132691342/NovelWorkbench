@@ -30,6 +30,7 @@ import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWStatTile from '@/components/NWStatTile.vue'
 import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
 import ContinuityDialogs from './ContinuityDialogs.vue'
+import { formatTime } from '@/utils/time'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -98,10 +99,6 @@ const pendingSummaryCount = computed(
 function chapterName(chapterUlid: string): string {
   if (!chapterUlid) return '—'
   return chapterNameMap.value.get(chapterUlid) ?? chapterUlid
-}
-
-function formatTime(timeMs: number): string {
-  return timeMs ? new Date(timeMs).toLocaleString() : '—'
 }
 
 /** 加载章节选项（项目目录树） */
@@ -276,7 +273,7 @@ onMounted(loadAll)
             <template #default="{ row }">{{ chapterName(row.source_chapter_ulid) }}</template>
           </el-table-column>
           <el-table-column :label="t('continuity.colUpdatedAt')" width="160">
-            <template #default="{ row }">{{ formatTime(row.updated_at_ms) }}</template>
+            <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
           </el-table-column>
           <el-table-column :label="t('continuity.colActions')" width="170" fixed="right">
             <template #default="{ row }">
@@ -372,7 +369,7 @@ onMounted(loadAll)
             </template>
           </el-table-column>
           <el-table-column :label="t('continuity.colUpdatedAt')" width="160">
-            <template #default="{ row }">{{ formatTime(row.updated_at_ms) }}</template>
+            <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
           </el-table-column>
           <el-table-column :label="t('continuity.colActions')" width="80" fixed="right">
             <template #default="{ row }">

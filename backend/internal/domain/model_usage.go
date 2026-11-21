@@ -33,7 +33,7 @@ type ModelUsageDailyVO struct {
 	FailCount        int64  `json:"fail_count"`        // 失败次数
 	TotalTokens      int64  `json:"total_tokens"`      // token 合计
 	CompletionTokens int64  `json:"completion_tokens"` // 输出 token
-	AvgLatencyMs     int64  `json:"avg_latency_ms"`    // 平均耗时（毫秒）
+	AvgLatencyMs     int64  `json:"avg_latency_ms"`    // 平均耗时（RFC3339）
 }
 
 // ModelUsageGroupVO 用量分布项（按供应商或模型聚合）。
@@ -42,7 +42,7 @@ type ModelUsageGroupVO struct {
 	CallCount        int64   `json:"call_count"`         // 调用次数
 	FailCount        int64   `json:"fail_count"`         // 失败次数
 	TotalTokens      int64   `json:"total_tokens"`       // token 合计
-	AvgLatencyMs     int64   `json:"avg_latency_ms"`     // 平均耗时（毫秒）
+	AvgLatencyMs     int64   `json:"avg_latency_ms"`     // 平均耗时（RFC3339）
 	SuccessRateValue float64 `json:"success_rate_value"` // 成功率（0-1）
 }
 
@@ -51,7 +51,7 @@ type ModelUsageOverviewVO struct {
 	CallCountTotal   int64               `json:"call_count_total"`   // 区间调用总次数
 	FailCountTotal   int64               `json:"fail_count_total"`   // 区间失败总次数
 	TotalTokensTotal int64               `json:"total_tokens_total"` // 区间 token 总量
-	AvgLatencyMs     int64               `json:"avg_latency_ms"`     // 区间平均耗时（毫秒）
+	AvgLatencyMs     int64               `json:"avg_latency_ms"`     // 区间平均耗时（RFC3339）
 	SuccessRateValue float64             `json:"success_rate_value"` // 区间成功率（0-1）
 	DailyList        []ModelUsageDailyVO `json:"daily_list"`         // 按日趋势
 	ProviderList     []ModelUsageGroupVO `json:"provider_list"`      // 按供应商分布

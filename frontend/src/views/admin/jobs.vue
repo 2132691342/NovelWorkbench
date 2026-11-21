@@ -20,6 +20,7 @@ import NWStatTile from '@/components/NWStatTile.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { formatTime } from '@/utils/time'
 
 const { t } = useI18n()
 
@@ -99,10 +100,6 @@ function statusLabel(statusCode: string): string {
 /** 类型文案 */
 function typeLabel(typeCode: string): string {
   return typeCode === 'doc_reindex' ? t('admin.jobs.typeReindex') : t('admin.jobs.typeIndex')
-}
-
-function formatTime(timeMs: number): string {
-  return new Date(timeMs).toLocaleString()
 }
 
 async function loadJobStats(): Promise<void> {
@@ -256,7 +253,7 @@ onMounted(() => {
       <template v-else>
         <el-table :data="jobList" stripe>
           <el-table-column :label="t('admin.jobs.createdAt')" width="170">
-            <template #default="{ row }">{{ formatTime(row.created_at_ms) }}</template>
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
           <el-table-column :label="t('admin.jobs.jobType')" width="120">
             <template #default="{ row }">{{ typeLabel(row.job_type_code) }}</template>

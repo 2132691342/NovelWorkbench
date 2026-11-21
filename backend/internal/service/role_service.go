@@ -192,8 +192,8 @@ func toRoleVO(do *domain.RoleDO) domain.RoleVO {
 		RemarkText:  do.RemarkText,
 		PermCodes:   unmarshalPermCodes(do.PermCodesJSON),
 		BuiltinFlag: do.BuiltinFlag,
-		CreatedAtMs: do.CreatedAt.UnixMilli(),
-		UpdatedAtMs: do.UpdatedAt.UnixMilli(),
+		CreatedAt:   pkg.FormatTime(do.CreatedAt),
+		UpdatedAt:   pkg.FormatTime(do.UpdatedAt),
 	}
 }
 

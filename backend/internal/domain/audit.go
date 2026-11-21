@@ -20,15 +20,15 @@ func (AuditLogDO) TableName() string { return "audit_logs" }
 
 // AuditVO 审计日志视图对象（前端展示）。
 type AuditVO struct {
-	AuditULID   string `json:"audit_ulid"`    // 审计 ULID
-	UserULID    string `json:"user_ulid"`     // 操作用户 ULID
-	UserName    string `json:"user_name"`     // 操作用户登录名
-	ActionCode  string `json:"action_code"`   // 动作码
-	TargetType  string `json:"target_type"`   // 目标类型
-	TargetULID  string `json:"target_ulid"`   // 目标 ULID
-	DetailText  string `json:"detail_text"`   // 补充信息
-	IPAddr      string `json:"ip_addr"`       // 客户端 IP
-	CreatedAtMs int64  `json:"created_at_ms"` // 记录时间（毫秒）
+	AuditULID  string `json:"audit_ulid"`  // 审计 ULID
+	UserULID   string `json:"user_ulid"`   // 操作用户 ULID
+	UserName   string `json:"user_name"`   // 操作用户登录名
+	ActionCode string `json:"action_code"` // 动作码
+	TargetType string `json:"target_type"` // 目标类型
+	TargetULID string `json:"target_ulid"` // 目标 ULID
+	DetailText string `json:"detail_text"` // 补充信息
+	IPAddr     string `json:"ip_addr"`     // 客户端 IP
+	CreatedAt  string `json:"created_at"`  // 记录时间（RFC3339）
 }
 
 // AuditListREQ 审计日志分页查询请求（POST body）。

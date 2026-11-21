@@ -43,6 +43,8 @@
 
   /* 背景 */
   --bg-page: var(--saas_dashboard-color-4);
+  /* 顶栏背景：半透明让页面渐变透出，暗色下由 theme-dark.css 覆盖 */
+  --header-bg: rgba(255, 255, 255, 0.86);
   --bg-card: #ffffff;
   --bg-hover: #f1f5f9;
   --bg-subtle: #f8fafc;

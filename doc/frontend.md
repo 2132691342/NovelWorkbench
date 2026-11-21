@@ -13,7 +13,7 @@
 | `src/api/` | `http.ts`（Axios 实例与拦截器）、`contracts.ts`（后端 VO 类型）、14 个业务模块封装 |
 | `src/components/` | 8 个无业务组件：`NWButton`、`NWCard`、`NWEmpty`、`NWIcon`、`NWLoading`、`NWPageHeader`、`NWStatTile`、`ProjectPageHeader` |
 | `src/composables/` | `useSSE.ts`（SSE 流式请求与解析）与其单测 |
-| `src/layout/` | `AdminLayout.vue`（外壳）、`CommandPalette.vue`（Ctrl/Cmd+K）、`NotificationBell.vue`（顶栏铃铛） |
+| `src/layout/` | `AdminLayout.vue`（外壳装配）、`SidebarMenu.vue`（导航树）、`Breadcrumb.vue`（面包屑）、`TagsView.vue`（多页签）、`ThemeSwitch.vue`（主题三态）、`ContentWrap.vue`（内容留白）、`CommandPalette.vue`（Ctrl/Cmd+K）、`NotificationBell.vue`（顶栏铃铛） |
 | `src/router/` | `index.ts`（路由表 + 唯一全局守卫） |
 | `src/stores/` | 5 个 Pinia store：`app`、`auth`、`menu`、`notification`、`project` |
 | `src/styles/` | 5 个全局样式文件，按 `variables` → `element-theme` → `button-states` → `page` → `global` 顺序加载 |
@@ -55,7 +55,7 @@
 ### 1.4 文件组织约定
 
 - 页面样式超过单文件承载量时抽到同目录 `*.css`，模板用 `<style scoped src="./xxx.css">` 引入（如 `views/dashboard/index.vue` → `views/dashboard/dashboard.css`，`views/workspace/index.vue` → `views/workspace/workspace.css`）。
-- 复杂页面拆子组件，放同目录由父组件组合：`views/workspace/` 下 `WorkspaceTree.vue`、`ChapterEditor.vue`、`AiPanel.vue`、`AiPanelHeader.vue`、`ChatComposer.vue`、`ComposerToolbar.vue`、`ChatMessage.vue`、`ThinkingPanel.vue`、`SlashMenu.vue`、`RefPicker.vue`、`SnapshotDialog.vue`；`views/knowledge/` 下 `KnowledgeUploadPanel.vue`、`KnowledgeSearchPanel.vue`、`ChunkListDialog.vue`、`KnowledgePreviewDrawer.vue`。
+- 复杂页面拆子组件，放同目录由父组件组合：`views/workspace/` 下 `WorkspaceTree.vue`、`ChapterEditor.vue`、`AiPanel.vue`、`AiPanelHeader.vue`、`ChatComposer.vue`、`ComposerToolbar.vue`、`ChatMessage.vue`、`ThinkingPanel.vue`、`SlashMenu.vue`、`RefPicker.vue`、`SnapshotDialog.vue`；@ 引用的状态与候选装配收在组合式函数 `useChatRefs.ts`（五类引用的选中态、候选、按需加载）；`views/knowledge/` 下 `KnowledgeUploadPanel.vue`、`KnowledgeSearchPanel.vue`、`ChunkListDialog.vue`、`KnowledgePreviewDrawer.vue`。
 - 纯逻辑抽成独立 `.ts` 便于直接测试：`views/workspace/wordCount.ts`、`views/workspace/workspaceTreeExport.ts`、`views/workspace/chatTypes.ts`、`views/notes/noteContent.ts`、`views/outline/outlineOptions.ts`、`views/admin/menuIcons.ts`。
 
 ## 2. 设计系统
@@ -119,6 +119,24 @@
 
 `src/styles/element-theme.css` 在此基础上做形态收敛：按钮 `min-height` 36/42/28px 三档且主色/危险按钮改为镂空描边（`--btn-*` 令牌，见 2.5）、输入聚焦 `box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 3px var(--primary-ring)`、弹层圆角 `--radius-xl` 与 `--shadow-popover`、弹窗进入 `nw-dialog-in` 动画、表格表头底色 `--bg-subtle` 与斑马纹 `--surface-stripe`、行悬停底色 `--surface-tint` 加首列主色引导条、分页选中项填充 `--primary`、标签统一 `--radius-pill`、抽屉遮罩 `backdrop-filter: blur(2px)`。
 
+### 2.4.1 暗色主题
+
+`src/styles/theme-dark.css` 用 `:root[data-theme='dark']` 覆盖同一套语义变量，组件样式零改动即可换肤。加载顺序在 `variables.css` 之后、`element-theme.css` 之前（见 1.2），因此 Element Plus 桥接变量也跟着被覆盖。
+
+| 令牌组 | 亮色 | 暗色 | 说明 |
+| --- | --- | --- | --- |
+| `--bg-page` / `--bg-card` | `#f8fafc` / `#ffffff` | `#0b1120` / `#131c2e` | 页底比卡片更暗，卡片才浮得起来 |
+| `--header-bg` | 白色 86% 透明 | 深色 88% 透明 | 顶栏保留 `backdrop-filter`，让页面渐变透出 |
+| `--text-main` / `--text-secondary` | `#1e293b` / `#64748b` | `#e2e8f0` / `#94a3b8` | 文字整体提亮 |
+| `--primary` / `--primary-hover` | `#6366f1` / `#818cf8` | `#818cf8` / `#a5b4fc` | 暗底上主色需提亮才够对比度 |
+| `--primary-active` | `#4f46e5`（可读前景） | `#c7d2fe`（可读前景） | **语义是前景色**，不能拿深色当底配深色字 |
+| `--primary-soft` / `--primary-light` | 浅底 | `#1e1b4b` / `#3730a3` | 徽标、选中态的底色 |
+| 状态色三元组 | 浅底 + 深字 | 深底 + 浅字 | 见 2.3 |
+
+关键约束：`--primary-active` 在两种主题下都必须是**能在 `--primary-soft` / `--primary-light` 底上读清的前景色**。暗色初版把 `--primary-active` 设为 `#6366f1`（深靛），与 `#312e81` 底叠出约 1.9:1 的对比度，技能编码徽标几乎不可见；改为 `#c7d2fe` 后约 6.4:1。
+
+主题由 `ThemeSwitch.vue` 三态切换（亮色 / 暗色 / 跟随系统），写入 `<html data-theme>` 并持久化到 `localStorage.nw_theme`。`main.ts` 在 `app.mount()` 之前调用 `useAppStore().initTheme()`，避免首帧闪亮色。`system` 模式下监听 `prefers-color-scheme` 变化实时跟随。
+
 ### 2.5 按钮五态（镂空线条风格）
 
 `src/styles/button-states.css` 同时覆盖 Element Plus 的 `.el-button` 与自定义的 `.nw-button`，五态必须齐备。
@@ -144,25 +162,29 @@
 ### 2.6 布局骨架
 
 ```
-┌──────────────┬────────────────────────────────────────────┐
-│ 品牌标识      │ 折叠  面包屑      搜索 铃铛 语言 头像        │
-│ 项目切换器    ├────────────────────────────────────────────┤
-│              │                                            │
-│ 导航分组      │ 页面内容（nw-page，最大 1560px 居中）        │
-│  - 页面       │                                            │
-│  - 页面       │                                            │
-│ 折叠按钮      │                                            │
-└──────────────┴────────────────────────────────────────────┘
+┌──────────────┬────────────────────────────────────────────────┐
+│ 品牌标识      │ 折叠  面包屑        搜索 主题 铃铛 语言 头像     │
+│ 项目切换器    ├────────────────────────────────────────────────┤
+│              │ 页签：仪表盘 × 技能管理 × 写作台 ×                │
+│ 导航分组      ├────────────────────────────────────────────────┤
+│  - 页面       │                                                │
+│  - 页面       │ 内容区（ContentWrap，最大 1560px 居中）          │
+│              │                                                │
+│ 折叠按钮      │                                                │
+└──────────────┴────────────────────────────────────────────────┘
 ```
 
 | 项 | 值 | 来源 |
 | --- | --- | --- |
 | 外壳 | `display: flex`、`height: 100vh`、`overflow: hidden`，背景 `--bg-page` + `--bg-gradient` | `layout/AdminLayout.css` 的 `.admin-layout` |
 | 侧边栏宽 | 236px；`.is-collapsed` 时 72px；`transition: width var(--transition-base)` | `.admin-layout__aside` |
-| 折叠态导航 | 折叠后宽 72px：隐藏品牌文字、项目切换器、分组标题与 `kbd`，图标居中；分组之间用 1px 分隔线代替标题边界；每个菜单项包在 `el-tooltip`（`placement=right`、`show-after=120`、仅折叠态启用）里，避免只靠 `title` 的延迟提示；折叠态悬停只变底色不位移，防止一列图标抖动 | `.admin-layout__aside.is-collapsed`、`.is-collapsed .admin-layout__nav-*` |
-| 顶栏高 | 60px；半透明白底 + `backdrop-filter: blur(10px)` + 下边框 | `.admin-layout__header` |
-| 内容区 | `padding: 22px 26px 32px`、`overflow-y: auto`、`scroll-behavior: smooth` | `.admin-layout__content` |
-| 工作台路由 | `.is-workspace` 修饰：`padding: 14px 18px 18px`、`overflow: hidden`（三栏各自滚动） | `src/layout/AdminLayout.vue` 按 `route.name === 'WorkspaceView'` 绑定 |
+| 折叠态导航 | 折叠后宽 72px：隐藏品牌文字、项目切换器、分组标题与 `kbd`，图标居中；分组之间用 1px 分隔线代替标题边界；每个菜单项包在 `el-tooltip`（`placement=right`、`show-after=120`、仅折叠态启用）里，避免只靠 `title` 的延迟提示；折叠态悬停只变底色不位移，防止一列图标抖动 | `layout/SidebarMenu.vue`、`SidebarMenu.css` 的 `.nw-menu.is-collapsed` |
+| 顶栏高 | 60px；`--header-bg` 半透明底 + `backdrop-filter: blur(10px)` + 下边框；暗色下由 `theme-dark.css` 覆盖为深色半透明 | `.admin-layout__header` |
+| 面包屑 | `Breadcrumb.vue`：分组名弱化 + `/` + 当前页加粗；数据源是后端菜单树，与侧栏文案永不脱节 | `layout/Breadcrumb.vue` |
+| 多页签 | `TagsView.vue` + `stores/tagsView.ts`：路由变化即登记页签（标题取菜单名），同路径去重；关闭当前页签跳相邻页签；右键支持刷新 / 关闭其它 / 关闭全部；固定页签（`meta.affix_flag`）不可关 | `layout/TagsView.vue` |
+| 页签刷新 | 跳 `/redirect?target_path=…` 中转页再立即回跳，强制重建组件实例 | `views/RedirectView.vue` |
+| 内容区 | 留白交给 `ContentWrap`（默认 `padding: 18px 22px 28px`）；`.is-workspace` 时 `overflow: hidden`，三栏各自滚动 | `layout/ContentWrap.vue` |
+| 主题 | `ThemeSwitch.vue` 三态（亮色 / 暗色 / 跟随系统），写 `<html data-theme>`；持久化到 `localStorage.nw_theme`；`system` 时监听 `prefers-color-scheme` 变化 | `layout/ThemeSwitch.vue`、`stores/app.ts` |
 | 页面骨架 | `.nw-page`：纵向 `gap: 16px`、`max-width: var(--layout-content-max-width)`、居中、入场动画 0.28s | `styles/page.css` |
 | 统计栅格 | `.nw-stat-grid`：4 列 → 1200px 起 2 列 → 640px 起 1 列 | `styles/page.css` |
 | 卡片网格 | `.nw-card-grid`：`repeat(auto-fill, minmax(280px, 1fr))` | `styles/page.css` |
@@ -195,7 +217,9 @@
 | 表格行悬停 | 底色转 `--surface-tint` + 首列 `inset 2px 0 0 var(--primary)` 主色引导条 | `styles/element-theme.css` |
 | 卡片悬停 | `translateY(-4px)` + `--shadow-card-hover` | `styles/global.css` 的 `.nw-card-hover:hover` |
 | 统计磁贴悬停 | `translateY(-2px)` + 阴影加深 | `components/NWStatTile.vue` |
-| 导航项悬停/按下 | `translateX(1px)` / `scale(0.985)` | `layout/AdminLayout.css` |
+| 导航项悬停/按下 | `translateX(1px)` / `scale(0.985)` | `layout/SidebarMenu.css` |
+| 页签悬停/按下 | `translateY(-1px)` / `scale(0.97)`；关闭按钮悬停转错误色底 | `layout/TagsView.css` |
+| 主题切换按钮 | `scale(1.06)` / `scale(0.94)` | `layout/ThemeSwitch.css` |
 | 顶栏图标按钮 | `scale(1.04)` / `scale(0.96)` | `layout/AdminLayout.css` |
 | 通知浮层项 | 背景转 `--primary-light` + `translateX(2px)` | `styles/global.css` |
 | 加载转圈 | `nw-loading-spin` 0.8s linear 无限 | `styles/global.css` |
@@ -236,15 +260,16 @@ ECharts 与 AntV X6 渲染在 Canvas/SVG 上，拿不到 CSS 变量。`src/utils
 
 ## 3. 状态与数据流
 
-### 3.1 五个 Store
+### 3.1 六个 Store
 
 | Store | State | Getters | Actions | 持久化 |
 | --- | --- | --- | --- | --- |
-| `stores/app.ts` 的 `useAppStore` | `locale_code`、`sidebar_collapsed` | — | `toggleSidebar()`、`setSidebarCollapsed(flag)`、`setLocale(localeCode)`（同步 vue-i18n 并落盘） | `nw_locale`、`nw_sidebar_collapsed` |
+| `stores/app.ts` 的 `useAppStore` | `locale_code`、`sidebar_collapsed`、`theme_code`、`resolved_theme_code` | — | `toggleSidebar()`、`setSidebarCollapsed(flag)`、`setLocale(localeCode)`（同步 vue-i18n 并落盘）、`setTheme(themeCode)`、`initTheme()` | `nw_locale`、`nw_sidebar_collapsed`、`nw_theme` |
 | `stores/auth.ts` 的 `useAuthStore` | `access_token`、`user_vo`、`perm_code_list` | `is_logged_in`、`hasPerm(permCode)`、`is_admin_user` | `login()`、`fetchProfile()`、`setPermCodes(list)`、`logout()`、`resetSession()` | `nw_access_token`、`nw_user_vo`（JSON，读取时结构校验） |
 | `stores/menu.ts` 的 `useMenuStore` | `menu_tree_list`、`perm_code_list`、`nav_loading`、`nav_loaded` | `hasPerm(permCode)` | `loadNav()`（`GET /menu/nav`，并发只发一次）、`resetNav()` | 不持久化，每会话由后端下发 |
 | `stores/project.ts` 的 `useProjectStore` | `project_list`、`current_project_ulid`、`list_loading` | `current_project_vo`、`hasProject(projectUlid)` | `loadProjectList()`（`POST /project/list`，page 1 / size 100）、`setCurrentProject(projectUlid)` | `nw_current_project_ulid` |
 | `stores/notification.ts` 的 `useNotificationStore` | `unread_count`、`latest_list`、`loading_flag` | — | `refreshUnread()`、`refreshLatest()`、`refreshAll()`、`markRead(ulid)`、`markAllRead()`、`reset()` | 不持久化，每会话从后端拉取 |
+| `stores/tagsView.ts` 的 `useTagsViewStore` | `tag_list` | — | `addTag(tagView)`（同路径去重）、`removeTag(pagePath)`（返回相邻页签路径）、`removeOtherTags()`、`removeAllTags()`、`resetTags()` | 不持久化，登出时清空 |
 
 权限判定的事实来源是后端 `GET /menu/nav`：`menu.loadNav()` 把 `perm_code_list` 写入自身并调用 `auth.setPermCodes()` 同步，两个 store 的 `hasPerm` 对同一份数据求值，`'*'` 通配全部权限。
 
@@ -268,7 +293,8 @@ flowchart LR
 | 导航树 | `menu` | 侧边栏、命令面板、面包屑、守卫共读一份 |
 | 项目选中态 | `project` | URL 优先级最高，`AdminLayout` 反向回写 store |
 | 未读数 | `notification` | 顶栏铃铛与通知中心共读，60 秒轮询 |
-| 界面语言与侧栏折叠 | `app` | 直接持久化 |
+| 界面语言、侧栏折叠与主题 | `app` | 直接持久化；主题写 `<html data-theme>` |
+| 已访问页签 | `tagsView` | 内存态，路由变化即登记，登出时清空 |
 
 ### 3.3 Axios 层
 
@@ -318,7 +344,7 @@ sequenceDiagram
 
 ### 3.5 AI 面板交互（思考态 / 等待态 / @ / 斜杠）
 
-写作台右栏的 AI 面板由四个组件分担：`AiPanel.vue` 管会话与流，`ChatMessage.vue` 管单条气泡，`ThinkingPanel.vue` 管思考过程，`ChatComposer.vue` 管输入（内部再用 `SlashMenu.vue` 与 `RefPicker.vue`）。
+写作台右栏的 AI 面板由四个组件分担：`AiPanel.vue` 管会话与流，`ChatMessage.vue` 管单条气泡，`ThinkingPanel.vue` 管思考过程，`ChatComposer.vue` 管输入（内部再用 `SlashMenu.vue` 与 `RefPicker.vue`；引用状态与候选装配在 `useChatRefs.ts`）。
 
 **三态反馈**（解决「等待时界面像卡死」）：
 
@@ -330,9 +356,11 @@ sequenceDiagram
 
 `ThinkingPanel` 的展开态优先级：用户手动操作 > 自动规则（思考中展开、正文出现后收起）；正文出现时清空手动状态回到自动。`done` 携带的 `reasoning_text` 覆盖本地累积值，保证与服务端落库一致。
 
-**@ 引用**（`RefPicker.vue`）：三个页签——知识库文档、本项目章节、本会话历史消息（取 `messageList` 最近 40 条非流式消息）。多选以 chips 回显，三类引用分别落到 `ref_doc_ulid_list` / `ref_chapter_ulid_list` / `ref_message_ulid_list`；历史消息引用由后端 `validateRefMessages` 校验必须属于当前会话。
+**@ 引用**（`RefPicker.vue`）：五个页签——知识库文档、本项目章节、章节摘要、提示词档案、本会话历史消息（取 `messageList` 最近 40 条非流式消息）。多选以 chips 回显，五类引用分别落到 `ref_doc_ulid_list` / `ref_chapter_ulid_list` / `ref_summary_ulid_list` / `ref_prompt_ulid_list` / `ref_message_ulid_list`。
 
-**斜杠命令**（`SlashMenu.vue`）：`/(^|\s)\/([^\s]*)$/` 触发，按分类分组（写作 / 修订 / 规划 / 设定 / 审稿 / 其他），`↑↓` 移动、`Enter` 或 `Tab` 确认、`Esc` 关闭；项目技能带「项目」徽标（同编码时后端已让项目技能覆盖全局）。选中后填入技能徽标，`Backspace` 在空输入时可移除。
+摘要页签在首次切换时按需拉取（`POST /continuity/summary/list`，按项目一次取全），避免打开面板就发请求；提示词页签直接复用面板已加载的 `profileList`。后端把两类新引用都按**显式引用**优先级（80）注入：摘要在 `ref_summary` 块、提示词在 `ref_prompt` 块，与自动相邻章梗概（`chapter_summary`，60）互不覆盖。摘要按 `summary_ulid` 校验归属项目；提示词走 `mustReadableProfile`，项目档案校验创建者。历史消息引用由后端 `validateRefMessages` 校验必须属于当前会话。
+
+**斜杠命令**（`SlashMenu.vue`）：`/(^|\s)\/([^\s]*)$/` 触发，按分类分组（写作 / 修订 / 规划 / 设定 / 审稿 / 其他），内置技能共 18 条 / 9 个流程域（矩阵见 [skills.md](skills.md)），`↑↓` 移动、`Enter` 或 `Tab` 确认、`Esc` 关闭；项目技能带「项目」徽标（同编码时后端已让项目技能覆盖全局）。选中后填入技能徽标，`Backspace` 在空输入时可移除。
 
 **提示词档案**：`ChatComposer` 的档案下拉来自 `POST /prompt/profile/list`（`enabled_only=true`，带 `project_ulid` 以合并项目档案）。清空即用默认档案；选择结果随 `prompt_profile_ulid` 下发，不持久化到会话——换档案只影响下一次发送。
 
@@ -340,7 +368,7 @@ sequenceDiagram
 
 ### 4.1 路由表
 
-`src/router/index.ts` 共 26 条路由记录：`/login`、根布局 `/`、23 条布局子路由、兜底 `/:pathMatch(.*)*`；其中具名页面路由 24 条（含 `LoginView`）。除 `/login` 外全部挂在 `layout/AdminLayout.vue` 之下，组件均为 `() => import(...)` 懒加载。
+`src/router/index.ts` 共 27 条路由记录：`/login`、根布局 `/`、24 条布局子路由（含 `/redirect` 中转页）、兜底 `/:pathMatch(.*)*`；其中具名页面路由 25 条（含 `LoginView`、`RedirectView`）。除 `/login` 外全部挂在 `layout/AdminLayout.vue` 之下，组件均为 `() => import(...)` 懒加载。
 
 | path | name | 组件 | `meta.menu_code` | `meta.perm_code` | 项目内 |
 | --- | --- | --- | --- | --- | --- |

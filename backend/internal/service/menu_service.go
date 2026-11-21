@@ -473,7 +473,7 @@ func toMenuVO(do *domain.MenuDO, parentName string) domain.MenuVO {
 		EnabledFlag:  do.EnabledFlag,
 		SortOrder:    do.SortOrder,
 		RemarkText:   do.RemarkText,
-		CreatedAtMs:  do.CreatedAt.UnixMilli(),
-		UpdatedAtMs:  do.UpdatedAt.UnixMilli(),
+		CreatedAt:    pkg.FormatTime(do.CreatedAt),
+		UpdatedAt:    pkg.FormatTime(do.UpdatedAt),
 	}
 }

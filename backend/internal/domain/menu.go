@@ -81,8 +81,8 @@ type MenuVO struct {
 	EnabledFlag  bool   `json:"enabled_flag"`   // 是否启用
 	SortOrder    int    `json:"sort_order"`     // 排序号
 	RemarkText   string `json:"remark_text"`    // 备注
-	CreatedAtMs  int64  `json:"created_at_ms"`  // 创建时间
-	UpdatedAtMs  int64  `json:"updated_at_ms"`  // 更新时间
+	CreatedAt    string `json:"created_at"`     // 创建时间
+	UpdatedAt    string `json:"updated_at"`     // 更新时间
 }
 
 // MenuTreeNodeVO 导航树节点（前端渲染侧边栏消费）。

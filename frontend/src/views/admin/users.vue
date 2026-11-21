@@ -19,6 +19,7 @@ import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import UserFormDialogs from './UserFormDialogs.vue'
+import { formatTime } from '@/utils/time'
 
 const { t } = useI18n()
 
@@ -43,10 +44,6 @@ function statusLabel(statusCode: string): string {
   return statusCode === 'disabled'
     ? t('admin.users.statusDisabled')
     : t('admin.users.statusActive')
-}
-
-function formatTime(timeMs: number): string {
-  return new Date(timeMs).toLocaleString()
 }
 
 async function loadUserList(): Promise<void> {
@@ -217,7 +214,7 @@ onMounted(() => {
           </el-table-column>
           <el-table-column :label="t('admin.users.createdAt')" width="170">
             <template #default="{ row }">
-              {{ formatTime(row.created_at_ms) }}
+              {{ formatTime(row.created_at) }}
             </template>
           </el-table-column>
           <el-table-column :label="t('common.action')" width="270" fixed="right">

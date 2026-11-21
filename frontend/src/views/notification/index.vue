@@ -18,6 +18,7 @@ import NWButton from '@/components/NWButton.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { formatTime } from '@/utils/time'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -59,10 +60,6 @@ function typeTagType(typeCode: string): 'success' | 'warning' | 'info' {
     return 'success'
   }
   return 'info'
-}
-
-function formatTime(timeMs: number): string {
-  return new Date(timeMs).toLocaleString()
 }
 
 /** 加载通知分页 */
@@ -234,7 +231,7 @@ onMounted(() => {
                 <el-tag size="small" effect="light" :type="typeTagType(notificationItem.notification_type_code)">
                   {{ typeLabel(notificationItem.notification_type_code) }}
                 </el-tag>
-                <span class="notification-page__time">{{ formatTime(notificationItem.created_at_ms) }}</span>
+                <span class="notification-page__time">{{ formatTime(notificationItem.created_at) }}</span>
               </div>
               <p class="notification-page__body">{{ notificationItem.notification_body_text }}</p>
               <div class="notification-page__actions">

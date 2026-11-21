@@ -12,8 +12,8 @@
 | --- | --- |
 | 写作工作台 | 卷/章目录树（搜索、折叠）、CodeMirror 6 正文编辑、实时字数与保存状态、AI 续写/润色/梗概、快照留档与回滚 |
 | AI 助手 | SSE 流式对话；等待计时 + 推理模型思考过程实时展开、正文出现后自动收起；默认附带当前章节上下文；技能（作用域 + 模板 + 变量 + 参考资料）与系统提示词档案（身份 + 底线）分层下发；@引用文档/章节/历史消息；可配历史条数；按账号可用模型选择；召回依据随回复展示；一键插入章节或替换整章 |
-| 技能资产 | 全局技能与项目技能（同编码项目覆盖全局）；变量声明与必填校验；参考资料按关键词命中注入（单技能上限 4000 字符）；8 个内置技能可改可停用 |
-| 提示词档案 | 系统提示词做成可编辑资产：全局档案与项目档案；内置 5 份（连载作者 / 责任编辑 / 故事架构师 / 去 AI 味修订 / 设定守门人）；对话期可临时切换；内置档案可改正文不可删 |
+| 技能资产 | 全局技能与项目技能（同编码项目覆盖全局）；变量声明与必填校验；参考资料按关键词命中注入（单技能上限 4000 字符）；9 个流程域、18 个内置技能可改可停用 |
+| 提示词档案 | 系统提示词做成可编辑资产：全局档案与项目档案；内置 9 份（起草 / 架构 / 打磨 / 去 AI 味 / 质检 / 连续性 / 定稿 / 上架 / 立项，与技能一一配对）；对话期可临时切换；内置档案可改正文不可删 |
 | 模型生态 | OpenAI 兼容与 Anthropic 双协议；供应商 → 模型目录 → 按角色分配三层结构；密钥 AES-256-GCM 加密、仅回显掩码；模型级连通性测试与系统默认切换；调用量按日聚合 |
 | 知识库 | 文档库与检索测试双页签；txt/md/docx/pdf 上传；MinIO 存原文；RabbitMQ 异步索引；Manticore CJK ngram 召回；RRF 融合与可选对话模型重排；原文预览抽屉；检索追踪 |
 | 设定管理 | 角色卡、AntV X6 关系图、世界观设定分类与搜索；WangEditor 富文本与 MavonEditor Markdown 双模式创作笔记 |
@@ -49,7 +49,7 @@ docker compose --profile infra up -d --build
 #   容器内后端              http://backend:8080/health
 ```
 
-启动时：PostgreSQL 失败即退出；Redis / RabbitMQ / MinIO / Manticore 失败只告警并降级；自动建表 33 张；幂等播种 8 个内置技能与 5 份提示词档案、默认配置、内置角色与菜单；用户表为空时用 `NW_APP_ADMIN_PASSWORD` 创建管理员 `admin`（默认 `Admin@123456`，生产必改）。若供应商表为空且配置了 `NW_AI_BASE_URL` 与 `NW_AI_CHAT_MODEL`，额外播种一条默认供应商与默认模型并授权给内置角色。
+启动时：PostgreSQL 失败即退出；Redis / RabbitMQ / MinIO / Manticore 失败只告警并降级；自动建表 33 张；播种 9 份提示词档案与 18 个内置技能（按内容指纹升级）、默认配置、内置角色与菜单；用户表为空时用 `NW_APP_ADMIN_PASSWORD` 创建管理员 `admin`（默认 `Admin@123456`，生产必改）。若供应商表为空且配置了 `NW_AI_BASE_URL` 与 `NW_AI_CHAT_MODEL`，额外播种一条默认供应商与默认模型并授权给内置角色。
 
 本地开发：
 
@@ -69,7 +69,7 @@ backend/            Go 后端：api → service → repo → domain 分层
   internal/         api / service / repo / domain / ai / infra / pkg
 frontend/           Vue 3 前端：设计系统 + 后端驱动导航 + 业务页面
 deploy/podman/      Podman 发布资产：构建上下文、运行镜像、编排与发布脚本
-doc/                架构、模块、AI、API、数据库、前端、安全、部署、测试文档
+doc/                架构、模块、AI、提示词资产、API、数据库、前端、安全、部署、测试文档
 docker-compose.yml  应用编排与本地中间件 profile（对外 14399）
 .env.example        环境变量模板（不含真实凭据）
 .github/workflows   CI 与镜像发布
@@ -82,6 +82,7 @@ docker-compose.yml  应用编排与本地中间件 profile（对外 14399）
 | [doc/architecture.md](doc/architecture.md) | 系统定位、技术选型、分层约束、请求生命周期、核心链路、设计取舍 |
 | [doc/modules.md](doc/modules.md) | 每个业务模块的职责、实现路径、边界与权衡 |
 | [doc/ai.md](doc/ai.md) | 模型网关、上下文装配、系统提示词档案、技能体系、无向量检索、流式协议（含思考事件）、用量统计 |
+| [doc/skills.md](doc/skills.md) | 提示词资产矩阵：9 个流程域 × (1 份档案 + 2 个技能)、蒸馏来源对照、指纹升级与维护方式 |
 | [doc/database.md](doc/database.md) | 存储分工、表结构、枚举、非关系存储、事务与一致性、迁移与备份 |
 | [doc/api.md](doc/api.md) | 接口契约、统一包络、权限码、分页与前端消费规则 |
 | [doc/frontend.md](doc/frontend.md) | 设计系统、状态与数据流、路由与权限、页面实现、国际化 |

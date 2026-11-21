@@ -46,15 +46,15 @@ func (s *AuditService) ListPage(ctx context.Context, req *domain.AuditListREQ) (
 	vos := make([]domain.AuditVO, 0, len(dos))
 	for i := range dos {
 		vos = append(vos, domain.AuditVO{
-			AuditULID:   dos[i].AuditULID,
-			UserULID:    dos[i].UserULID,
-			UserName:    dos[i].UserName,
-			ActionCode:  dos[i].ActionCode,
-			TargetType:  dos[i].TargetType,
-			TargetULID:  dos[i].TargetULID,
-			DetailText:  dos[i].DetailText,
-			IPAddr:      dos[i].IPAddr,
-			CreatedAtMs: dos[i].CreatedAt.UnixMilli(),
+			AuditULID:  dos[i].AuditULID,
+			UserULID:   dos[i].UserULID,
+			UserName:   dos[i].UserName,
+			ActionCode: dos[i].ActionCode,
+			TargetType: dos[i].TargetType,
+			TargetULID: dos[i].TargetULID,
+			DetailText: dos[i].DetailText,
+			IPAddr:     dos[i].IPAddr,
+			CreatedAt:  pkg.FormatTime(dos[i].CreatedAt),
 		})
 	}
 	return domain.NewPageDTO(total, req.PageREQ, vos), nil

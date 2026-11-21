@@ -1,5 +1,5 @@
 <!--
-  @ 引用选择器：三个页签——知识库文档 / 本项目章节 / 本会话历史消息。
+  @ 引用选择器：五个页签——知识库文档 / 本项目章节 / 章节摘要 / 提示词档案 / 本会话历史消息。
   支持关键词过滤、多选（再点取消）、键盘 Esc 关闭；选中项以 chips 形式回显在输入区。
 -->
 <script setup lang="ts">
@@ -29,6 +29,8 @@ const { t } = useI18n()
 const tabList = computed<{ tab_code: NWChatRefTabCode; tab_name: string; tab_icon: string }[]>(() => [
   { tab_code: 'doc', tab_name: t('workspace.ai.composer.atDocs'), tab_icon: 'database' },
   { tab_code: 'chapter', tab_name: t('workspace.ai.composer.atChapters'), tab_icon: 'book' },
+  { tab_code: 'summary', tab_name: t('workspace.ai.composer.atSummaries'), tab_icon: 'fileText' },
+  { tab_code: 'prompt', tab_name: t('workspace.ai.composer.atPrompts'), tab_icon: 'sparkles' },
   { tab_code: 'message', tab_name: t('workspace.ai.composer.atMessages'), tab_icon: 'message' },
 ])
 

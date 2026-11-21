@@ -1,6 +1,6 @@
 <!--
-  主框架：左侧导航（后端驱动菜单树）+ 顶栏（页面标题/面包屑/搜索/通知/语言/用户）。
-  交互约定：Ctrl/Cmd+K 打开快速跳转，Ctrl/Cmd+B 折叠侧栏；项目内菜单在未选项目时禁用。
+  主框架：左侧导航（后端驱动菜单树）+ 顶栏（面包屑/搜索/主题/通知/语言/用户）+ 多页签 + 内容区。
+  交互约定：Ctrl/Cmd+K 快速跳转，Ctrl/Cmd+B 折叠侧栏；项目内菜单在未选项目时禁用。
 -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -11,9 +11,15 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useMenuStore } from '@/stores/menu'
 import { useProjectStore } from '@/stores/project'
+import { useTagsViewStore, buildTagView } from '@/stores/tagsView'
 import { NW_LOCALE_OPTIONS } from '@/i18n'
 import type { NWMenuItemVo } from '@/api/contracts'
 import NWIcon from '@/components/NWIcon.vue'
+import SidebarMenu from './SidebarMenu.vue'
+import Breadcrumb from './Breadcrumb.vue'
+import TagsView from './TagsView.vue'
+import ThemeSwitch from './ThemeSwitch.vue'
+import ContentWrap from './ContentWrap.vue'
 import CommandPalette from './CommandPalette.vue'
 import NotificationBell from './NotificationBell.vue'
 
@@ -23,11 +29,11 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const menuStore = useMenuStore()
 const projectStore = useProjectStore()
+const tagsViewStore = useTagsViewStore()
 const { t } = useI18n()
 
 /** 快速跳转弹层状态 */
 const commandVisible = ref(false)
-
 
 /** 项目作用域路由判断：路径里带 project_ulid 参数即项目页 */
 const routeProjectUlid = computed(() => String(route.params.project_ulid ?? ''))
@@ -52,16 +58,6 @@ function isMenuDisabled(menuItem: NWMenuItemVo): boolean {
   }
   return menuItem.scope_code === 'project' && !effectiveProjectUlid.value
 }
-
-/** 侧边栏渲染数据：过滤掉没有可见子项的分组 */
-const sidebarMenuList = computed(() =>
-  menuStore.menu_tree_list
-    .map((menuItem) => ({
-      ...menuItem,
-      child_list: (menuItem.child_list ?? []).filter((childItem) => childItem.menu_type_code === 'page'),
-    }))
-    .filter((menuItem) => menuItem.menu_type_code === 'page' || menuItem.child_list.length > 0),
-)
 
 /** 扁平化页面菜单（搜索、快捷键与标题回退用） */
 const flatPageMenuList = computed(() => {
@@ -102,22 +98,8 @@ const activeMenuItem = computed(() => {
   return matchedItem
 })
 
-
-/** 面包屑：分组名 / 页面名 */
-const breadcrumbText = computed(() => {
-  if (!activeMenuItem.value) {
-    return t('common.appName')
-  }
-  for (const menuItem of sidebarMenuList.value) {
-    if (menuItem.menu_type_code === 'page' && menuItem.menu_code === activeMenuItem.value.menu_code) {
-      return t('common.appName')
-    }
-    if ((menuItem.child_list ?? []).some((childItem) => childItem.menu_code === activeMenuItem.value?.menu_code)) {
-      return `${menuItem.menu_name} / ${activeMenuItem.value.menu_name}`
-    }
-  }
-  return activeMenuItem.value.menu_name
-})
+/** 当前页标题：菜单名优先，登录页等无菜单页面回落到应用名 */
+const activePageTitle = computed(() => activeMenuItem.value?.menu_name ?? t('common.appName'))
 
 const avatarText = computed(() => {
   const userName = authStore.user_vo?.user_name ?? ''
@@ -139,6 +121,9 @@ const projectMetaText = computed(() => {
   }
   return `${projectVo.total_word_count.toLocaleString()} ${t('layout.wordsUnit')} · ${projectVo.chapter_count} ${t('layout.chaptersUnit')}`
 })
+
+/** 写作台需要满屏，不套内容留白 */
+const compactContentFlag = computed(() => route.name === 'WorkspaceView')
 
 /** 点击菜单：项目内菜单在切换页面前同步选中项目 */
 function handleMenuClick(menuItem: NWMenuItemVo): void {
@@ -188,6 +173,7 @@ async function handleUserCommand(command: string | number | object): Promise<voi
   }
   await authStore.logout()
   menuStore.resetNav()
+  tagsViewStore.resetTags()
   void router.push('/login')
 }
 
@@ -219,6 +205,18 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
     commandVisible.value = false
   }
 }
+
+// 路由变化时登记页签（标题取菜单名，保证与侧栏一致）
+watch(
+  [() => route.fullPath, activePageTitle],
+  () => {
+    const tagView = buildTagView(route, activePageTitle.value)
+    if (tagView) {
+      tagsViewStore.addTag(tagView)
+    }
+  },
+  { immediate: true },
+)
 
 // 路由中的项目变化时同步到全局选中态（URL 是项目上下文的最高优先级来源）
 watch(
@@ -318,65 +316,13 @@ onUnmounted(() => {
         </el-dropdown>
       </div>
 
-      <nav class="admin-layout__nav">
-        <template v-for="menuItem in sidebarMenuList" :key="menuItem.menu_code">
-          <!-- 单页菜单（仪表盘 / 系统设置） -->
-          <el-tooltip
-            v-if="menuItem.menu_type_code === 'page'"
-            :content="menuItem.menu_name"
-            placement="right"
-            :disabled="!appStore.sidebar_collapsed"
-            :show-after="120"
-          >
-            <button
-              type="button"
-              class="admin-layout__nav-item"
-              :class="{ 'is-active': activeMenuItem?.menu_code === menuItem.menu_code }"
-              @click="handleMenuClick(menuItem)"
-            >
-              <NWIcon :icon_code="menuItem.icon_code" :size_px="18" />
-              <span v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-text">
-                {{ menuItem.menu_name }}
-              </span>
-              <span v-if="!appStore.sidebar_collapsed && activeMenuItem?.menu_code === menuItem.menu_code" class="admin-layout__nav-dot" />
-            </button>
-          </el-tooltip>
-
-          <!-- 分组菜单 -->
-          <div v-else class="admin-layout__nav-group">
-            <div v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-group-title">
-              {{ menuItem.menu_name }}
-            </div>
-            <el-tooltip
-              v-for="childItem in menuItem.child_list"
-              :key="childItem.menu_code"
-              :content="childItem.menu_name"
-              placement="right"
-              :disabled="!appStore.sidebar_collapsed"
-              :show-after="120"
-            >
-              <button
-                type="button"
-                class="admin-layout__nav-item"
-                :class="{
-                  'is-active': activeMenuItem?.menu_code === childItem.menu_code,
-                  'is-disabled': isMenuDisabled(childItem),
-                }"
-                @click="handleMenuClick(childItem)"
-              >
-                <NWIcon :icon_code="childItem.icon_code" :size_px="18" />
-                <span v-show="!appStore.sidebar_collapsed" class="admin-layout__nav-text">
-                  {{ childItem.menu_name }}
-                </span>
-                <span
-                  v-if="!appStore.sidebar_collapsed && activeMenuItem?.menu_code === childItem.menu_code"
-                  class="admin-layout__nav-dot"
-                />
-              </button>
-            </el-tooltip>
-          </div>
-        </template>
-      </nav>
+      <SidebarMenu
+        :menu_tree_list="menuStore.menu_tree_list"
+        :active_menu_code="activeMenuItem?.menu_code ?? ''"
+        :collapsed_flag="appStore.sidebar_collapsed"
+        :is_menu_disabled="isMenuDisabled"
+        @select="handleMenuClick"
+      />
 
       <div class="admin-layout__aside-footer">
         <button
@@ -413,9 +359,10 @@ onUnmounted(() => {
           <NWIcon icon_code="panelLeft" :size_px="19" />
         </button>
 
-        <div class="admin-layout__heading">
-          <span class="admin-layout__breadcrumb">{{ breadcrumbText }}</span>
-        </div>
+        <Breadcrumb
+          :menu_tree_list="menuStore.menu_tree_list"
+          :active_menu_code="activeMenuItem?.menu_code ?? ''"
+        />
 
         <div class="admin-layout__header-right">
           <button type="button" class="admin-layout__search-btn" @click="openCommandPalette">
@@ -423,6 +370,8 @@ onUnmounted(() => {
             <span>{{ t('layout.quickJumpPlaceholder') }}</span>
             <kbd>Ctrl K</kbd>
           </button>
+
+          <ThemeSwitch />
 
           <NotificationBell />
 
@@ -469,15 +418,18 @@ onUnmounted(() => {
         </div>
       </header>
 
-      <main class="admin-layout__content" :class="{ 'is-workspace': route.name === 'WorkspaceView' }">
-        <router-view v-slot="{ Component }">
-          <transition name="fade-slide" mode="out-in">
-            <component :is="Component" />
-          </transition>
-        </router-view>
+      <TagsView />
+
+      <main class="admin-layout__content" :class="{ 'is-workspace': compactContentFlag }">
+        <ContentWrap :compact_flag="compactContentFlag">
+          <router-view v-slot="{ Component }">
+            <transition name="fade-slide" mode="out-in">
+              <component :is="Component" />
+            </transition>
+          </router-view>
+        </ContentWrap>
       </main>
     </div>
-
 
     <CommandPalette
       v-model:visible="commandVisible"

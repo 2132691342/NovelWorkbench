@@ -53,14 +53,14 @@ func (UserRoleDO) TableName() string { return "user_roles" }
 
 // RoleVO 角色视图对象（前端展示）。
 type RoleVO struct {
-	RoleULID    string   `json:"role_ulid"`     // 角色 ULID
-	RoleCode    string   `json:"role_code"`     // 角色编码
-	RoleName    string   `json:"role_name"`     // 角色名称
-	RemarkText  string   `json:"remark_text"`   // 备注
-	PermCodes   []string `json:"perm_codes"`    // 权限码列表
-	BuiltinFlag bool     `json:"builtin_flag"`  // 是否内置角色
-	CreatedAtMs int64    `json:"created_at_ms"` // 创建时间（毫秒）
-	UpdatedAtMs int64    `json:"updated_at_ms"` // 更新时间（毫秒）
+	RoleULID    string   `json:"role_ulid"`    // 角色 ULID
+	RoleCode    string   `json:"role_code"`    // 角色编码
+	RoleName    string   `json:"role_name"`    // 角色名称
+	RemarkText  string   `json:"remark_text"`  // 备注
+	PermCodes   []string `json:"perm_codes"`   // 权限码列表
+	BuiltinFlag bool     `json:"builtin_flag"` // 是否内置角色
+	CreatedAt   string   `json:"created_at"`   // 创建时间（RFC3339）
+	UpdatedAt   string   `json:"updated_at"`   // 更新时间（RFC3339）
 }
 
 // RoleListREQ 角色分页查询请求（POST body）。

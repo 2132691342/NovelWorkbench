@@ -7,13 +7,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
 	einoClaude "github.com/cloudwego/eino-ext/components/model/claude"
 	einoOpenAI "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"strings"
-	"sync"
-	"time"
 )
 
 // 协议编码常量（与 domain.ProtocolCode* 保持一致，避免 ai 反向依赖领域枚举语义）。
@@ -24,10 +27,10 @@ const (
 
 // 模型调用默认参数（供应商未给出时兜底）。
 const (
-	defaultMaxTokens   = 2048  // 单次输出上限
-	ceilingMaxTokens   = 32000 // 输出上限硬顶：误填超大值时钳制，避免超长等待与费用失控
-	defaultTemperature = 0.7   // 采样温度
-	defaultTimeout     = 120 * time.Second
+	defaultMaxTokens   = 2048              // 单次输出上限
+	ceilingMaxTokens   = 32000             // 输出上限硬顶：误填超大值时钳制，避免超长等待与费用失控
+	defaultTemperature = 0.7               // 采样温度
+	defaultTimeout     = 120 * time.Second // 首包等待上限，与 NW_AI_TIMEOUT_SEC 对应
 )
 
 // ProviderSpec 一次调用所需的供应商能力快照（由 service 解密密钥后传入，ai 不接触存储）。
@@ -40,14 +43,14 @@ type ProviderSpec struct {
 	ChatModelName string        // 对话模型名
 	Temperature   float64       // 采样温度
 	MaxTokens     int           // 输出上限
-	Timeout       time.Duration // 单次调用超时
+	Timeout       time.Duration // 首包超时（流式生成本身不设总超时）
 }
 
 // cacheKey 生成模型实例缓存键（含密钥摘要，密钥变更自动失效）。
 func (s ProviderSpec) cacheKey() string {
 	digest := sha256.Sum256([]byte(s.APIKey))
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%.2f|%d", s.ProviderULID, s.ProtocolCode, s.BaseURL,
-		s.ChatModelName, hex.EncodeToString(digest[:8]), s.Temperature, s.MaxTokens)
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%.2f|%d|%d", s.ProviderULID, s.ProtocolCode, s.BaseURL,
+		s.ChatModelName, hex.EncodeToString(digest[:8]), s.Temperature, s.MaxTokens, s.Timeout.Milliseconds())
 }
 
 // providerModels 单个供应商的模型实例缓存。
@@ -98,6 +101,8 @@ func (c *Client) chatModelOf(spec ProviderSpec) (model.BaseChatModel, error) {
 }
 
 // buildChatModel 按协议构造 eino 对话模型。
+// 关键：HTTP 客户端不设整体超时（http.Client.Timeout 含读 body，会把长流拦腰切断），
+// 改为「连接/首包」超时 + 调用方 ctx 控制；否则推理模型长思考必然在 120s 处断流。
 func (c *Client) buildChatModel(spec ProviderSpec) (model.BaseChatModel, error) {
 	timeout := spec.Timeout
 	if timeout <= 0 {
@@ -114,16 +119,17 @@ func (c *Client) buildChatModel(spec ProviderSpec) (model.BaseChatModel, error) 
 	if temperature <= 0 {
 		temperature = defaultTemperature
 	}
+	httpClient := newStreamHTTPClient(timeout)
 	switch spec.ProtocolCode {
 	case ProtocolAnthropic:
 		baseURL := spec.BaseURL
 		built, err := einoClaude.NewChatModel(context.Background(), &einoClaude.Config{
-			APIKey:         spec.APIKey,
-			BaseURL:        &baseURL,
-			Model:          spec.ChatModelName,
-			MaxTokens:      maxTokens,
-			Temperature:    float32Ptr(float32(temperature)),
-			RequestTimeout: timeout,
+			APIKey:      spec.APIKey,
+			BaseURL:     &baseURL,
+			Model:       spec.ChatModelName,
+			MaxTokens:   maxTokens,
+			Temperature: float32Ptr(float32(temperature)),
+			HTTPClient:  httpClient,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("init anthropic chat model: %w", err)
@@ -134,7 +140,7 @@ func (c *Client) buildChatModel(spec ProviderSpec) (model.BaseChatModel, error) 
 			BaseURL:     spec.BaseURL,
 			APIKey:      spec.APIKey,
 			Model:       spec.ChatModelName,
-			Timeout:     timeout,
+			HTTPClient:  httpClient,
 			MaxTokens:   &maxTokens,
 			Temperature: float32Ptr(float32(temperature)),
 		})
@@ -145,6 +151,26 @@ func (c *Client) buildChatModel(spec ProviderSpec) (model.BaseChatModel, error) 
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %s", spec.ProtocolCode)
 	}
+}
+
+// newStreamHTTPClient 构造支持长连接的 HTTP 客户端：
+// 首包超时取供应商超时值，流式读 body 不设上限（由请求 ctx 中止），连接池按并发上限收敛。
+func newStreamHTTPClient(firstByteTimeout time.Duration) *http.Client {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   15 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   8,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: firstByteTimeout,
+		ExpectContinueTimeout: time.Second,
+	}
+	return &http.Client{Transport: transport}
 }
 
 // Generate 非流式对话（用量与耗时自动上报）。

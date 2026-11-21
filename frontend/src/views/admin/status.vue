@@ -10,6 +10,7 @@ import NWButton from '@/components/NWButton.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { formatTime } from '@/utils/time'
 
 const { t } = useI18n()
 
@@ -91,7 +92,7 @@ onMounted(() => {
             </div>
             <div>
               <dt>{{ t('status.startedAt') }}</dt>
-              <dd>{{ new Date(statusVo.server_started_at_ms).toLocaleString() }}</dd>
+              <dd>{{ new Date(formatTime(statusVo.server_started_at)).toLocaleString() }}</dd>
             </div>
             <div>
               <dt>{{ t('status.uptime') }}</dt>

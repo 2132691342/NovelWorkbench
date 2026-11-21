@@ -58,8 +58,8 @@ func (s *JobService) ListPage(ctx context.Context, req *domain.JobListREQ) (doma
 			DocName:       docNameByULID[payload.DocULID],
 			RetryCount:    dos[i].RetryCount,
 			ErrorMessage:  dos[i].ErrorMessage,
-			CreatedAtMs:   dos[i].CreatedAt.UnixMilli(),
-			UpdatedAtMs:   dos[i].UpdatedAt.UnixMilli(),
+			CreatedAt:     pkg.FormatTime(dos[i].CreatedAt),
+			UpdatedAt:     pkg.FormatTime(dos[i].UpdatedAt),
 		})
 	}
 	return domain.NewPageDTO(total, req.PageREQ, vos), nil
@@ -129,7 +129,7 @@ func (s *JobService) Retry(ctx context.Context, req *domain.JobRetryREQ) (domain
 		JobStatusCode: domain.JobStatusQueued,
 		DocULID:       doc.DocULID,
 		DocName:       doc.DocName,
-		CreatedAtMs:   do.CreatedAt.UnixMilli(),
-		UpdatedAtMs:   do.UpdatedAt.UnixMilli(),
+		CreatedAt:     pkg.FormatTime(do.CreatedAt),
+		UpdatedAt:     pkg.FormatTime(do.UpdatedAt),
 	}, nil
 }

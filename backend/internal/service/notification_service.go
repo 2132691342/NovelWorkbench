@@ -99,6 +99,6 @@ func toNotificationVO(do *domain.NotificationDO) domain.NotificationVO {
 		LinkURL:               do.LinkURL,
 		RefTypeCode:           do.RefTypeCode,
 		RefULID:               do.RefULID,
-		CreatedAtMs:           do.CreatedAt.UnixMilli(),
+		CreatedAt:             pkg.FormatTime(do.CreatedAt),
 	}
 }

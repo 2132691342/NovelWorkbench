@@ -203,17 +203,25 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column :label="t('prompts.domainLabel')" width="110">
+          <template #default="{ row }">
+            <span class="prompts-page__domain">{{ row.domain_name || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="description_text" :label="t('prompts.description')" min-width="220" show-overflow-tooltip />
         <el-table-column :label="t('prompts.promptLength')" width="96" align="center">
           <template #default="{ row }">{{ row.system_prompt_text.length }}</template>
         </el-table-column>
-        <el-table-column :label="t('prompts.status')" width="150">
+        <el-table-column :label="t('prompts.status')" width="190">
           <template #default="{ row }">
             <el-tag size="small" :type="row.enabled_flag ? 'success' : 'info'">
               {{ row.enabled_flag ? t('prompts.enabledTag') : t('prompts.disabledTag') }}
             </el-tag>
             <el-tag v-if="row.builtin_flag" size="small" type="warning" class="prompts-page__tag-gap">
               {{ t('prompts.builtinTag') }}
+            </el-tag>
+            <el-tag v-if="row.customized_flag" size="small" effect="plain" class="prompts-page__tag-gap">
+              {{ t('prompts.customizedTag') }}
             </el-tag>
           </template>
         </el-table-column>

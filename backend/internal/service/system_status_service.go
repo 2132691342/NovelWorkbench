@@ -66,11 +66,11 @@ func (s *SystemStatusService) Status(ctx context.Context, userULID string) (doma
 	}
 	waitGroup.Wait()
 	vo := domain.SystemStatusVO{
-		ServerStartedAtMs: s.startedAt.UnixMilli(),
-		ServerUptimeSec:   int64(time.Since(s.startedAt).Seconds()),
-		GoVersionText:     runtime.Version(),
-		BuildVersionText:  s.deps.BuildVersion,
-		DependencyList:    results,
+		ServerStartedAt:  pkg.FormatTime(s.startedAt),
+		ServerUptimeSec:  int64(time.Since(s.startedAt).Seconds()),
+		GoVersionText:    runtime.Version(),
+		BuildVersionText: s.deps.BuildVersion,
+		DependencyList:   results,
 	}
 	capability, err := s.providerSvc.Capability(ctx, userULID)
 	if err != nil {

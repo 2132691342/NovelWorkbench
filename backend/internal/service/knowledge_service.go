@@ -258,7 +258,7 @@ func toDocumentVO(do *domain.KnowledgeDocumentDO) domain.KnowledgeDocumentVO {
 		ChunkCount:      do.ChunkCount,
 		TotalTokenCount: do.TotalTokenCount,
 		ErrorMessage:    do.ErrorMessage,
-		CreatedAtMs:     do.CreatedAt.UnixMilli(),
+		CreatedAt:       pkg.FormatTime(do.CreatedAt),
 	}
 }
 

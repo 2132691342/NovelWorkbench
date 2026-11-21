@@ -305,7 +305,7 @@ func toChapterDetailVO(do *domain.ChapterDO) domain.ChapterDetailVO {
 		VolumeULID:     do.VolumeULID,
 		ContentText:    do.ContentText,
 		SummaryText:    do.SummaryText,
-		UpdatedAtMs:    do.UpdatedAt.UnixMilli(),
+		UpdatedAt:      pkg.FormatTime(do.UpdatedAt),
 	}
 }
 
@@ -317,6 +317,6 @@ func toSnapshotVO(do *domain.ChapterSnapshotDO) domain.ChapterSnapshotVO {
 		SnapshotType: do.SnapshotType,
 		ChangeNote:   do.ChangeNote,
 		WordCount:    pkg.CountWords(do.ContentText),
-		CreatedAtMs:  do.CreatedAt.UnixMilli(),
+		CreatedAt:    pkg.FormatTime(do.CreatedAt),
 	}
 }

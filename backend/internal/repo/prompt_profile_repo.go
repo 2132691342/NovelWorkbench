@@ -96,6 +96,17 @@ func (r *PromptProfileRepo) List(ctx context.Context, req *domain.PromptProfileL
 	return dos, nil
 }
 
+// ListBuiltinGlobal 查询全部内置全局档案（播种清理校验用）。
+func (r *PromptProfileRepo) ListBuiltinGlobal(ctx context.Context) ([]domain.PromptProfileDO, error) {
+	var dos []domain.PromptProfileDO
+	if err := r.db.WithContext(ctx).
+		Where("scope_code = ? AND builtin_flag = ?", domain.PromptProfileScopeGlobal, true).
+		Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list builtin prompt profiles: %w", err)
+	}
+	return dos, nil
+}
+
 // GetDefaultGlobal 取启用的全局档案中排序最前的一条（无则返回 nil）。
 func (r *PromptProfileRepo) GetDefaultGlobal(ctx context.Context) (*domain.PromptProfileDO, error) {
 	var do domain.PromptProfileDO

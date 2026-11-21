@@ -10,7 +10,7 @@ export interface NWUserVo {
   user_status_code?: string
   /** 角色编码列表（登录/用户信息接口返回，用于菜单入口权限控制） */
   role_codes?: string[]
-  created_at_ms: number
+  created_at: string
 }
 
 /** 登录结果视图对象 */
@@ -45,8 +45,8 @@ export interface NWProjectItemVo {
   total_word_count: number
   volume_count: number
   chapter_count: number
-  created_at_ms: number
-  updated_at_ms: number
+  created_at: string
+  updated_at: string
 }
 
 /** 系统配置项 */
@@ -77,8 +77,11 @@ export interface NWPromptProfileVo {
   system_prompt_text: string
   builtin_flag: boolean
   enabled_flag: boolean
+  customized_flag: boolean
+  domain_code: string
+  domain_name: string
   sort_order: number
-  updated_at_ms: number
+  updated_at: string
 }
 
 export interface NWSkillVo {
@@ -94,10 +97,13 @@ export interface NWSkillVo {
   ref_count: number
   enabled_flag: boolean
   builtin_flag: boolean
+  customized_flag: boolean
   overridden_flag: boolean
+  domain_code: string
+  domain_name: string
   sort_order: number
-  created_at_ms: number
-  updated_at_ms: number
+  created_at: string
+  updated_at: string
 }
 
 /** 技能参考资料视图对象（字段对齐后端 SkillReferenceVO） */
@@ -108,7 +114,7 @@ export interface NWSkillReferenceVo {
   ref_text: string
   keyword_list: string
   sort_order: number
-  created_at_ms: number
+  created_at: string
 }
 
 /** 技能解析结果（字段对齐后端 SkillResolveDTO） */
@@ -156,8 +162,8 @@ export interface NWMenuVo {
   enabled_flag: boolean
   sort_order: number
   remark_text: string
-  created_at_ms: number
-  updated_at_ms: number
+  created_at: string
+  updated_at: string
 }
 
 /** 权限目录条目（字段对齐后端 PermItemVO） */
@@ -200,8 +206,8 @@ export interface NWProjectVo {
   total_word_count: number
   volume_count: number
   chapter_count: number
-  created_at_ms: number
-  updated_at_ms: number
+  created_at: string
+  updated_at: string
 }
 
 /** 卷视图对象（字段对齐后端 VolumeVO） */
@@ -239,7 +245,7 @@ export interface NWChapterDetailVo extends NWChapterBriefVo {
   volume_ulid: string
   content_text: string
   summary_text: string
-  updated_at_ms: number
+  updated_at: string
 }
 
 /** 章节快照视图（字段对齐后端 ChapterSnapshotVO） */
@@ -249,7 +255,7 @@ export interface NWChapterSnapshotVo {
   snapshot_type: string
   change_note: string
   word_count: number
-  created_at_ms: number
+  created_at: string
 }
 
 /** 知识库文档视图（字段对齐后端 KnowledgeDocumentVO） */
@@ -262,7 +268,7 @@ export interface NWKnowledgeDocumentVo {
   chunk_count: number
   total_token_count: number
   error_message: string
-  created_at_ms: number
+  created_at: string
 }
 
 /** 知识库切片视图（RAG 召回依据，字段对齐后端 KnowledgeChunkVO） */
@@ -282,7 +288,7 @@ export interface NWChatSessionVo {
   project_ulid: string
   session_name: string
   message_count: number
-  updated_at_ms: number
+  updated_at: string
 }
 
 /** AI 消息视图（字段对齐后端 ChatMessageVO） */
@@ -297,7 +303,7 @@ export interface NWChatMessageVo {
   ref_chapter_ulid_list: string[]
   ref_message_ulid_list: string[]
   token_used_count: number
-  created_at_ms: number
+  created_at: string
 }
 
 /** SSE 流式事件（字段对齐后端 ChatStreamEventDTO） */
@@ -388,6 +394,8 @@ export interface NWChatSendReqVo {
   skill_code?: string
   ref_doc_ulid_list?: string[]
   ref_chapter_ulid_list?: string[]
+  ref_summary_ulid_list?: string[]
+  ref_prompt_ulid_list?: string[]
   ref_message_ulid_list?: string[]
   history_count?: number
   model_ulid?: string

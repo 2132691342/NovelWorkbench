@@ -22,6 +22,7 @@ import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
 import { convertNoteContent, type NWNoteContentMode } from './noteContent'
+import { formatTime } from '@/utils/time'
 
 // 两种编辑器体积都在 1MB 级，且互斥使用：按模式懒加载，进页面只付当前模式那一份。
 const NoteEditor = defineAsyncComponent(() => import('./NoteEditor.vue'))
@@ -79,9 +80,6 @@ const filteredNoteList = computed<NWLoreVo[]>(() => {
 })
 
 /** 毫秒时间戳转本地时间 */
-function formatTime(timeMs: number): string {
-  return new Date(timeMs).toLocaleString()
-}
 
 /** 加载笔记列表 */
 async function loadNotes(): Promise<void> {
@@ -144,7 +142,7 @@ async function saveNote(): Promise<void> {
       listItem.lore_name = savedVo.lore_name
       listItem.content_text = savedVo.content_text
       listItem.content_mode_code = savedVo.content_mode_code
-      listItem.updated_at_ms = savedVo.updated_at_ms
+      listItem.updated_at = savedVo.updated_at
     }
     dirtyFlag = false
     saveStatus.value = 'saved'
@@ -324,7 +322,7 @@ onMounted(() => {
             <span class="notes-page__item-name" :title="noteVo.lore_name">{{ noteVo.lore_name }}</span>
             <span class="notes-page__item-snippet">{{ noteSnippet(noteVo) }}</span>
             <span class="notes-page__item-foot">
-              <span class="notes-page__item-time">{{ formatTime(noteVo.updated_at_ms) }}</span>
+              <span class="notes-page__item-time">{{ formatTime(noteVo.updated_at) }}</span>
               <button type="button" class="notes-page__item-delete" @click.stop="handleDelete(noteVo)">
                 <NWIcon icon_code="trash" :size_px="12" />
               </button>

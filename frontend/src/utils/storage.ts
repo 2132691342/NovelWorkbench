@@ -7,9 +7,13 @@ export const NW_TOKEN_KEY = 'nw_access_token'
 export const NW_USER_VO_KEY = 'nw_user_vo'
 export const NW_LOCALE_KEY = 'nw_locale'
 export const NW_SIDEBAR_COLLAPSED_KEY = 'nw_sidebar_collapsed'
+export const NW_THEME_KEY = 'nw_theme'
 
 // 支持的语言编码
 export type NWLocaleCode = 'zh-CN' | 'en-US'
+
+// 主题编码（system 跟随系统偏好）
+export type NWThemeCode = 'light' | 'dark' | 'system'
 
 /** 读取登录 token */
 export function readToken(): string {
@@ -39,8 +43,8 @@ function isUserVo(value: unknown): value is NWUserVo {
     typeof value.user_email === 'string' &&
     'avatar_url' in value &&
     typeof value.avatar_url === 'string' &&
-    'created_at_ms' in value &&
-    typeof value.created_at_ms === 'number'
+    'created_at' in value &&
+    typeof value.created_at === 'string'
   )
 }
 
@@ -90,4 +94,18 @@ export function readSidebarCollapsed(): boolean {
 /** 写入侧边栏折叠状态 */
 export function writeSidebarCollapsed(collapsed: boolean): void {
   localStorage.setItem(NW_SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0')
+}
+
+/** 读取主题偏好（非法值回落到亮色） */
+export function readTheme(): NWThemeCode {
+  const storedTheme = localStorage.getItem(NW_THEME_KEY)
+  if (storedTheme === 'dark' || storedTheme === 'system') {
+    return storedTheme
+  }
+  return 'light'
+}
+
+/** 写入主题偏好 */
+export function writeTheme(themeCode: NWThemeCode): void {
+  localStorage.setItem(NW_THEME_KEY, themeCode)
 }

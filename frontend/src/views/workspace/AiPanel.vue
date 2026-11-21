@@ -97,6 +97,12 @@ function buildStreamRequest(payload: NWChatSendPayload): NWChatSendReqVo {
   if (refChapterUlidList.length > 0) {
     request.ref_chapter_ulid_list = refChapterUlidList
   }
+  if (payload.ref_summary_ulid_list.length > 0) {
+    request.ref_summary_ulid_list = payload.ref_summary_ulid_list
+  }
+  if (payload.ref_prompt_ulid_list.length > 0) {
+    request.ref_prompt_ulid_list = payload.ref_prompt_ulid_list
+  }
   if (payload.ref_message_ulid_list.length > 0) {
     request.ref_message_ulid_list = payload.ref_message_ulid_list
   }
@@ -201,7 +207,7 @@ function handleSend(payload: NWChatSendPayload): void {
     ElMessage.warning(t('workspace.ai.modelUnavailable'))
     return
   }
-  const createdMs = Date.now()
+  const createdAtText = new Date().toISOString()
   messageList.value.push(
     {
       message_ulid: '',
@@ -209,7 +215,7 @@ function handleSend(payload: NWChatSendPayload): void {
       content_text: payload.content_text,
       reasoning_text: '',
       skill_code: payload.skill_code,
-      created_at_ms: createdMs,
+      created_at: createdAtText,
       reference_list: [],
       error_message: '',
       streaming_flag: false,
@@ -222,7 +228,7 @@ function handleSend(payload: NWChatSendPayload): void {
       content_text: '',
       reasoning_text: '',
       skill_code: '',
-      created_at_ms: createdMs,
+      created_at: createdAtText,
       reference_list: [],
       error_message: '',
       streaming_flag: true,
@@ -332,7 +338,7 @@ async function selectSession(sessionUlid: string): Promise<void> {
       content_text: messageVo.content_text,
       reasoning_text: messageVo.reasoning_text ?? '',
       skill_code: messageVo.skill_code,
-      created_at_ms: messageVo.created_at_ms,
+      created_at: messageVo.created_at,
       reference_list: [],
       error_message: '',
       streaming_flag: false,

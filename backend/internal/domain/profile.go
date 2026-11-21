@@ -11,8 +11,8 @@ type UserProfileVO struct {
 	UserStatusCode string   `json:"user_status_code"` // 状态：active/disabled
 	RoleCodes      []string `json:"role_codes"`       // 角色编码列表
 	RemarkText     string   `json:"remark_text"`      // 个人备注
-	CreatedAtMs    int64    `json:"created_at_ms"`    // 创建时间（毫秒）
-	UpdatedAtMs    int64    `json:"updated_at_ms"`    // 更新时间（毫秒）
+	CreatedAt      string   `json:"created_at"`       // 创建时间（RFC3339）
+	UpdatedAt      string   `json:"updated_at"`       // 更新时间（RFC3339）
 }
 
 // UserProfileUpdateREQ 个人资料更新请求（只允许修改邮箱、头像与备注）。

@@ -51,10 +51,14 @@ const (
 	RespCodeInternalError   = "ERR_INTERNAL"      // 服务内部错误
 )
 
-// BaseDO 持久化对象公共字段。
+// BaseDO 持久化对象公共字段：时间戳由 GORM 自动维护，操作人由 service 层显式写入。
+// 不使用软删除：业务删除是硬删除，且 user_name/role_code/menu_code 等列带唯一索引，
+// 软删除会让已删行长期占位、无法重建同名资源。
 type BaseDO struct {
-	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime;column:created_at"` // 创建时间
-	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime;column:updated_at"` // 更新时间
+	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime;column:created_at"`     // 创建时间
+	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime;column:updated_at"`     // 更新时间
+	CreatedBy string    `json:"created_by" gorm:"column:created_by;size:40;default:''"` // 创建人 ULID（系统写入为空）
+	UpdatedBy string    `json:"updated_by" gorm:"column:updated_by;size:40;default:''"` // 最后更新人 ULID
 }
 
 // BaseRESP 所有业务响应的公共包络。

@@ -67,8 +67,8 @@ type ProjectVO struct {
 	TotalWordCount int64  `json:"total_word_count"` // 累计字数
 	VolumeCount    int    `json:"volume_count"`     // 卷数
 	ChapterCount   int    `json:"chapter_count"`    // 章节数
-	CreatedAtMs    int64  `json:"created_at_ms"`    // 创建时间（毫秒时间戳）
-	UpdatedAtMs    int64  `json:"updated_at_ms"`    // 更新时间（毫秒时间戳）
+	CreatedAt      string `json:"created_at"`       // 创建时间（RFC3339）
+	UpdatedAt      string `json:"updated_at"`       // 更新时间（RFC3339）
 }
 
 // VolumeVO 卷视图对象。

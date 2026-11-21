@@ -41,6 +41,8 @@ type SkillDO struct {
 	VariableSpecJSON string `json:"variable_spec_json" gorm:"column:variable_spec_json;type:text"`    // 变量声明 JSON 数组
 	EnabledFlag      bool   `json:"enabled_flag" gorm:"column:enabled_flag;default:true"`             // 是否启用
 	BuiltinFlag      bool   `json:"builtin_flag" gorm:"column:builtin_flag;default:false"`            // 是否内置（内置不可删）
+	AssetHashText    string `json:"asset_hash_text" gorm:"column:asset_hash_text;size:64"`            // 代码资产指纹（播种/升级时写入，用于判断是否有新版本）
+	CustomizedFlag   bool   `json:"customized_flag" gorm:"column:customized_flag;default:false"`      // 作者是否改过出厂内容（改过则代码升级不覆盖）
 	SortOrder        int    `json:"sort_order" gorm:"column:sort_order"`                              // 排序号
 }
 
@@ -104,10 +106,13 @@ type SkillVO struct {
 	RefCount        int               `json:"ref_count"`        // 参考资料条数
 	EnabledFlag     bool              `json:"enabled_flag"`     // 是否启用
 	BuiltinFlag     bool              `json:"builtin_flag"`     // 是否内置
+	CustomizedFlag  bool              `json:"customized_flag"`  // 作者是否改过出厂内容（改过则代码升级不覆盖）
 	OverriddenFlag  bool              `json:"overridden_flag"`  // 是否被同编码项目技能覆盖
+	DomainCode      string            `json:"domain_code"`      // 所属流程域编码（内置技能才有）
+	DomainName      string            `json:"domain_name"`      // 所属流程域名称（内置技能才有）
 	SortOrder       int               `json:"sort_order"`       // 排序号
-	CreatedAtMs     int64             `json:"created_at_ms"`    // 创建时间
-	UpdatedAtMs     int64             `json:"updated_at_ms"`    // 更新时间
+	CreatedAt       string            `json:"created_at"`       // 创建时间
+	UpdatedAt       string            `json:"updated_at"`       // 更新时间
 }
 
 // SkillReferenceREQ 技能参考资料保存请求（ref_ulid 为空表示新建）。
@@ -127,13 +132,13 @@ type SkillReferenceDeleteREQ struct {
 
 // SkillReferenceVO 技能参考资料视图对象。
 type SkillReferenceVO struct {
-	RefULID     string `json:"ref_ulid"`      // 参考资料 ULID
-	SkillULID   string `json:"skill_ulid"`    // 所属技能
-	RefName     string `json:"ref_name"`      // 资料名
-	RefText     string `json:"ref_text"`      // 资料正文
-	KeywordList string `json:"keyword_list"`  // 触发关键词
-	SortOrder   int    `json:"sort_order"`    // 排序号
-	CreatedAtMs int64  `json:"created_at_ms"` // 创建时间
+	RefULID     string `json:"ref_ulid"`     // 参考资料 ULID
+	SkillULID   string `json:"skill_ulid"`   // 所属技能
+	RefName     string `json:"ref_name"`     // 资料名
+	RefText     string `json:"ref_text"`     // 资料正文
+	KeywordList string `json:"keyword_list"` // 触发关键词
+	SortOrder   int    `json:"sort_order"`   // 排序号
+	CreatedAt   string `json:"created_at"`   // 创建时间
 }
 
 // SkillListBySkillREQ 查询某技能的参考资料请求。

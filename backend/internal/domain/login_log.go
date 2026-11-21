@@ -48,5 +48,5 @@ type LoginLogVO struct {
 	FailReasonText   string `json:"fail_reason_text"`   // 失败原因
 	IPAddr           string `json:"ip_addr"`            // 客户端 IP
 	UserAgentText    string `json:"user_agent_text"`    // 客户端 UA
-	CreatedAtMs      int64  `json:"created_at_ms"`      // 登录时间（毫秒）
+	CreatedAt        string `json:"created_at"`         // 登录时间（RFC3339）
 }

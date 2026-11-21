@@ -16,7 +16,7 @@
 | 链路头 | 请求 `X-Request-ID` 透传；缺省生成 `REQ_` 前缀 ULID，响应头回写同值 | `pkg.RequestIDMiddleware` |
 | 业务码 | 字符串 `SUCCESS` 或 `ERR_*` | `domain.RespCode*` |
 | ID 形态 | 业务前缀 + ULID（`PRJ_` / `CHP_` / `DOC_` / `MDL_` …） | `domain/common.go` 的 `IDPrefix*` |
-| 时间 | 视图对象统一给毫秒时间戳，字段后缀 `_at_ms`；日期参数为 `YYYY-MM-DD` | 各 VO |
+| 时间 | 视图对象统一给 RFC3339 字符串（`2026-11-21T03:09:39Z`），零值给空串；日期参数为 `YYYY-MM-DD` | 各 VO |
 | 数据归属 | 项目域资源一律经 `mustOwnProject` / `mustOwnDoc` 等校验归属，越权返回 `ERR_FORBIDDEN` | `service/project_service.go` |
 
 CORS 放行 `Origin`、`Content-Type`、`Authorization`、`X-Request-ID`，暴露 `X-Request-ID`，预检缓存 12 小时（`router.go` 的 `cors.Config`）。
@@ -165,7 +165,7 @@ flowchart LR
 
 - `UserLoginREQ`：`account_text`（登录名或邮箱，必填）、`password_text`（必填）。
 - `UserLoginDTO`：`access_token`、`expires_in_sec`、`user_vo`（`UserVO`）。
-- `UserVO`：`user_ulid`、`user_name`、`user_email`、`avatar_url`、`user_status_code`（`active` / `disabled`）、`role_codes`、`created_at_ms`。
+- `UserVO`：`user_ulid`、`user_name`、`user_email`、`avatar_url`、`user_status_code`（`active` / `disabled`）、`role_codes`、`created_at`。
 - 登出把当前令牌写入吊销名单（Redis），之后同一令牌访问任意接口返回 401。
 
 ### 7.2 个人中心（3）
@@ -191,7 +191,7 @@ flowchart LR
 
 - `NotificationListREQ`：分页字段 + `read_status_code`（`all` / `unread` / `read`）、`notification_type_code`、`keyword_text`。
 - `NotificationReadREQ.notification_ulid_list` 为 1–100 条的批量标记。
-- 通知类型：`system` / `task` / `account`。响应项含 `notification_ulid`、`notification_title_text`、`notification_body_text`、`read_flag`、`link_url`、`ref_type_code`、`ref_ulid`、`created_at_ms`。
+- 通知类型：`system` / `task` / `account`。响应项含 `notification_ulid`、`notification_title_text`、`notification_body_text`、`read_flag`、`link_url`、`ref_type_code`、`ref_ulid`、`created_at`。
 - 全部接口按 `user_ulid` 隔离，只作用于当前用户的通知。
 
 ### 7.4 项目（6）
@@ -208,7 +208,7 @@ flowchart LR
 - `ProjectCreateREQ`：`project_name`（1–128）、`genre_code`、`style_text`、`synopsis_text`。
 - `ProjectUpdateREQ`：`project_ulid` + 同上字段 + `project_status`（`draft` / `serial` / `completed`）。
 - `ProjectListREQ`：分页字段 + `keyword_text`、`project_status`。
-- `ProjectVO`：`project_ulid`、`project_name`、`genre_code`、`style_text`、`synopsis_text`、`project_status`、`total_word_count`、`volume_count`、`chapter_count`、`created_at_ms`、`updated_at_ms`。
+- `ProjectVO`：`project_ulid`、`project_name`、`genre_code`、`style_text`、`synopsis_text`、`project_status`、`total_word_count`、`volume_count`、`chapter_count`、`created_at`、`updated_at`。
 - `ProjectTreeVO`：`project_vo` + `volume_list`（`VolumeTreeNodeVO`，含 `volume_vo` 与 `chapter_list`（`ChapterBriefVO`））。
 - 删除项目在单个事务内级联清理卷、章节、快照、角色、设定、会话、知识库文档与统计（`ProjectService.Delete`）；事务提交后由 `cleanupKnowledgeExternal` 清理 MinIO 原文与 Manticore 切片，失败仅告警。
 
@@ -236,9 +236,9 @@ flowchart LR
 | POST | `/chapter/snapshot/restore` | 登录用户 | `ChapterSnapshotRestoreREQ` | `ChapterDetailVO` | `ChapterAPI.SnapshotRestore` |
 
 - `ChapterUpdateREQ` 是整体覆盖：`chapter_name`、`volume_ulid`、`chapter_status`（`draft` / `revised` / `locked`）；`content_text`、`summary_text` 为指针字段，省略表示不改，空串表示清空；字数由服务端统计。
-- `ChapterDetailVO` 内嵌 `ChapterBriefVO`（`chapter_ulid`、`chapter_name`、`chapter_order`、`word_count`、`chapter_status`），并补 `project_ulid`、`volume_ulid`、`content_text`、`summary_text`、`updated_at_ms`。
+- `ChapterDetailVO` 内嵌 `ChapterBriefVO`（`chapter_ulid`、`chapter_name`、`chapter_order`、`word_count`、`chapter_status`），并补 `project_ulid`、`volume_ulid`、`content_text`、`summary_text`、`updated_at`。
 - `ChapterSnapshotCreateREQ`：`chapter_ulid`、`change_note`（≤256）。`ChapterSnapshotRestoreREQ`：`snapshot_ulid`；回滚前会为当前正文再留一份快照。
-- `ChapterSnapshotVO`：`snapshot_ulid`、`chapter_ulid`、`snapshot_type`、`change_note`、`word_count`、`created_at_ms`。
+- `ChapterSnapshotVO`：`snapshot_ulid`、`chapter_ulid`、`snapshot_type`、`change_note`、`word_count`、`created_at`。
 
 ### 7.7 角色与关系图（6）
 
@@ -305,12 +305,12 @@ flowchart LR
 | POST | `/prompt/profile/delete` | `prompt:manage` | `PromptProfileDeleteREQ` | `null` | `PromptProfileAPI.Delete` |
 
 - 作用域：`global` 全局可用，`project` 仅所属项目可用；同编码的项目技能覆盖全局技能（`SkillVO.overridden_flag` 标记被覆盖项）。
-- `SkillVO`：`skill_ulid`、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`（`write` / `revise` / `outline` / `setting` / `review` / `other`）、`description_text`、`prompt_template`、`variable_list`、`ref_count`、`enabled_flag`、`builtin_flag`、`overridden_flag`、`sort_order`、`created_at_ms`、`updated_at_ms`。
+- `SkillVO`：`skill_ulid`、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`（`write` / `revise` / `outline` / `setting` / `review` / `other`）、`description_text`、`prompt_template`、`variable_list`、`ref_count`、`enabled_flag`、`builtin_flag`、`customized_flag`（作者改过出厂内容）、`overridden_flag`、`domain_code` / `domain_name`（内置技能的流程域）、`sort_order`、`created_at`、`updated_at`。
 - `SkillResolveREQ`：`project_ulid`、`content_text`（≤20000）、`skill_code`（显式指定优先）、`variable_value`。`SkillResolveDTO`：`skill_ulid`、`skill_code`、`skill_name`、`remainder_text`、`variable_map`、`missing_list`、`ref_text_list`；`missing_list` 非空表示必填变量缺失。
 - 变量取值优先级：显式传值 > 声明缺省值 > 必填缺失记入 `missing_list`（`resolveSkillVariables`）。
 - 模板占位符只允许内置占位符（`user_input` / `chapter_content` / `context` / `skill_code`）与已声明变量，出现未声明占位符时保存返回 `ERR_INVALID_PARAM`（`validateSkillTemplate`）。
-- 内置技能 `builtin_flag=true`：不可删除（返回 `ERR_BIZ_FAILED`），可停用或改提示词；`scope_code` 与 `skill_code` 不可改。
-- `PromptProfileVO`：`prompt_profile_ulid`、`prompt_profile_code`、`prompt_profile_name`、`scope_code`、`project_ulid`、`description_text`、`system_prompt_text`、`builtin_flag`、`enabled_flag`、`sort_order`、`updated_at_ms`。作用域规则与技能一致；项目档案的归属校验比技能更严（`mustOwnProject`，校验创建者）。内置档案不可删、编码不可改，可改正文与名称。
+- 内置技能 `builtin_flag=true`：不可删除（返回 `ERR_BIZ_FAILED`），可停用或改提示词；`scope_code` 与 `skill_code` 不可改。保存内容与出厂指纹不同时 `customized_flag` 置 `true`，此后代码升级不再覆盖该行；改回出厂内容会置回 `false`。
+- `PromptProfileVO`：`prompt_profile_ulid`、`prompt_profile_code`、`prompt_profile_name`、`scope_code`、`project_ulid`、`description_text`、`system_prompt_text`、`builtin_flag`、`enabled_flag`、`customized_flag`、`domain_code` / `domain_name`、`sort_order`、`updated_at`。作用域规则与技能一致；项目档案的归属校验比技能更严（`mustOwnProject`，校验创建者）。内置档案不可删、编码不可改，可改正文与名称。
 
 ### 7.11 菜单与权限目录（6）
 
@@ -381,8 +381,8 @@ flowchart LR
 | `prompt_profile_ulid` | string | 指定系统提示词档案，空取「启用的全局默认档案 → 内置兜底人设」 |
 
 - `ChatHistoryREQ`：`session_ulid`（必填）+ 分页字段；结果按 `created_at` 升序。
-- `ChatSessionCreateREQ`：`project_ulid`、`session_name`（空则取首条消息前 20 字）。`ChatSessionVO`：`session_ulid`、`project_ulid`、`session_name`、`message_count`、`updated_at_ms`。
-- `ChatMessageVO`：`message_ulid`、`session_ulid`、`role_code`（`user` / `assistant` / `system`）、`content_text`、`skill_code`、`ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_message_ulid_list`、`token_used_count`、`created_at_ms`。
+- `ChatSessionCreateREQ`：`project_ulid`、`session_name`（空则取首条消息前 20 字）。`ChatSessionVO`：`session_ulid`、`project_ulid`、`session_name`、`message_count`、`updated_at`。
+- `ChatMessageVO`：`message_ulid`、`session_ulid`、`role_code`（`user` / `assistant` / `system`）、`content_text`、`skill_code`、`ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_summary_ulid_list`、`ref_prompt_ulid_list`、`ref_message_ulid_list`、`token_used_count`、`created_at`。
 - 所选模型未授权给当前账号返回 `ERR_FORBIDDEN`；账号无任何可用模型返回 `ERR_AI_PROVIDER`。
 
 ### 7.15 创作规划（6）
@@ -462,7 +462,7 @@ flowchart LR
 
 - 日期格式 `YYYY-MM-DD`；缺省近 14 天，非法输入回退默认，起止倒置自动纠正（`resolveUsageRange`）。
 - `ModelUsageOverviewVO`：`call_count_total`、`fail_count_total`、`total_tokens_total`、`avg_latency_ms`、`success_rate_value`（0–1）、`daily_list`、`provider_list`、`model_list`。
-- `SystemStatusVO`：`server_started_at_ms`、`server_uptime_sec`、`go_version_text`、`build_version_text`、`dependency_list`、`chat_ready`、`hint_text`。`dependency_code` 取 `postgres` / `redis` / `rabbitmq` / `minio` / `manticore` / `model`，`status_code` 取 `up` / `down` / `degraded`。
+- `SystemStatusVO`：`server_started_at`、`server_uptime_sec`、`go_version_text`、`build_version_text`、`dependency_list`、`chat_ready`、`hint_text`。`dependency_code` 取 `postgres` / `redis` / `rabbitmq` / `minio` / `manticore` / `model`，`status_code` 取 `up` / `down` / `degraded`。
 
 ### 7.19 系统管理（13）
 
@@ -484,7 +484,7 @@ flowchart LR
 
 - 用户：`UserAdminCreateREQ`（`user_name` 3–64、`user_email`、`password_text` 6–64、`role_codes`、`remark_text`），用户名或邮箱重复返回 `ERR_CONFLICT`，`role_codes` 为空时默认挂 `user` 角色；`UserAdminUpdateREQ.role_codes` 为整体覆盖语义；`UserResetPasswordREQ` 只收 `user_ulid` 与 `new_password_text`；不能删除自己（`ERR_BIZ_FAILED`）。
 - 角色：`RoleListREQ` 仅含分页字段；`RoleSaveREQ`：`role_ulid`、`role_code`、`role_name`、`remark_text`、`perm_codes`（≤32）。内置角色（`admin` / `user`）不可删除（`ERR_BIZ_FAILED`）、不可改编码；仍有用户挂载的角色不可删除（`ERR_CONFLICT`）；角色编码重复返回 `ERR_CONFLICT`。
-- 审计：`AuditListREQ`：分页字段 + `action_code`（模糊）+ `user_ulid`（精确）。`AuditVO` 含 `audit_ulid`、`user_ulid`、`user_name`、`action_code`、`target_type`、`target_ulid`、`detail_text`、`ip_addr`、`created_at_ms`。
+- 审计：`AuditListREQ`：分页字段 + `action_code`（模糊）+ `user_ulid`（精确）。`AuditVO` 含 `audit_ulid`、`user_ulid`、`user_name`、`action_code`、`target_type`、`target_ulid`、`detail_text`、`ip_addr`、`created_at`。
 - 登录日志：`LoginLogListREQ`：分页字段 + `keyword_text`（账号/IP）+ `login_result_code`（`success` / `failed` / `disabled`）+ `date_from` / `date_to`。
 - 任务：`JobListREQ`：分页字段 + `job_type_code`、`job_status_code`、`keyword_text`。状态 `queued` / `running` / `success` / `failed`，类型 `doc_index` / `doc_reindex`；重试仅接受 `failed`，成功后任务回到 `queued`、文档回到 `pending`。`JobStatsVO` 给四态计数。
 

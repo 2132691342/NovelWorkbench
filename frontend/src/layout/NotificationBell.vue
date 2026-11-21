@@ -9,6 +9,7 @@ import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useNotificationStore } from '@/stores/notification'
 import NWIcon from '@/components/NWIcon.vue'
+import { formatTime } from '@/utils/time'
 
 const router = useRouter()
 const notificationStore = useNotificationStore()
@@ -41,10 +42,6 @@ async function handleReadAll(): Promise<void> {
   } catch {
     // 失败提示由 http 层统一弹出
   }
-}
-
-function formatNoticeTime(timeMs: number): string {
-  return new Date(timeMs).toLocaleString()
 }
 
 onMounted(() => {
@@ -101,7 +98,7 @@ onBeforeUnmount(() => {
             <span class="nw-notify-panel__title">{{ notificationItem.notification_title_text }}</span>
             <span class="nw-notify-panel__body">{{ notificationItem.notification_body_text }}</span>
             <span class="nw-notify-panel__time">
-              {{ formatNoticeTime(notificationItem.created_at_ms) }}
+              {{ formatTime(notificationItem.created_at) }}
             </span>
           </span>
         </button>

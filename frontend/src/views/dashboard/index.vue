@@ -16,6 +16,7 @@ import NWEmpty from '@/components/NWEmpty.vue'
 import NWIcon from '@/components/NWIcon.vue'
 import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWStatTile from '@/components/NWStatTile.vue'
+import { parseTimeText } from '@/utils/time'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectStore } from '@/stores/project'
 import DashboardProjectCard from './DashboardProjectCard.vue'
@@ -104,6 +105,21 @@ function statusBadgeClass(statusCode: string): string {
   return 'nw-badge--warning'
 }
 
+/** 相对时间（沿用 dashboard 文案键） */
+function formatProjectTime(timeText: string): string {
+  const parsedDate = parseTimeText(timeText)
+  if (!parsedDate) return '—'
+  const diffMs = Date.now() - parsedDate.getTime()
+  const minuteMs = 60 * 1000
+  const hourMs = 60 * minuteMs
+  const dayMs = 24 * hourMs
+  if (diffMs < minuteMs) return t('dashboard.timeJustNow')
+  if (diffMs < hourMs) return t('dashboard.timeMinutesAgo', { count: Math.floor(diffMs / minuteMs) })
+  if (diffMs < dayMs) return t('dashboard.timeHoursAgo', { count: Math.floor(diffMs / hourMs) })
+  if (diffMs < 7 * dayMs) return t('dashboard.timeDaysAgo', { count: Math.floor(diffMs / dayMs) })
+  return parsedDate.toLocaleDateString()
+}
+
 /** 封面色（按书名稳定散列，刷新不跳变）：色板取设计令牌，避免页面内硬编码品牌色 */
 function coverGradient(projectName: string): string {
   const paletteList = [
@@ -120,18 +136,6 @@ function coverGradient(projectName: string): string {
   }
   const [fromColor, toColor] = paletteList[hashValue % paletteList.length]
   return `linear-gradient(150deg, ${fromColor}, ${toColor})`
-}
-
-function formatRelativeTime(timeMs: number): string {
-  const diffMs = Date.now() - timeMs
-  const minuteMs = 60 * 1000
-  const hourMs = 60 * minuteMs
-  const dayMs = 24 * hourMs
-  if (diffMs < minuteMs) return t('dashboard.timeJustNow')
-  if (diffMs < hourMs) return t('dashboard.timeMinutesAgo', { count: Math.floor(diffMs / minuteMs) })
-  if (diffMs < dayMs) return t('dashboard.timeHoursAgo', { count: Math.floor(diffMs / hourMs) })
-  if (diffMs < 7 * dayMs) return t('dashboard.timeDaysAgo', { count: Math.floor(diffMs / dayMs) })
-  return new Date(timeMs).toLocaleDateString()
 }
 
 async function loadStatsOverview(): Promise<void> {
@@ -371,7 +375,7 @@ onMounted(() => {
               :status_text="statusLabel(projectVo.project_status)"
               :status_class="statusBadgeClass(projectVo.project_status)"
               :cover_style="coverGradient(projectVo.project_name)"
-              :relative_text="formatRelativeTime(projectVo.updated_at_ms)"
+              :relative_text="formatProjectTime(projectVo.updated_at)"
               @open="openProject(projectVo)"
               @edit="openProjectDrawer(projectVo)"
               @remove="handleDeleteProject(projectVo)"

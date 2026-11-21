@@ -85,7 +85,9 @@ backend/
 | 业务路由只开放 GET/POST | 删除走 `POST /xxx/delete`，方法白名单强制 |
 | 路径参数放末尾 | `/menu/detail/{MenuULID}`、`/knowledge/content/{DocULID}` |
 | ID 为带业务前缀的 ULID | `PRJ_` / `CHP_` / `SKL_` …，日志可定位业务类型 |
-| 字段使用显式后缀 | `project_name`、`genre_code`、`created_at_ms` |
+| 字段使用显式后缀 | `project_name`、`genre_code`、`created_at`、`created_by` |
+| 时间出参为 RFC3339 字符串 | VO/DTO 的时间字段一律 `string`，由 `pkg.FormatTime` 转换；不用毫秒整数，避免与 `time.Time` 同名字段语义冲突 |
+| 审计字段自动填充 | `BaseDO` 带 `created_by` / `updated_by`；`AuthMiddleware` 把用户 ULID 注入 context，GORM 回调在写入前补齐，service 不手写 |
 | 权限码由菜单表登记 | 新增权限只需在「菜单管理」登记一行，角色页自动可见 |
 | 单文件 ≤500 行 | 控制认知负载，超限按同域拆分 |
 

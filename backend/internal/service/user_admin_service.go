@@ -304,10 +304,10 @@ func toUserAdminVO(do *domain.UserDO, roleCodes []string) domain.UserAdminVO {
 			AvatarURL:      do.AvatarURL,
 			UserStatusCode: do.UserStatusCode,
 			RoleCodes:      roleCodes,
-			CreatedAtMs:    do.CreatedAt.UnixMilli(),
+			CreatedAt:      pkg.FormatTime(do.CreatedAt),
 		},
-		RemarkText:  do.RemarkText,
-		UpdatedAtMs: do.UpdatedAt.UnixMilli(),
+		RemarkText: do.RemarkText,
+		UpdatedAt:  pkg.FormatTime(do.UpdatedAt),
 	}
 	if vo.UserStatusCode == "" {
 		vo.UserStatusCode = domain.UserStatusActive // 历史数据兜底

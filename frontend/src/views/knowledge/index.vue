@@ -25,6 +25,7 @@ import ChunkListDialog from './ChunkListDialog.vue'
 import KnowledgePreviewDrawer from './KnowledgePreviewDrawer.vue'
 import KnowledgeSearchPanel from './KnowledgeSearchPanel.vue'
 import KnowledgeUploadPanel from './KnowledgeUploadPanel.vue'
+import { formatTime } from '@/utils/time'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -99,10 +100,6 @@ function docTypeIcon(docTypeCode: string): string {
   if (docTypeCode === 'pdf') return 'fileText'
   if (docTypeCode === 'docx') return 'fileText'
   return 'note'
-}
-
-function formatTime(timeMs: number): string {
-  return new Date(timeMs).toLocaleString()
 }
 
 /** 加载文档分页 */
@@ -391,7 +388,7 @@ onUnmounted(() => {
             <template #default="{ row }">{{ row.total_token_count.toLocaleString() }}</template>
           </el-table-column>
           <el-table-column :label="t('knowledge.createdAt')" width="170">
-            <template #default="{ row }">{{ formatTime(row.created_at_ms) }}</template>
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
           <el-table-column :label="t('common.action')" width="190" fixed="right">
             <template #default="{ row }">

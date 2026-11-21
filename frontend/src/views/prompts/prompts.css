@@ -29,6 +29,11 @@
   margin-left: 6px;
 }
 
+.prompts-page__domain {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
 .prompts-page__form-row {
   display: flex;
   gap: 24px;

@@ -20,7 +20,7 @@ export interface NWOutlineNodeVo {
   summary_text: string
   node_status_code: NWOutlineNodeStatusCode
   sort_order: number
-  updated_at_ms: number
+  updated_at: string
   children?: NWOutlineNodeVo[]
 }
 
@@ -52,7 +52,7 @@ export interface NWDetailedSceneVo {
   outcome_text: string
   exit_state_text: string
   sort_order: number
-  updated_at_ms: number
+  updated_at: string
 }
 
 /** 详细场景卡片保存请求（有 scene_ulid 为更新） */

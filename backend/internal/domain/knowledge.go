@@ -74,7 +74,7 @@ type KnowledgeDocumentVO struct {
 	ChunkCount      int    `json:"chunk_count"`       // 切片数量
 	TotalTokenCount int64  `json:"total_token_count"` // token 总量
 	ErrorMessage    string `json:"error_message"`     // 失败原因
-	CreatedAtMs     int64  `json:"created_at_ms"`     // 上传时间（毫秒时间戳）
+	CreatedAt       string `json:"created_at"`        // 上传时间（RFC3339）
 }
 
 // KnowledgeChunkVO 切片视图对象（搜索结果，含可解释的检索过程信息）。

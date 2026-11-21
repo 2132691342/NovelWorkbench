@@ -47,12 +47,12 @@ func (r *ChatRepo) GetSession(ctx context.Context, sessionULID string) (*domain.
 func (r *ChatRepo) ListSessionsByProject(ctx context.Context, projectULID string) ([]domain.ChatSessionVO, error) {
 	sql := `SELECT s.session_ulid, s.project_ulid, s.session_name,
 			COUNT(m.message_ulid) AS message_count,
-			FLOOR(EXTRACT(EPOCH FROM COALESCE(MAX(m.created_at), s.created_at)) * 1000)::bigint AS updated_at_ms
+			FLOOR(EXTRACT(EPOCH FROM COALESCE(MAX(m.created_at), s.created_at)) * 1000)::bigint AS updated_at
 		FROM chat_sessions s
 		LEFT JOIN chat_messages m ON m.session_ulid = s.session_ulid
 		WHERE s.project_ulid = ?
 		GROUP BY s.session_ulid
-		ORDER BY updated_at_ms DESC`
+		ORDER BY updated_at DESC`
 	var vos []domain.ChatSessionVO
 	if err := r.db.WithContext(ctx).Raw(sql, projectULID).Scan(&vos).Error; err != nil {
 		return nil, fmt.Errorf("list chat sessions: %w", err)

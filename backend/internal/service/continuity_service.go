@@ -361,7 +361,7 @@ func toTemporalFactVO(do *domain.TemporalFactDO) domain.TemporalFactVO {
 		SourceChapterULID:     do.SourceChapterULID,
 		SourceQuoteText:       do.SourceQuoteText,
 		NoteText:              do.NoteText,
-		UpdatedAtMs:           do.UpdatedAt.UnixMilli(),
+		UpdatedAt:             pkg.FormatTime(do.UpdatedAt),
 	}
 }
 
@@ -377,7 +377,7 @@ func toForeshadowHookVO(do *domain.ForeshadowHookDO) domain.ForeshadowHookVO {
 		PayoffChapterULID:  do.PayoffChapterULID,
 		ImportanceCode:     do.ImportanceCode,
 		NoteText:           do.NoteText,
-		UpdatedAtMs:        do.UpdatedAt.UnixMilli(),
+		UpdatedAt:          pkg.FormatTime(do.UpdatedAt),
 	}
 }
 
@@ -390,6 +390,6 @@ func toChapterSummaryVO(do *domain.ChapterSummaryDO) domain.ChapterSummaryVO {
 		SummaryText:       do.SummaryText,
 		SourceHashText:    do.SourceHashText,
 		SummaryStatusCode: do.SummaryStatusCode,
-		UpdatedAtMs:       do.UpdatedAt.UnixMilli(),
+		UpdatedAt:         pkg.FormatTime(do.UpdatedAt),
 	}
 }

@@ -25,6 +25,12 @@ const routes: RouteRecordRaw[] = [
         meta: { menu_code: 'dashboard' },
       },
       {
+        path: 'redirect',
+        name: 'RedirectView',
+        component: () => import('@/views/RedirectView.vue'),
+        meta: { no_tags_view: true, no_cache: true },
+      },
+      {
         path: 'settings',
         name: 'SettingsView',
         component: () => import('@/views/settings/index.vue'),

@@ -87,11 +87,11 @@ type ChapterBriefVO struct {
 // ChapterDetailVO 章节详情视图（含正文）。
 type ChapterDetailVO struct {
 	ChapterBriefVO
-	ProjectULID string `json:"project_ulid"`  // 所属项目
-	VolumeULID  string `json:"volume_ulid"`   // 所属卷
-	ContentText string `json:"content_text"`  // 正文
-	SummaryText string `json:"summary_text"`  // 梗概
-	UpdatedAtMs int64  `json:"updated_at_ms"` // 最后编辑时间（毫秒时间戳）
+	ProjectULID string `json:"project_ulid"` // 所属项目
+	VolumeULID  string `json:"volume_ulid"`  // 所属卷
+	ContentText string `json:"content_text"` // 正文
+	SummaryText string `json:"summary_text"` // 梗概
+	UpdatedAt   string `json:"updated_at"`   // 最后编辑时间（RFC3339）
 }
 
 // ChapterSnapshotVO 快照视图（历史版本列表/回滚）。
@@ -101,5 +101,5 @@ type ChapterSnapshotVO struct {
 	SnapshotType string `json:"snapshot_type"` // 来源
 	ChangeNote   string `json:"change_note"`   // 变更说明
 	WordCount    int64  `json:"word_count"`    // 快照字数
-	CreatedAtMs  int64  `json:"created_at_ms"` // 生成时间（毫秒时间戳）
+	CreatedAt    string `json:"created_at"`    // 生成时间（RFC3339）
 }

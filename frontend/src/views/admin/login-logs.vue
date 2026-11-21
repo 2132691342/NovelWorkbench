@@ -11,6 +11,7 @@ import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { formatTime } from '@/utils/time'
 
 const { t } = useI18n()
 
@@ -43,10 +44,6 @@ function resultLabel(resultCode: string): string {
     return t('admin.loginLogs.resultDisabled')
   }
   return t('admin.loginLogs.resultFailed')
-}
-
-function formatTime(timeMs: number): string {
-  return new Date(timeMs).toLocaleString()
 }
 
 /** 加载登录日志分页 */
@@ -142,7 +139,7 @@ onMounted(() => {
       <template v-else>
         <el-table :data="loginLogList" stripe>
           <el-table-column :label="t('admin.loginLogs.createdAt')" width="170">
-            <template #default="{ row }">{{ formatTime(row.created_at_ms) }}</template>
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
           <el-table-column prop="login_account_text" :label="t('admin.loginLogs.account')" width="180" />
           <el-table-column :label="t('admin.loginLogs.result')" width="110">

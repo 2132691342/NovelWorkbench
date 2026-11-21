@@ -12,7 +12,7 @@ export interface NWNotificationVo {
   link_url: string
   ref_type_code: string
   ref_ulid: string
-  created_at_ms: number
+  created_at: string
 }
 
 /** 通知分页查询请求（字段对齐后端 NotificationListREQ） */

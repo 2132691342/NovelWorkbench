@@ -57,8 +57,8 @@ type JobVO struct {
 	DocName       string `json:"doc_name"`        // 关联文档名
 	RetryCount    int    `json:"retry_count"`     // 已重试次数
 	ErrorMessage  string `json:"error_message"`   // 失败原因
-	CreatedAtMs   int64  `json:"created_at_ms"`   // 创建时间（毫秒）
-	UpdatedAtMs   int64  `json:"updated_at_ms"`   // 更新时间（毫秒）
+	CreatedAt     string `json:"created_at"`      // 创建时间（RFC3339）
+	UpdatedAt     string `json:"updated_at"`      // 更新时间（RFC3339）
 }
 
 // AppSettingDO 应用配置持久化对象（key-value，运行时可改）。

@@ -26,7 +26,7 @@ export interface NWTemporalFactVo {
   source_chapter_ulid: string
   source_quote_text: string
   note_text: string
-  updated_at_ms: number
+  updated_at: string
 }
 
 /** 时间事实保存请求（对齐 TemporalFactSaveREQ，有 fact_ulid 为更新） */
@@ -70,7 +70,7 @@ export interface NWForeshadowHookVo {
   payoff_chapter_ulid: string
   importance_code: NWImportanceCode
   note_text: string
-  updated_at_ms: number
+  updated_at: string
 }
 
 /** 伏笔钩子保存请求（对齐 ForeshadowHookSaveREQ，状态随显式保存推进） */
@@ -100,7 +100,7 @@ export interface NWChapterSummaryVo {
   summary_text: string
   source_hash_text: string
   summary_status_code: NWSummaryStatusCode
-  updated_at_ms: number
+  updated_at: string
 }
 
 /** 章节摘要保存请求（对齐 ChapterSummarySaveREQ） */

@@ -9,7 +9,7 @@ export interface NWChatDisplayMessage {
   /** 思考过程（推理模型返回，生成期间逐字追加） */
   reasoning_text: string
   skill_code: string
-  created_at_ms: number
+  created_at: string
   reference_list: NWKnowledgeChunkVo[]
   error_message: string
   streaming_flag: boolean
@@ -25,6 +25,8 @@ export interface NWChatSendPayload {
   skill_code: string
   ref_doc_ulid_list: string[]
   ref_chapter_ulid_list: string[]
+  ref_summary_ulid_list: string[]
+  ref_prompt_ulid_list: string[]
   ref_message_ulid_list: string[]
   history_count: number
   prompt_profile_ulid: string
@@ -38,4 +40,4 @@ export interface NWChatRefItem {
 }
 
 /** @引用选择器的页签编码 */
-export type NWChatRefTabCode = 'doc' | 'chapter' | 'message'
+export type NWChatRefTabCode = 'doc' | 'chapter' | 'summary' | 'prompt' | 'message'

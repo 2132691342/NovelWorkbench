@@ -72,7 +72,7 @@ type NotificationVO struct {
 	LinkURL               string `json:"link_url"`                // 跳转地址
 	RefTypeCode           string `json:"ref_type_code"`           // 关联业务类型
 	RefULID               string `json:"ref_ulid"`                // 关联业务 ULID
-	CreatedAtMs           int64  `json:"created_at_ms"`           // 创建时间（毫秒）
+	CreatedAt             string `json:"created_at"`              // 创建时间（RFC3339）
 }
 
 // NotificationUnreadCountVO 未读数量视图。

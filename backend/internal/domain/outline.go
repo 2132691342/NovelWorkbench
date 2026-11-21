@@ -57,7 +57,7 @@ type OutlineNodeVO struct {
 	SummaryText       string          `json:"summary_text"`        // 节点概要
 	NodeStatusCode    string          `json:"node_status_code"`    // 节点状态
 	SortOrder         int             `json:"sort_order"`          // 排序号
-	UpdatedAtMs       int64           `json:"updated_at_ms"`       // 更新时间（毫秒时间戳）
+	UpdatedAt         string          `json:"updated_at"`          // 更新时间（RFC3339）
 	Children          []OutlineNodeVO `json:"children,omitempty"`  // 子节点（按排序号升序）
 }
 
@@ -129,5 +129,5 @@ type DetailedSceneVO struct {
 	OutcomeText       string   `json:"outcome_text"`        // 场景结果
 	ExitStateText     string   `json:"exit_state_text"`     // 出场状态
 	SortOrder         int      `json:"sort_order"`          // 排序号
-	UpdatedAtMs       int64    `json:"updated_at_ms"`       // 更新时间（毫秒时间戳）
+	UpdatedAt         string   `json:"updated_at"`          // 更新时间（RFC3339）
 }

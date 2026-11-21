@@ -10,6 +10,7 @@ import NWPageHeader from '@/components/NWPageHeader.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { formatTime } from '@/utils/time'
 
 const { t } = useI18n()
 
@@ -22,9 +23,6 @@ const actionFilter = ref('')
 const userFilter = ref('')
 
 /** 毫秒时间戳转本地时间 */
-function formatTime(timeMs: number): string {
-  return new Date(timeMs).toLocaleString()
-}
 
 /** 加载审计日志分页 */
 async function loadAuditList(): Promise<void> {
@@ -108,7 +106,7 @@ onMounted(() => {
         <el-table :data="auditList" stripe>
           <el-table-column :label="t('admin.audit.createdAt')" width="170">
             <template #default="{ row }">
-              {{ formatTime(row.created_at_ms) }}
+              {{ formatTime(row.created_at) }}
             </template>
           </el-table-column>
           <el-table-column :label="t('admin.audit.user')" width="180">

@@ -190,7 +190,7 @@ func (s *ModelProviderService) TestModel(ctx context.Context, req *domain.ModelC
 	fields := map[string]any{
 		"last_test_status_code": dto.StatusCode,
 		"last_test_message":     truncateRunes(dto.MessageText, 480),
-		"last_test_at_ms":       time.Now().UnixMilli(),
+		"last_test_at":          time.Now(),
 	}
 	if err := s.providerRepo.UpdateModel(ctx, modelDO.ModelULID, fields); err != nil {
 		pkg.SLogger().Warnw("模型测试结果回写失败", "model_ulid", modelDO.ModelULID, "error", err)
@@ -260,8 +260,8 @@ func (s *ModelProviderService) toModelVO(do *domain.ModelCatalogDO, providerDO *
 		RoleNameList:       make([]string, 0, len(roleULIDList)),
 		LastTestStatusCode: do.LastTestStatusCode,
 		LastTestMessage:    do.LastTestMessage,
-		LastTestAtMs:       do.LastTestAtMs,
-		UpdatedAtMs:        do.UpdatedAt.UnixMilli(),
+		LastTestAt:         pkg.FormatTime(do.LastTestAt),
+		UpdatedAt:          pkg.FormatTime(do.UpdatedAt),
 	}
 	if vo.RoleULIDList == nil {
 		vo.RoleULIDList = []string{}

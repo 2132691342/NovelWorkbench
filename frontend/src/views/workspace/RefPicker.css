@@ -12,12 +12,21 @@
   gap: 2px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border-light);
+  /* 五个页签在窄面板里放不下：允许横向滚动，避免文字被压成竖排 */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chat-ref-picker__tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .chat-ref-picker__tab {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
   padding: 4px 8px;
   border: none;
   border-radius: var(--radius-md);

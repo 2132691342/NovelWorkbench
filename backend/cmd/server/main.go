@@ -38,6 +38,10 @@ func main() {
 		pkg.SLogger().Errorw("Postgres 连接失败", "error", err)
 		os.Exit(1)
 	}
+	if err := pkg.RegisterActorCallbacks(db); err != nil {
+		pkg.SLogger().Errorw("审计字段回调注册失败", "error", err)
+		os.Exit(1)
+	}
 	if err := db.AutoMigrate(
 		&domain.UserDO{},
 		&domain.ProjectDO{},
@@ -200,7 +204,7 @@ func main() {
 	knowledgeService := service.NewKnowledgeService(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
 		settingRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, knowledgeRepo,
-		settingRepo, skillService, promptProfileService, knowledgeService, providerService, aiClient, db,
+		continuityRepo, settingRepo, skillService, promptProfileService, knowledgeService, providerService, aiClient, db,
 		service.ChatConfig{HistoryCount: cfg.AI.HistoryCount})
 
 	// 内置技能与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
@@ -302,30 +306,30 @@ func main() {
 			defer cancel()
 			return sqlDB.PingContext(pingCtx)
 		},
-		AuthAPI:       api.NewAuthAPI(authService),
-		ProjectAPI:    api.NewProjectAPI(projectService),
-		VolumeAPI:     api.NewVolumeAPI(volumeService),
-		ChapterAPI:    api.NewChapterAPI(chapterService),
-		CharacterAPI:  api.NewCharacterAPI(characterService),
-		LoreAPI:       api.NewLoreAPI(loreService),
-		KnowledgeAPI:  api.NewKnowledgeAPI(knowledgeService),
-		OutlineAPI:    api.NewOutlineAPI(outlineService),
-		ContinuityAPI: api.NewContinuityAPI(continuityService),
-		SkillAPI:      api.NewSkillAPI(skillService),
+		AuthAPI:          api.NewAuthAPI(authService),
+		ProjectAPI:       api.NewProjectAPI(projectService),
+		VolumeAPI:        api.NewVolumeAPI(volumeService),
+		ChapterAPI:       api.NewChapterAPI(chapterService),
+		CharacterAPI:     api.NewCharacterAPI(characterService),
+		LoreAPI:          api.NewLoreAPI(loreService),
+		KnowledgeAPI:     api.NewKnowledgeAPI(knowledgeService),
+		OutlineAPI:       api.NewOutlineAPI(outlineService),
+		ContinuityAPI:    api.NewContinuityAPI(continuityService),
+		SkillAPI:         api.NewSkillAPI(skillService),
 		PromptProfileAPI: api.NewPromptProfileAPI(promptProfileService),
-		MenuAPI:       api.NewMenuAPI(menuService),
-		SettingAPI:    api.NewSettingAPI(settingService),
-		StatsAPI:      api.NewStatsAPI(statsService),
-		ChatAPI:       api.NewChatAPI(chatService),
-		UserAdminAPI:  api.NewUserAdminAPI(userAdminService),
-		RoleAPI:       api.NewRoleAPI(roleService),
-		AuditAPI:      api.NewAuditAPI(auditService),
-		ProviderAPI:   api.NewModelProviderAPI(providerService),
-		UsageAPI:      api.NewModelUsageAPI(usageService),
-		StatusAPI:     api.NewSystemStatusAPI(statusService),
-		NotifyAPI:     api.NewNotificationAPI(notificationService),
-		LoginLogAPI:   api.NewLoginLogAPI(loginLogService),
-		JobAPI:        api.NewJobAPI(jobService),
+		MenuAPI:          api.NewMenuAPI(menuService),
+		SettingAPI:       api.NewSettingAPI(settingService),
+		StatsAPI:         api.NewStatsAPI(statsService),
+		ChatAPI:          api.NewChatAPI(chatService),
+		UserAdminAPI:     api.NewUserAdminAPI(userAdminService),
+		RoleAPI:          api.NewRoleAPI(roleService),
+		AuditAPI:         api.NewAuditAPI(auditService),
+		ProviderAPI:      api.NewModelProviderAPI(providerService),
+		UsageAPI:         api.NewModelUsageAPI(usageService),
+		StatusAPI:        api.NewSystemStatusAPI(statusService),
+		NotifyAPI:        api.NewNotificationAPI(notificationService),
+		LoginLogAPI:      api.NewLoginLogAPI(loginLogService),
+		JobAPI:           api.NewJobAPI(jobService),
 	})
 
 	server := &http.Server{

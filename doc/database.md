@@ -47,8 +47,8 @@ flowchart LR
 | 计数列 | `_count` 结尾 | `word_count`、`chunk_count`、`call_count` |
 | 正文/长文本列 | `_text` 结尾且 `type:text` | `content_text`、`chunk_text`、`note_text` |
 | 布尔列 | `_flag` 结尾 | `enabled_flag`、`default_flag`、`builtin_flag`、`read_flag` |
-| 毫秒时间戳列 | `_ms` 结尾，`bigint` | `model_providers.last_test_at_ms`、`model_catalogs.last_test_at_ms` |
-| 视图对象中的时间戳 | `_ms` 结尾（毫秒），由 `time.Time` 转换而来，不落库 | `created_at_ms`、`updated_at_ms` |
+| 毫秒时间戳列 | `_ms` 结尾，`bigint` | `model_providers.last_test_at`、`model_catalogs.last_test_at` |
+| 视图对象中的时间戳 | `_ms` 结尾（毫秒），由 `time.Time` 转换而来，不落库 | `created_at`、`updated_at` |
 
 GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`infra.ULIDNamingStrategy.ColumnName`（`backend/internal/infra/postgres.go`）把以 `_ul_id` 结尾的推导名改写为 `_ulid`；因此索引名仍保留 GORM 原推导结果（如 `idx_projects_user_ul_id`），列名统一为 `user_ulid`。
 
@@ -108,7 +108,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ## 3. 表结构
 
-`AutoMigrate` 一次性声明 33 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）与 `updated_at timestamptz`（`autoUpdateTime`），来自 `domain.BaseDO`，下表不再重复列出。
+`AutoMigrate` 一次性声明 33 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）、`updated_at timestamptz`（`autoUpdateTime`）、`created_by varchar(40)` 与 `updated_by varchar(40)`，来自 `domain.BaseDO`，下表不再重复列出。
+
+`created_by` / `updated_by` 由 GORM 回调自动填充（`pkg.RegisterActorCallbacks`）：`AuthMiddleware` 把当前登录用户 ULID 注入请求 context，回调在 `gorm:create` / `gorm:update` 之前写入对应列。显式赋值优先，不会被覆盖；系统任务（无登录态）留空串。不使用软删除——业务删除是硬删除，且 `user_name`、`role_code`、`menu_code` 带唯一索引，软删除会让已删行长期占位、无法重建同名资源。
 
 ### 3.1 用户、权限与审计（7 张）
 
@@ -436,6 +438,8 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `skill_code` | `varchar(32)` | | 命中的斜杠命令编码，空为自由对话 |
 | `ref_doc_json` | `text` | | `@` 引用文档 ULID JSON 数组 |
 | `ref_chapter_json` | `text` | | `@` 引用章节 ULID JSON 数组 |
+| `ref_summary_json` | `text` | | `@` 引用章节摘要 ULID JSON 数组 |
+| `ref_prompt_json` | `text` | | `@` 引用提示词档案 ULID JSON 数组 |
 | `ref_message_json` | `text` | | 显式引用历史消息 ULID JSON 数组 |
 | `token_used_count` | `bigint` | | 本条估算 token |
 
@@ -454,6 +458,8 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `variable_spec_json` | `text` | | 变量声明 JSON 数组，无变量为 `[]` |
 | `enabled_flag` | `boolean` | `DEFAULT true` | 是否启用 |
 | `builtin_flag` | `boolean` | `DEFAULT false` | 内置技能不可删除 |
+| `asset_hash_text` | `varchar(64)` | | 出厂内容指纹（sha256），用于判断代码资产是否有新版本 |
+| `customized_flag` | `boolean` | `DEFAULT false` | 作者是否改过出厂内容；`true` 时启动升级不覆盖该行 |
 | `sort_order` | `bigint` | | 排序号 |
 
 作用域内编码唯一（`scope_code` + `project_ulid` + `skill_code`）由 `SkillRepo.GetByCode` 查重后写入保证，无数据库唯一索引；同编码时由 `backend/internal/service/skill_service.go` 的 `pickSkillByScope` 决定命中项——启用中的项目技能优先，其次启用中的全局技能（`SkillRepo.List` 按 `scope_code DESC, sort_order ASC, created_at ASC` 排序，仅影响列表展示顺序）。
@@ -484,9 +490,11 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `system_prompt_text` | `text` | | 系统提示词正文（身份与底线） |
 | `builtin_flag` | `boolean` | `DEFAULT false` | 内置档案不可删除，可停用 |
 | `enabled_flag` | `boolean` | `DEFAULT true` | 是否启用 |
+| `asset_hash_text` | `varchar(64)` | | 出厂内容指纹（sha256），用于判断代码资产是否有新版本 |
+| `customized_flag` | `boolean` | `DEFAULT false` | 作者是否改过出厂内容；`true` 时启动升级不覆盖该行 |
 | `sort_order` | `bigint` | | 排序号；全局默认档案取启用的最小排序号 |
 
-与技能同构：作用域内编码唯一由 `PromptProfileRepo.CountByCode` 查重保证（无唯一索引），内置档案由 `PromptProfileService.SeedDefaults` 幂等播种，写入走 `prompt:manage` 权限。
+与技能同构：作用域内编码唯一由 `PromptProfileRepo.CountByCode` 查重保证（无唯一索引），内置档案由 `PromptProfileService.SeedDefaults` 播种并按 `asset_hash_text` 做版本升级，写入走 `prompt:manage` 权限。
 
 ### 3.6 模型与用量（4 张）
 
@@ -504,7 +512,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `remark_text` | `varchar(256)` | | 备注 |
 | `last_test_status_code` | `varchar(16)` | | `untested` / `success` / `failed` |
 | `last_test_message` | `varchar(512)` | | 最近测试结论 |
-| `last_test_at_ms` | `bigint` | | 最近测试时间（毫秒） |
+| `last_test_at` | `timestamptz` | | 最近测试时间 |
 
 供应商下仍有模型时 `ModelProviderService.DeleteProvider` 返回 `ERR_BIZ_FAILED`，不级联删模型。
 
@@ -525,7 +533,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `remark_text` | `varchar(256)` | | 备注 |
 | `last_test_status_code` | `varchar(16)` | | `untested` / `success` / `failed` |
 | `last_test_message` | `varchar(512)` | | 最近测试结论 |
-| `last_test_at_ms` | `bigint` | | 最近测试时间（毫秒） |
+| `last_test_at` | `timestamptz` | | 最近测试时间 |
 
 `default_flag` 的全局唯一由服务层保证：`ModelProviderService.SaveModel` / `SetDefaultModel` 先调 `ModelProviderRepo.ClearDefaultModel` 清零再置位。默认模型不可删除（`DeleteModel` 返回 `ERR_BIZ_FAILED`）。
 
@@ -783,8 +791,8 @@ ORDER BY score DESC LIMIT <topK>
 | --- | --- | --- | --- |
 | 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model` 且 `model_providers` 为空 | 告警，继续启动 |
 | 2 | `ModelProviderService.MigrateLegacyModels` 把 `model_providers.chat_model_name` 非空的行转成 `model_catalogs` 行 | `model_catalogs` 为空 | 告警，继续启动 |
-| 3 | `SkillService.SeedDefaults` 播种 8 个内置全局技能并下线旧内置技能 | 按 `(global, "", skill_code)` 查缺补插；不在 `BuiltinSkillCodeSet` 内的内置技能连带参考资料删除 | `os.Exit(1)` |
-| 3.1 | `PromptProfileService.SeedDefaults` 播种 5 份内置全局提示词档案 | 按 `(global, "", prompt_profile_code)` 查缺补插 | `os.Exit(1)` |
+| 3 | `SkillService.SeedDefaults` 播种 18 个内置全局技能并按指纹升级、下线旧内置技能 | 按 `(global, "", skill_code)` 查行：不存在则插入；`customized_flag` 或指纹一致则跳过；否则覆盖正文并写新指纹。不在 `BuiltinSkillCodeSet` 内的内置技能连带参考资料删除 | `os.Exit(1)` |
+| 3.1 | `PromptProfileService.SeedDefaults` 播种 9 份内置全局提示词档案并按指纹升级 | 同上；已下线编码的内置档案直接删除 | `os.Exit(1)` |
 | 4 | `SettingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插；已存在时仅同步 `setting_desc` | `os.Exit(1)` |
 | 5 | `RoleService.SeedDefaults` 播种内置角色 | 按 `role_code` 查缺补插 | `os.Exit(1)` |
 | 6 | `MenuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插，父级编码先解析 | `os.Exit(1)` |
@@ -796,8 +804,8 @@ ORDER BY score DESC LIMIT <topK>
 | --- | --- |
 | 供应商 | 名称「默认模型网关」，`enabled_flag=true`，`last_test_status_code='untested'`，API Key 用 JWT 密钥派生材料做 AES-256-GCM 封存（`pkg.SealSecret`） |
 | 默认模型 | 取 `ai.chat_model`，`default_flag=true`，`model_label` 回填模型名；播种后 `grantToBuiltinRoles` 授权给全部内置角色 |
-| 内置技能 | 来源 `ai.BuiltinSkills()`，共 8 个：`continue`、`outline`、`polish`、`summary`、`deai`、`review`、`golden3`、`foreshadow`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`、`variable_spec_json='[]'`，已存在不覆盖。清单之外的旧内置技能由 `dropRetiredBuiltins` 连同参考资料一并删除 |
-| 提示词档案 | 来源 `ai.BuiltinPromptProfiles()`，共 5 份：`novelist`（默认）、`editor`、`architect`、`deai`、`continuity`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`，已存在不覆盖 |
+| 内置技能 | 来源 `ai.BuiltinSkills()`，共 18 个（9 个流程域 × 2）：`continue`、`conflict`、`outline`、`worldrule`、`polish`、`dialogue`、`deai`、`humanness`、`review`、`hitscan`、`foreshadow`、`ledger`、`summary`、`finalcheck`、`golden3`、`platform`、`pitch`、`deconstruct`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`、`variable_spec_json='[]'`，`asset_hash_text` 为出厂指纹。启动时按指纹升级：已自改或指纹一致不覆盖，其余覆盖正文；清单之外的旧内置技能由 `dropRetiredBuiltins` 连同参考资料一并删除 |
+| 提示词档案 | 来源 `ai.BuiltinPromptProfiles()`，共 9 份：`novelist`（默认）、`architect`、`stylist`、`deai`、`editor`、`continuity`、`final_editor`、`serial_editor`、`pitch_analyst`；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`，`asset_hash_text` 为出厂指纹；启动时按指纹升级，已自改或指纹一致不覆盖 |
 | 应用配置 | `chat_history_count=5`、`rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
 | 内置角色 | `admin`（`perm_codes_json=["*"]`）、`user`（`perm_codes_json="[]"`），`builtin_flag=true`，已存在不覆盖 |
 | 内置菜单 | 来源 `menuSeedList`，共 26 行：3 个分组（创作 / 平台 / 系统）、22 个页面、1 个动作权限（`action_model_write`） |

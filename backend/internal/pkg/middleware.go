@@ -129,6 +129,7 @@ func AuthMiddleware(signer *JWTSigner, tokenStore TokenStore, userStateChecker U
 			}
 		}
 		c.Set(ContextKeyUserULID, userULID)
+		c.Request = c.Request.WithContext(WithActor(c.Request.Context(), userULID))
 		c.Next()
 	}
 }

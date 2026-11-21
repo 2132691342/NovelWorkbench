@@ -19,8 +19,8 @@ export interface NWModelProviderVo {
   enabled_model_count: number
   last_test_status_code: string
   last_test_message: string
-  last_test_at_ms: number
-  updated_at_ms: number
+  last_test_at: string
+  updated_at: string
 }
 
 /** 供应商保存请求（字段对齐后端 ModelProviderREQ） */
@@ -56,8 +56,8 @@ export interface NWModelCatalogVo {
   role_name_list: string[]
   last_test_status_code: string
   last_test_message: string
-  last_test_at_ms: number
-  updated_at_ms: number
+  last_test_at: string
+  updated_at: string
 }
 
 /** 模型保存请求（字段对齐后端 ModelCatalogREQ） */
@@ -152,7 +152,7 @@ export interface NWDependencyHealthVo {
 
 /** 系统运行状态 */
 export interface NWSystemStatusVo {
-  server_started_at_ms: number
+  server_started_at: string
   server_uptime_sec: number
   go_version_text: string
   build_version_text: string

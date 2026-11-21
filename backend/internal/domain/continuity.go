@@ -169,7 +169,7 @@ type TemporalFactVO struct {
 	SourceChapterULID     string `json:"source_chapter_ulid"`      // 证据来源章节
 	SourceQuoteText       string `json:"source_quote_text"`        // 原文证据
 	NoteText              string `json:"note_text"`                // 备注
-	UpdatedAtMs           int64  `json:"updated_at_ms"`            // 更新时间（毫秒时间戳）
+	UpdatedAt             string `json:"updated_at"`               // 更新时间（RFC3339）
 }
 
 // ForeshadowHookVO 伏笔钩子视图对象。
@@ -183,7 +183,7 @@ type ForeshadowHookVO struct {
 	PayoffChapterULID  string `json:"payoff_chapter_ulid"`  // 回收章节
 	ImportanceCode     string `json:"importance_code"`      // 重要程度
 	NoteText           string `json:"note_text"`            // 备注
-	UpdatedAtMs        int64  `json:"updated_at_ms"`        // 更新时间（毫秒时间戳）
+	UpdatedAt          string `json:"updated_at"`           // 更新时间（RFC3339）
 }
 
 // ChapterSummaryVO 章节摘要视图对象。
@@ -194,5 +194,5 @@ type ChapterSummaryVO struct {
 	SummaryText       string `json:"summary_text"`        // 摘要正文
 	SourceHashText    string `json:"source_hash_text"`    // 正文指纹
 	SummaryStatusCode string `json:"summary_status_code"` // 摘要状态
-	UpdatedAtMs       int64  `json:"updated_at_ms"`       // 更新时间（毫秒时间戳）
+	UpdatedAt         string `json:"updated_at"`          // 更新时间（RFC3339）
 }

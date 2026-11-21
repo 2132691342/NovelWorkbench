@@ -289,7 +289,7 @@ func (s *ModelProviderService) TestProvider(ctx context.Context, req *domain.Mod
 	fields := map[string]any{
 		"last_test_status_code": dto.StatusCode,
 		"last_test_message":     truncateRunes(dto.MessageText, 480),
-		"last_test_at_ms":       time.Now().UnixMilli(),
+		"last_test_at":          time.Now(),
 	}
 	if err := s.providerRepo.Update(ctx, providerDO.ProviderULID, fields); err != nil {
 		pkg.SLogger().Warnw("供应商测试结果回写失败", "provider_ulid", providerDO.ProviderULID, "error", err)
@@ -351,8 +351,8 @@ func (s *ModelProviderService) toProviderVO(do *domain.ModelProviderDO) domain.M
 		RemarkText:         do.RemarkText,
 		LastTestStatusCode: do.LastTestStatusCode,
 		LastTestMessage:    do.LastTestMessage,
-		LastTestAtMs:       do.LastTestAtMs,
-		UpdatedAtMs:        do.UpdatedAt.UnixMilli(),
+		LastTestAt:         pkg.FormatTime(do.LastTestAt),
+		UpdatedAt:          pkg.FormatTime(do.UpdatedAt),
 	}
 }
 

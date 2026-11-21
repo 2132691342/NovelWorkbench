@@ -20,7 +20,7 @@
 | 12 | 大纲树与场景卡 | `outline_nodes`、`detailed_scenes` | `service/outline_service.go` |
 | 13 | 连续性 | `temporal_facts`、`foreshadow_hooks`、`chapter_summaries` | `service/continuity_service.go` |
 | 14 | 知识库 | `knowledge_documents`、`knowledge_chunks` + MinIO + Manticore | `service/knowledge_service.go`、`service/knowledge_worker.go`、`service/knowledge_search_service.go` |
-| 15 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`、`service/chat_context.go` |
+| 15 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`（会话与落库）、`service/chat_context.go`（上下文装配）、`service/chat_stream.go`（流式转发与看门狗） |
 | 16 | 技能资产 | `skills`、`skill_references` | `service/skill_service.go`、`service/skill_reference_service.go` |
 | 16.5 | 提示词档案 | `prompt_profiles` | `service/prompt_profile_service.go`、`api/prompt_profile_api.go` |
 | 17 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants` | `service/model_provider_service.go`、`service/model_catalog_service.go`、`service/model_access_service.go` |
@@ -29,7 +29,7 @@
 | 20 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
 | 21 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/stores`、`frontend/src/views/workspace` |
 
-后端在 `backend/internal/api/router.go` 内注册 111 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、8 个内置技能（`backend/internal/ai/skills.go` 的 `builtinSkillList` 单清单）、5 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
+后端在 `backend/internal/api/router.go` 内注册 111 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、18 个内置技能（`backend/internal/ai/domain_<域>.go`，每域两个）与 9 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
 
 ## 2. 认证与会话
 
@@ -430,11 +430,11 @@
 1. `mustOwnProject` → `resolveSkill`（`SkillService.Resolve` + `SkillTemplate`，项目技能覆盖同编码全局技能）。
 2. `resolveSession`：`session_ulid` 为空自动建会话，否则 `mustOwnSession` 校验归属并要求项目一致。
 3. `validateRefMessages` 校验显式引用的历史消息都属于本会话（去重保序）；`selectHistoryMessages` 取最近 `n` 条为骨干，引用消息必注入。
-4. `loadContextInput`（`service/chat_context.go`）：引用章节（首项标记为当前章）、引用文档全文（分页拼切片）、RAG 召回（`KnowledgeService.Search`，失败降级为空）、项目角色、设定（排除 `note`）、当前章前后章 `summary_text`。
-5. `buildContextBlocks` 组装块并给优先级：技能 100、当前章 90、技能参考资料 85、显式引用 80、RAG 70、章节梗概 60、角色与设定 50、历史 40；技能命中时用 `ai.RenderPrompt` 渲染 `{{user_input}}` / `{{chapter_content}}` / `{{context}}`。
+4. `loadContextInput`（`service/chat_context.go`）：引用章节（首项标记为当前章）、引用文档全文（分页拼切片）、引用章节摘要（按 `summary_ulid` 校验归属项目）、引用提示词档案（`mustReadableProfile`，项目档案校验创建者）、RAG 召回（`KnowledgeService.Search`，失败降级为空）、项目角色、设定（排除 `note`）、当前章前后章 `summary_text`。
+5. `buildContextBlocks` 组装块并给优先级：技能 100、当前章 90、技能参考资料 85、显式引用 80（`ref_chapter` / `ref_doc` / `ref_summary` / `ref_prompt`）、RAG 70、章节梗概 60、角色与设定 50、历史 40；技能命中时用 `ai.RenderPrompt` 渲染 `{{user_input}}` / `{{chapter_content}}` / `{{context}}`。
 6. `ai.AssembleContext`（`ai/prompt.go`）按优先级装入、超 `ai.ContextBudgetChars`（12000 字符）的块整块丢弃并返回 `dropped_keys` 记日志。
 7. 先落用户消息（含引用与 token 估算），会话名为空则回填；`providerSvc.ChatSpecOf` 取模型规格（失败时流尚未开始，按 JSON 包络返回）。
-8. `streamChat` 消费模型流：`chunk` 事件逐段下发，`chatPingInterval`（15 秒）无输出发 `: ping` 心跳，`ctx.Done()` 或写失败即中止。
+8. `streamChat`（`service/chat_stream.go`）消费模型流：`thinking`/`chunk` 事件逐段下发，`chatPingInterval`（15 秒）无输出发 `: ping` 心跳，连续 `chatStreamIdleTimeout`（6 分钟）无分片判网关已断并发 `error` 事件，`ctx.Done()` 或写失败即中止。
 9. 生成完成后单事务写入 assistant 消息与当日 `ai_word_delta`（`UpsertAIWordDelta`），再发 `done` 事件并携带 RAG 依据。
 
 SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单行事件，`begin()` 首次输出时提交 `text/event-stream`、`no-cache`、`X-Accel-Buffering: no`；事件 `seq` 由 `chatEventWriter.emit` 单调递增。
@@ -459,7 +459,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 `skills` 是可编辑的提示词资产：编码（对话中以 `/code` 触发）、名称、作用域 `global`/`project`、分类 `write/revise/outline/setting/review/other`、模板 `prompt_template`、变量声明 `variable_spec_json`、启停与内置标记。`skill_references` 存参考资料（名称、正文、逗号分隔关键词、排序），在技能命中时按关键词挑选注入。
 
-内置技能 8 个（`continue`/`outline`/`polish`/`summary`/`deai`/`review`/`golden3`/`foreshadow`），由 `ai.BuiltinSkills()` 提供、`SkillService.SeedDefaults` 幂等播种为全局作用域 `builtin_flag=true`。技能按「写正文 → 做结构 → 改文字 → 做质检」排列，判据均可逐条对账。
+内置技能 18 个，按 9 个流程域组织（每域一份档案 + 两个技能）：起草 `continue`/`conflict`、架构 `outline`/`worldrule`、打磨 `polish`/`dialogue`、去 AI 味 `deai`/`humanness`、质检 `review`/`hitscan`、连续性 `foreshadow`/`ledger`、定稿 `summary`/`finalcheck`、运营 `golden3`/`platform`、立项 `pitch`/`deconstruct`。由 `ai.BuiltinSkills()` 从 `domain_<域>.go` 汇总、`SkillService.SeedDefaults` 播种为全局作用域 `builtin_flag=true`，并按内容指纹做版本升级；完整矩阵与蒸馏来源见 [skills.md](skills.md)。
 
 ### 16.2 实现路径
 
@@ -489,7 +489,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 `prompt_profiles` 存「AI 是谁」：编码、名称、作用域 `global`/`project`、系统提示词正文、启停与内置标记。与技能的分工是：**档案定身份与底线，技能定本次动作**。同一次对话两者同时下发，档案不会被技能覆盖。
 
-内置 5 份：`novelist`（长篇连载作者，默认）、`editor`（连载责任编辑）、`architect`（故事架构师）、`deai`（去 AI 味修订）、`continuity`（设定守门人），由 `ai.BuiltinPromptProfiles()` 提供、`PromptProfileService.SeedDefaults` 幂等播种。
+内置 9 份，与技能一一配对：`novelist`（长篇连载作者，默认）、`architect`（故事架构师）、`stylist`（文字打磨师）、`deai`（去 AI 味修订）、`editor`（连载责任编辑）、`continuity`（设定守门人）、`final_editor`（定稿编辑）、`serial_editor`（连载平台主编）、`pitch_analyst`（选题策划）。由 `ai.BuiltinPromptProfiles()` 提供、`PromptProfileService.SeedDefaults` 播种并按指纹升级，见 [skills.md](skills.md)。
 
 ### 16.5.2 实现路径
 
@@ -651,7 +651,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 ### 21.3 边界
 
-- 前端不拼装 AI 上下文：`@` 引用只传 ULID 列表（`ref_doc_ulid_list` / `ref_chapter_ulid_list`），素材加载、截断、预算裁剪全在后端。
+- 前端不拼装 AI 上下文：`@` 引用只传 ULID 列表（`ref_doc_ulid_list` / `ref_chapter_ulid_list` / `ref_summary_ulid_list` / `ref_prompt_ulid_list` / `ref_message_ulid_list`），素材加载、截断、预算裁剪全在后端。
 - 前端不计算字数权威值：编辑器用 `wordCount.ts` 做即时反馈，落库字数以服务端 `pkg.CountWords` 为准。
 - 前端不缓存业务列表：切页即重新请求，只有导航树、权限码、当前项目与未读数跨页保留。
 - 后端字段变更会直接影响页面：`api/contracts.ts` 是契约的镜像，没有生成器，字段改名需要手工同步。

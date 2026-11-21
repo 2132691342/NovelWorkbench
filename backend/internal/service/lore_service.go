@@ -115,6 +115,6 @@ func toLoreVO(do *domain.LoreDO) domain.LoreVO {
 		ContentText:     do.ContentText,
 		ContentModeCode: do.ContentModeCode,
 		SortOrder:       do.SortOrder,
-		UpdatedAtMs:     do.UpdatedAt.UnixMilli(),
+		UpdatedAt:       pkg.FormatTime(do.UpdatedAt),
 	}
 }

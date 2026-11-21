@@ -39,6 +39,11 @@
   margin-left: 4px;
 }
 
+.skills-page__domain {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
 .skills-page__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

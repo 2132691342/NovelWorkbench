@@ -31,7 +31,7 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | `ai.ProviderSpec` | 同上 | 单次调用所需供应商快照；`APIKey` 明文只存在于内存 |
 | `ai.UsageRecorder` | `backend/internal/ai/usage.go` | 用量上报接口，由 `service.ModelUsageService` 实现 |
 | `ai.AssembleContext` / `ai.RenderPrompt` / `ai.SystemPrompt` / `ai.TemplatePlaceholders` | `backend/internal/ai/prompt.go` | 上下文装配、模板渲染与校验、系统提示词 |
-| `ai.BuiltinSkills` | `backend/internal/ai/skills.go` | 8 个内置技能定义与 `BuiltinSkillCodeSet` 下线集合，与持久化结构解耦 |
+| `ai.BuiltinSkills` / `ai.BuiltinPromptProfiles` | `backend/internal/ai/builtin_assets.go` + `domain_<域>.go` | 9 个流程域的档案与 18 个技能定义、下线集合与内容指纹，与持久化结构解耦 |
 
 `ProviderSpec` 字段：`ProviderULID`、`ProviderName`、`ProtocolCode`、`BaseURL`、`APIKey`、`ChatModelName`、`Temperature`、`MaxTokens`、`Timeout`。密钥由 `ModelProviderService.specOf` 解密后传入，`ai` 包不接触存储。
 
@@ -66,12 +66,17 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `Probe` | 连通性探测（系统「只回复两个字」+ 用户「回复：通」，30s 超时），返回前 40 rune | 走 `Generate`，正常计费 |
 | `Rerank` | 对话模型按候选 ID 重排，严格 JSON | 走 `Generate`，正常计费 |
 
-超时差异：
+超时分层（关键：推理模型思考常超过 2 分钟，任何「整体请求超时」都会把长流拦腰切断）：
 
-| 方法 | 是否施加 `callTimeout` | 结果 |
+| 环节 | 约束 | 说明 |
 | --- | --- | --- |
-| `Generate` | 是（`context.WithTimeout`） | 单次调用有硬上限 |
-| `Stream` | 否 | 流式生成长度由客户端 `ctx` 控制，不由 AI 层 120s 掐断 |
+| HTTP 客户端 | 不设 `http.Client.Timeout` | 该字段含读 body，会把长流切断 |
+| 连接与首包 | `newStreamHTTPClient(timeout)`：拨号 15s、TLS 10s、`ResponseHeaderTimeout` = 供应商超时 | 首包迟迟不来才判失败 |
+| `Generate` | 是（`context.WithTimeout`） | 单次非流式调用有硬上限 |
+| `Stream` | 否（仅 `ResponseHeaderTimeout`） | 生成时长由客户端 `ctx` 控制 |
+| 流空闲看门狗 | `chatStreamIdleTimeout = 6min` | 连续无任何分片才判网关已断，经 `error` 事件告知 |
+
+同一 HTTP 客户端被 Generate / Stream / Probe / Rerank 共用，连接池上限 `MaxIdleConns=32`、`MaxIdleConnsPerHost=8`。
 
 ### 2.5 重排解析
 
@@ -95,15 +100,21 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 分工约定：档案写「你是谁、什么绝不写」（长篇连载作者 / 责任编辑 / 故事架构师 / 去 AI 味修订 / 设定守门人），技能写「这一次做什么」。二者同时下发，互不覆盖。
 
+内置档案按「流程域 = 1 份档案 + 2 个技能」组织，完整矩阵与蒸馏来源见 [skills.md](skills.md)。
+
 | 档案编码 | 名称 | 定位 |
 | --- | --- | --- |
 | `novelist` | 长篇连载作者 | 默认档案：只交稿不解释、具体优先、章末留钩 |
-| `editor` | 连载责任编辑 | 先判后改、P0/P1/P2 分级、给可直接替换的改法 |
 | `architect` | 故事架构师 | 六层结构自上而下、每层给最薄弱处与补齐顺序 |
-| `deai` | 去 AI 味修订 | 只改怎么说不动说什么、按痕迹清单扫描 |
+| `stylist` | 文字打磨师 | 只改怎么说不动说什么、事实锁与声线锁 |
+| `deai` | 去 AI 味修订 | 三层痕迹扫描、命中必引原句、区分豁免与边缘 |
+| `editor` | 连载责任编辑 | 先判后改、P0/P1/P2 分级、给可直接替换的改法 |
 | `continuity` | 设定守门人 | 只依据给定上下文作答、缺失即明说、冲突给三种收敛方案 |
+| `final_editor` | 定稿编辑 | 只做归档与对账、不改稿、不把推测写成事实 |
+| `serial_editor` | 连载平台主编 | 按第三章/第三十章/第一百章判断留存与商业化 |
+| `pitch_analyst` | 选题策划 | 开书前只答值不值得写、判断必带代价 |
 
-档案表 `prompt_profiles` 与技能表结构同构（作用域 + 编码唯一 + 内置不可删 + 可停用），由 `PromptProfileService.SeedDefaults` 幂等播种，管理端在「提示词档案」页维护。
+档案表 `prompt_profiles` 与技能表结构同构（作用域 + 编码唯一 + 内置不可删 + 可停用），由 `PromptProfileService.SeedDefaults` 幂等播种并做指纹升级，管理端在「提示词档案」页维护。
 
 ### 3.2 块优先级
 
@@ -196,24 +207,39 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `skills` | `skill_ulid`(`SKL_`)、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`、`description_text`、`prompt_template`、`variable_spec_json`、`enabled_flag`、`builtin_flag`、`sort_order` | 作用域 `global` / `project`；同编码项目技能覆盖全局 |
 | `skill_references` | `ref_ulid`(`SKR_`)、`skill_ulid`、`ref_name`、`ref_text`、`keyword_list`、`sort_order` | 关键词为空表示总是注入 |
 
-### 5.2 内置技能（8 个）
+### 5.2 内置技能（18 个 / 9 个流程域）
 
-由 `ai.BuiltinSkills()` 返回单一清单（`builtinSkillList`），`SkillService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种。技能按「写正文 → 做结构 → 改文字 → 做质检」的作业顺序排列，每个都带可核对的输出格式：
+由 `ai.BuiltinSkills()` 汇总 9 个流程域（`backend/internal/ai/domain_<域>.go`，一个域一个文件），
+`SkillService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种并做指纹升级。
+完整矩阵与蒸馏来源见 [skills.md](skills.md)，此处只列编码与用途：
 
-| code | 名称 | 分类 | 用途 |
-| --- | --- | --- | --- |
-| `continue` | 续写正文 | write | 承接当前章节往下写：衔接、具体、推进、章末留钩 |
-| `outline` | 搭建大纲 | outline | 卖点 / 世界观 / 主线 / 人物 / 分卷 / 章纲六层，附结构风险 |
-| `polish` | 润色文字 | revise | 只改「怎么说」：去翻译腔、去重复、把定性换成现场 |
-| `summary` | 章节梗概 | outline | 一句话总述 + 三句分述，供连续性看板入库 |
-| `deai` | 去 AI 味 | revise | 句长均匀、情绪直给、旁白替代现场四类痕迹的扫描与改写 |
-| `review` | 章节质检 | review | 六道检查（逻辑 / 跨章 / 配比 / 结构 AI 味 / 表层痕迹 / 口径）出 P0-P2 与可发结论 |
-| `golden3` | 开篇体检 | outline | 主角立住 / 冲突到场 / 信息克制 / 钩子强度 / 现场感打分 + 三个必改问题 |
-| `foreshadow` | 伏笔台账 | setting | 抽取伏笔表格（类型 / 埋设 / 回收 / 状态 / 风险）与疑似遗忘项 |
+| code | 名称 | 分类 | 所属域 | 用途 |
+| --- | --- | --- | --- | --- |
+| `continue` | 续写正文 | write | draft | 承接当前章节往下写：衔接、具体、推进、章末留钩 |
+| `conflict` | 冲突加码 | write | draft | 目标互斥 + 代价递增 + 不可逆选择的重写 |
+| `outline` | 搭建大纲 | outline | architect | 卖点 / 世界观 / 主线 / 人物 / 分卷 / 章纲六层，附结构风险 |
+| `worldrule` | 世界观规则卡 | setting | architect | 规则 / 边界 / 代价 / 破例四栏 + 冲突检查 |
+| `polish` | 润色文字 | revise | style | 只改「怎么说」：去翻译腔、去重复、把定性换成现场 |
+| `dialogue` | 对白打磨 | revise | style | 每句台词争夺信息、权力或关系；去寒暄留潜台词 |
+| `deai` | 去 AI 味 | revise | deai | 词面 / 语义 / 统计三层扫描 + 定档 + 改写 |
+| `humanness` | 活人感改写 | revise | deai | 材料 / 位置 / 语气三关，写成具体的人在说话 |
+| `review` | 章节质检 | review | review | 六道检查出 P0-P2 与可发结论 |
+| `hitscan` | 量化门禁 | review | review | 字数 / 句长 / 段落均匀 / ban 词 / 钩子十项给数字 |
+| `foreshadow` | 伏笔台账 | setting | continuity | 伏笔表格（类型 / 埋设 / 回收 / 状态 / 风险）与遗忘项 |
+| `ledger` | 连续性台账 | setting | continuity | 主线锚点 / 知识状态 / 时间线 / 未收悬念四表核对 |
+| `summary` | 章节梗概 | outline | finalize | 一句话总述 + 三句分述，供连续性看板入库 |
+| `finalcheck` | 终审对账 | review | finalize | 首读反馈 + 设定台账逐项不符项 + 可发布判断 |
+| `golden3` | 开篇体检 | review | operation | 五维打分 + 五项硬指标 + 三个必改问题 |
+| `platform` | 平台适配 | outline | operation | 按平台形态给切章、标题简介、标签与发布清单 |
+| `pitch` | 立项评估 | outline | pitch | 十二维打分 + 否决项 + 最弱两维补法 |
+| `deconstruct` | 拆书 | review | pitch | 一句话核心 / 开篇账 / 节奏 / 钩子链 / 可复用做法 |
 
-技能判据均可核对：卖点必须能填满「一个什么人，因为什么事，必须做到什么，否则失去什么」；世界观只认「规则 / 边界 / 代价」三栏；质检每条判定必须引原句，给不出原句的判定删掉；去 AI 味只看可机检指标（句长方差、套话密度、情绪直给次数），不做主观评价。
+技能判据均可核对：卖点必须能填满「一个什么人，因为什么事，必须做到什么，否则失去什么」；世界观只认「规则 / 边界 / 代价」三栏；质检每条判定必须引原句，给不出原句的判定删掉；去 AI 味只看可机检指标（句长分布、套话密度、情绪直给次数），不做主观评价。
 
-**下线机制**：内置技能属于产品资产而非用户数据。启动时 `dropRetiredBuiltins` 用 `ai.BuiltinSkillCodeSet()` 比对库中 `builtin_flag=true` 的全局技能，把已从清单移除的旧内置技能连同其参考资料一并删除，升级不需要人工清库；用户自建的技能不受影响。
+**指纹升级**：内置技能属于产品资产，但允许作者改。每行存 `asset_hash_text`（出厂内容指纹）与 `customized_flag`。
+启动时按「不存在→插入 / 已自改→不动 / 指纹一致→不动 / 其余→覆盖并写新指纹」处理，
+所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/builtin_assets_test.go` 断言域形状、
+编码唯一、占位符合法与指纹长度。
 
 ### 5.3 解析与覆盖
 
@@ -240,8 +266,10 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 ### 5.6 生命周期
 
-- `SeedDefaults` 幂等：按 `(global, "", skill_code)` 查缺补插，已存在则跳过，不覆盖作者定制。
+- `SeedDefaults` 幂等 + 指纹升级：按 `(global, "", skill_code)` 查到行后，`customized_flag=true` 或指纹一致则跳过，否则用代码资产覆盖名称/说明/模板/排序号。
+- 已下线编码：`dropRetiredBuiltins` 用 `ai.BuiltinSkillCodeSet()` 比对库中 `builtin_flag=true` 的全局技能，把清单外的连同参考资料一并删除。
 - 内置技能不可删除（`Delete` 返回「内置技能不允许删除，可停用」），可停用、可改模板/变量/参考资料；`skill_code` 与 `scope_code` 不可改。
+- 保存时若提交内容与其出厂指纹不同，`customized_flag` 置 `true`，后续代码升级不再覆盖这一行；改回出厂内容会重新置回 `false`。
 - 删除技能级联清理参考资料（`DeleteReferencesBySkill`）。
 - 同作用域内编码唯一由服务层查重保证。
 

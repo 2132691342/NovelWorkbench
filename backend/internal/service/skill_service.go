@@ -4,9 +4,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
-	"sort"
-	"strings"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/ai"
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
@@ -31,8 +28,9 @@ func NewSkillService(skillRepo *repo.SkillRepo, projectRepo *repo.ProjectRepo) *
 	return &SkillService{skillRepo: skillRepo, projectRepo: projectRepo}
 }
 
-// SeedDefaults 播种内置全局技能（幂等：按编码查缺补插；已存在则保留作者的改动）。
-// 不在当前清单中的旧内置技能连同参考资料一并删除；用户自建技能不受影响。
+// SeedDefaults 播种并同步内置全局技能：
+// 缺则插入；出厂内容有代码新版本时覆盖正文；作者改过的（customized_flag=true）保留不动；
+// 不在当前清单中的旧内置技能连同参考资料一并删除，用户自建技能不受影响。
 func (s *SkillService) SeedDefaults(ctx context.Context) error {
 	if err := s.dropRetiredBuiltins(ctx); err != nil {
 		return err
@@ -42,23 +40,38 @@ func (s *SkillService) SeedDefaults(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if existing != nil {
+		assetHash := builtin.ContentHash()
+		if existing == nil {
+			do := &domain.SkillDO{
+				SkillULID:        pkg.NewULID(domain.IDPrefixSkill),
+				SkillCode:        builtin.CommandCode,
+				SkillName:        builtin.CommandName,
+				ScopeCode:        domain.SkillScopeGlobal,
+				CategoryCode:     builtin.CategoryCode,
+				DescriptionText:  builtin.DescriptionText,
+				PromptTemplate:   builtin.PromptTemplate,
+				VariableSpecJSON: "[]",
+				EnabledFlag:      true,
+				BuiltinFlag:      true,
+				AssetHashText:    assetHash,
+				SortOrder:        builtin.SortOrder,
+			}
+			if err := s.skillRepo.Create(ctx, do); err != nil {
+				return err
+			}
 			continue
 		}
-		do := &domain.SkillDO{
-			SkillULID:        pkg.NewULID(domain.IDPrefixSkill),
-			SkillCode:        builtin.CommandCode,
-			SkillName:        builtin.CommandName,
-			ScopeCode:        domain.SkillScopeGlobal,
-			CategoryCode:     builtin.CategoryCode,
-			DescriptionText:  builtin.DescriptionText,
-			PromptTemplate:   builtin.PromptTemplate,
-			VariableSpecJSON: "[]",
-			EnabledFlag:      true,
-			BuiltinFlag:      true,
-			SortOrder:        builtin.SortOrder,
+		if existing.CustomizedFlag || existing.AssetHashText == assetHash {
+			continue // 作者改过或已是最新出厂内容：不动
 		}
-		if err := s.skillRepo.Create(ctx, do); err != nil {
+		if err := s.skillRepo.Update(ctx, existing.SkillULID, map[string]any{
+			"skill_name":       builtin.CommandName,
+			"category_code":    builtin.CategoryCode,
+			"description_text": builtin.DescriptionText,
+			"prompt_template":  builtin.PromptTemplate,
+			"sort_order":       builtin.SortOrder,
+			"asset_hash_text":  assetHash,
+		}); err != nil {
 			return err
 		}
 	}
@@ -222,6 +235,14 @@ func (s *SkillService) Save(ctx context.Context, req *domain.SkillREQ) (domain.S
 		"enabled_flag":       enabledFlag,
 		"sort_order":         req.SortOrder,
 	}
+	customizedFlag := false
+	if current.BuiltinFlag {
+		// 内置资产：与出厂正文一致则仍算出厂内容，否则标记作者改动，后续代码升级不再覆盖。
+		assetHash := ai.SkillAssetHash(req.SkillCode, req.SkillName, categoryCode, req.DescriptionText, req.PromptTemplate, req.SortOrder)
+		customizedFlag = assetHash != ai.BuiltinSkillHashOf(req.SkillCode)
+		fields["customized_flag"] = customizedFlag
+		fields["asset_hash_text"] = current.AssetHashText
+	}
 	if err := s.skillRepo.Update(ctx, req.SkillULID, fields); err != nil {
 		return domain.SkillVO{}, err
 	}
@@ -235,6 +256,9 @@ func (s *SkillService) Save(ctx context.Context, req *domain.SkillREQ) (domain.S
 	current.VariableSpecJSON = variableJSON
 	current.EnabledFlag = enabledFlag
 	current.SortOrder = req.SortOrder
+	if current.BuiltinFlag {
+		current.CustomizedFlag = customizedFlag
+	}
 	refCounts, err := s.skillRepo.CountReferences(ctx, []string{current.SkillULID})
 	if err != nil {
 		return domain.SkillVO{}, err
@@ -337,138 +361,4 @@ func (s *SkillService) mustProjectAccess(ctx context.Context, projectULID string
 		return pkg.NewBizError(domain.RespCodeNotFound, "项目不存在")
 	}
 	return nil
-}
-
-// resolveSkillCode 解析技能编码与剩余正文（纯函数）：
-// 显式传入的 skill_code 优先；否则解析正文首 token 的 /code，命中才剥离命令；
-// 未命中技能时正文原样返回。
-func resolveSkillCode(explicitCode, contentText string) (string, string) {
-	if explicitCode != "" {
-		return explicitCode, contentText
-	}
-	parsedCode, parsedRemainder := parseSlashToken(contentText)
-	if parsedCode == "" {
-		return "", contentText
-	}
-	return parsedCode, parsedRemainder
-}
-
-// parseSlashToken 解析正文首 token 的 /code：返回编码与去掉命令后的正文。
-func parseSlashToken(contentText string) (string, string) {
-	trimmed := strings.TrimSpace(contentText)
-	if !strings.HasPrefix(trimmed, "/") {
-		return "", trimmed
-	}
-	end := strings.IndexAny(trimmed, " \t\r\n")
-	if end < 0 {
-		return "", ""
-	}
-	code := strings.TrimPrefix(trimmed[:end], "/")
-	if code == "" {
-		return "", trimmed
-	}
-	return code, strings.TrimSpace(trimmed[end:])
-}
-
-// resolveSkillVariables 计算变量取值：显式传值 > 声明缺省值 > 必填缺失记入 missing。
-func resolveSkillVariables(skillCode string, variableList []domain.SkillVariableDO,
-	valueMap map[string]string, userInput string) (map[string]string, []string) {
-	resolved := map[string]string{"skill_code": skillCode, "user_input": userInput}
-	missing := make([]string, 0)
-	for i := range variableList {
-		name := variableList[i].VariableName
-		if name == "" {
-			continue
-		}
-		if value, ok := valueMap[name]; ok && value != "" {
-			resolved[name] = value
-			continue
-		}
-		if variableList[i].DefaultValue != "" {
-			resolved[name] = variableList[i].DefaultValue
-			continue
-		}
-		if variableList[i].RequiredFlag {
-			missing = append(missing, name)
-			continue
-		}
-		resolved[name] = ""
-	}
-	sort.Strings(missing)
-	return resolved, missing
-}
-
-// validateSkillTemplate 校验模板中的占位符都已在变量声明中登记（内置占位符除外）。
-func validateSkillTemplate(promptTemplate string, variableList []domain.SkillVariableDO) error {
-	known := map[string]bool{"user_input": true, "chapter_content": true, "context": true, "skill_code": true}
-	for i := range variableList {
-		if variableList[i].VariableName == "" {
-			return pkg.NewBizError(domain.RespCodeInvalidParam, "变量名不能为空")
-		}
-		known[variableList[i].VariableName] = true
-	}
-	unknown := ai.TemplatePlaceholders(promptTemplate, known)
-	if len(unknown) > 0 {
-		return pkg.NewBizError(domain.RespCodeInvalidParam,
-			"模板中的占位符未声明变量: "+strings.Join(unknown, skillRefKeywordSeparator))
-	}
-	return nil
-}
-
-// marshalSkillVariables 序列化变量声明（空列表存 "[]"，保证列非 NULL）。
-func marshalSkillVariables(variableList []domain.SkillVariableDO) (string, error) {
-	if len(variableList) == 0 {
-		return "[]", nil
-	}
-	data, err := json.Marshal(variableList)
-	if err != nil {
-		return "", pkg.WrapBizError(domain.RespCodeInvalidParam, "变量声明序列化失败", err)
-	}
-	return string(data), nil
-}
-
-// unmarshalSkillVariables 反序列化变量声明（损坏数据按空列表处理）。
-func unmarshalSkillVariables(variableSpecJSON string) []domain.SkillVariableDO {
-	variableList := make([]domain.SkillVariableDO, 0, 4)
-	if variableSpecJSON == "" {
-		return variableList
-	}
-	if err := json.Unmarshal([]byte(variableSpecJSON), &variableList); err != nil {
-		return []domain.SkillVariableDO{}
-	}
-	return variableList
-}
-
-// toSkillVO 组装技能视图对象。
-func toSkillVO(do *domain.SkillDO, refCount int) domain.SkillVO {
-	return domain.SkillVO{
-		SkillULID:       do.SkillULID,
-		SkillCode:       do.SkillCode,
-		SkillName:       do.SkillName,
-		ScopeCode:       do.ScopeCode,
-		ProjectULID:     do.ProjectULID,
-		CategoryCode:    do.CategoryCode,
-		DescriptionText: do.DescriptionText,
-		PromptTemplate:  do.PromptTemplate,
-		VariableList:    unmarshalSkillVariables(do.VariableSpecJSON),
-		RefCount:        refCount,
-		EnabledFlag:     do.EnabledFlag,
-		BuiltinFlag:     do.BuiltinFlag,
-		SortOrder:       do.SortOrder,
-		CreatedAtMs:     do.CreatedAt.UnixMilli(),
-		UpdatedAtMs:     do.UpdatedAt.UnixMilli(),
-	}
-}
-
-// toSkillReferenceVO 组装参考资料视图对象。
-func toSkillReferenceVO(do *domain.SkillReferenceDO) domain.SkillReferenceVO {
-	return domain.SkillReferenceVO{
-		RefULID:     do.RefULID,
-		SkillULID:   do.SkillULID,
-		RefName:     do.RefName,
-		RefText:     do.RefText,
-		KeywordList: do.KeywordList,
-		SortOrder:   do.SortOrder,
-		CreatedAtMs: do.CreatedAt.UnixMilli(),
-	}
 }

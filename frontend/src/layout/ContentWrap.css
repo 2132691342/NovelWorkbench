@@ -1,0 +1,12 @@
+/* 内容容器：默认留白，compact 用于满屏工作台 */
+.nw-content-wrap {
+  width: 100%;
+  max-width: var(--layout-content-max-width);
+  margin: 0 auto;
+  padding: 18px 22px 28px;
+}
+
+.nw-content-wrap.is-compact {
+  max-width: none;
+  padding: 0;
+}

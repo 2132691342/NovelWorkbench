@@ -42,17 +42,19 @@ type docSource struct {
 
 // chatContextInput 上下文装配输入（纯数据，供 buildContextBlocks 消费，便于测试注入）。
 type chatContextInput struct {
-	SkillTemplate string                    // 命中技能的提示词模板（空为自由对话）
-	SkillVariable map[string]string         // 技能变量取值（渲染模板用）
-	SkillRefList  []string                  // 技能参考资料正文（命中后注入）
-	UserInput     string                    // 解析后的用户正文（技能参数）
-	ChapterList   []chapterSource           // 当前章与引用章（首项为当前章）
-	DocList       []docSource               // @引用文档
-	RagList       []domain.KnowledgeChunkVO // 知识库召回切片
-	SummaryList   []string                  // 当前章前后章梗概
-	CharacterList []domain.CharacterDO      // 项目角色卡
-	LoreList      []domain.LoreDO           // 项目设定条目（note 类型禁止注入）
-	HistoryList   []domain.ChatMessageDO    // 注入历史（旧→新）
+	SkillTemplate  string                    // 命中技能的提示词模板（空为自由对话）
+	SkillVariable  map[string]string         // 技能变量取值（渲染模板用）
+	SkillRefList   []string                  // 技能参考资料正文（命中后注入）
+	UserInput      string                    // 解析后的用户正文（技能参数）
+	ChapterList    []chapterSource           // 当前章与引用章（首项为当前章）
+	DocList        []docSource               // @引用文档
+	RagList        []domain.KnowledgeChunkVO // 知识库召回切片
+	RefSummaryList []string                  // @显式引用的章节摘要正文
+	RefPromptList  []string                  // @显式引用的提示词档案正文
+	SummaryList    []string                  // 当前章前后章梗概
+	CharacterList  []domain.CharacterDO      // 项目角色卡
+	LoreList       []domain.LoreDO           // 项目设定条目（note 类型禁止注入）
+	HistoryList    []domain.ChatMessageDO    // 注入历史（旧→新）
 }
 
 // buildContextBlocks 组装上下文块并返回最终指令文本（纯函数）。
@@ -82,6 +84,20 @@ func buildContextBlocks(input chatContextInput) ([]ai.ContextBlock, string) {
 			BlockKey:    "ref_doc",
 			Priority:    ai.PriorityExplicitRef,
 			ContentText: "【引用文档】" + doc.DocName + "\n" + doc.FullText,
+		})
+	}
+	if len(input.RefSummaryList) > 0 {
+		blocks = append(blocks, ai.ContextBlock{
+			BlockKey:    "ref_summary",
+			Priority:    ai.PriorityExplicitRef,
+			ContentText: "【引用章节摘要】\n" + strings.Join(input.RefSummaryList, "\n"),
+		})
+	}
+	if len(input.RefPromptList) > 0 {
+		blocks = append(blocks, ai.ContextBlock{
+			BlockKey:    "ref_prompt",
+			Priority:    ai.PriorityExplicitRef,
+			ContentText: "【引用提示词档案】\n" + strings.Join(input.RefPromptList, "\n\n"),
 		})
 	}
 	if len(input.RagList) > 0 {
@@ -329,6 +345,27 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 		}
 		input.DocList = append(input.DocList, docSource{DocName: doc.DocName, FullText: fullText})
 	}
+	for _, summaryULID := range req.RefSummaryULIDList {
+		summary, err := s.continuityRepo.GetSummaryByULID(ctx, summaryULID)
+		if err != nil {
+			return input, err
+		}
+		if summary == nil || summary.ProjectULID != req.ProjectULID {
+			return input, pkg.NewBizError(domain.RespCodeInvalidParam, "引用章节摘要不存在")
+		}
+		if text := strings.TrimSpace(summary.SummaryText); text != "" {
+			input.RefSummaryList = append(input.RefSummaryList, text)
+		}
+	}
+	for _, promptULID := range req.RefPromptULIDList {
+		profile, err := s.promptProfileSvc.mustReadableProfile(ctx, userULID, promptULID)
+		if err != nil {
+			return input, err
+		}
+		if text := strings.TrimSpace(profile.SystemPromptText); text != "" {
+			input.RefPromptList = append(input.RefPromptList, "《"+profile.PromptProfileName+"》\n"+text)
+		}
+	}
 	if strings.TrimSpace(userInput) != "" {
 		// TopKCount 留空，由知识库服务按应用配置 rag_top_k 解析
 		hits, err := s.knowledgeService.Search(ctx, userULID, &domain.KnowledgeSearchREQ{
@@ -438,7 +475,9 @@ func toChatMessageVO(do *domain.ChatMessageDO) domain.ChatMessageVO {
 		RefDocULIDList:     decodeULIDList(do.RefDocJSON),
 		RefChapterULIDList: decodeULIDList(do.RefChapterJSON),
 		RefMessageULIDList: decodeULIDList(do.RefMessageJSON),
+		RefSummaryULIDList: decodeULIDList(do.RefSummaryJSON),
+		RefPromptULIDList:  decodeULIDList(do.RefPromptJSON),
 		TokenUsedCount:     do.TokenUsedCount,
-		CreatedAtMs:        do.CreatedAt.UnixMilli(),
+		CreatedAt:          pkg.FormatTime(do.CreatedAt),
 	}
 }

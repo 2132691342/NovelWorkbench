@@ -26,6 +26,8 @@ type ChatMessageDO struct {
 	RefDocJSON     string `json:"ref_doc_json" gorm:"type:text"`                              // @引用文档 ULID 列表（JSON 数组）
 	RefChapterJSON string `json:"ref_chapter_json" gorm:"type:text"`                          // @引用章节 ULID 列表（JSON 数组）
 	RefMessageJSON string `json:"ref_message_json" gorm:"type:text"`                          // 显式引用的历史消息 ULID 列表（JSON 数组）
+	RefSummaryJSON string `json:"ref_summary_json" gorm:"type:text"`                          // @引用章节摘要 ULID 列表（JSON 数组）
+	RefPromptJSON  string `json:"ref_prompt_json" gorm:"type:text"`                           // @引用提示词档案 ULID 列表（JSON 数组）
 	TokenUsedCount int    `json:"token_used_count"`                                           // 本条消耗的估算 token
 }
 
@@ -42,6 +44,8 @@ type ChatSendREQ struct {
 	RefDocULIDList     []string          `json:"ref_doc_ulid_list"`                              // @引用文档
 	RefChapterULIDList []string          `json:"ref_chapter_ulid_list"`                          // @引用章节
 	RefMessageULIDList []string          `json:"ref_message_ulid_list"`                          // 显式引用的历史消息
+	RefSummaryULIDList []string          `json:"ref_summary_ulid_list"`                          // @引用章节摘要
+	RefPromptULIDList  []string          `json:"ref_prompt_ulid_list"`                           // @引用提示词档案
 	HistoryCount       int               `json:"history_count" binding:"omitempty,min=0,max=50"` // 历史消息注入条数，0 用全局配置
 	ModelULID          string            `json:"model_ulid" binding:"omitempty,max=40"`          // 指定模型，空用默认
 	PromptProfileULID  string            `json:"prompt_profile_ulid" binding:"omitempty,max=40"` // 指定提示词档案，空用默认全局档案
@@ -59,7 +63,7 @@ type ChatSessionVO struct {
 	ProjectULID  string `json:"project_ulid"`  // 所属项目
 	SessionName  string `json:"session_name"`  // 会话名
 	MessageCount int    `json:"message_count"` // 消息条数
-	UpdatedAtMs  int64  `json:"updated_at_ms"` // 最后活跃时间（毫秒时间戳）
+	UpdatedAt    string `json:"updated_at"`    // 最后活跃时间（RFC3339）
 }
 
 // ChatMessageVO 消息视图对象。
@@ -73,8 +77,10 @@ type ChatMessageVO struct {
 	RefDocULIDList     []string `json:"ref_doc_ulid_list"`     // 引用文档
 	RefChapterULIDList []string `json:"ref_chapter_ulid_list"` // 引用章节
 	RefMessageULIDList []string `json:"ref_message_ulid_list"` // 引用历史消息
+	RefSummaryULIDList []string `json:"ref_summary_ulid_list"` // 引用章节摘要
+	RefPromptULIDList  []string `json:"ref_prompt_ulid_list"`  // 引用提示词档案
 	TokenUsedCount     int      `json:"token_used_count"`      // 估算 token
-	CreatedAtMs        int64    `json:"created_at_ms"`         // 发送时间（毫秒时间戳）
+	CreatedAt          string   `json:"created_at"`            // 发送时间（RFC3339）
 }
 
 // ChatStreamEventDTO SSE 流式事件（EventType 取值见常量）。

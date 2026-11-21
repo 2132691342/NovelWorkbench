@@ -16,6 +16,7 @@ import NWCard from '@/components/NWCard.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
 import ProjectPageHeader from '@/components/ProjectPageHeader.vue'
+import { formatTime } from '@/utils/time'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -298,7 +299,7 @@ onMounted(() => {
               <p class="lore-card__content">{{ loreItem.content_text || t('lore.noContent') }}</p>
               <footer class="lore-card__footer">
                 <span class="lore-card__time">
-                  {{ new Date(loreItem.updated_at_ms).toLocaleString() }}
+                  {{ formatTime(loreItem.updated_at) }}
                 </span>
                 <span class="lore-card__actions">
                   <NWButton size="small" @click="handleEdit(loreItem)">{{ t('common.edit') }}</NWButton>

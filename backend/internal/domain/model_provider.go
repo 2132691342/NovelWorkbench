@@ -3,6 +3,8 @@
 
 package domain
 
+import "time"
+
 // 模型协议编码常量（仅支持 OpenAI 兼容与 Anthropic 原生两种对话协议）。
 const (
 	ProtocolCodeOpenAI    = "openai"    // OpenAI 兼容（/v1/chat/completions）
@@ -19,17 +21,17 @@ const (
 // ModelProviderDO 模型供应商持久化对象（一个供应商 = 一套网关地址 + 凭据，可挂多个模型）。
 type ModelProviderDO struct {
 	BaseDO
-	ProviderULID       string `json:"provider_ulid" gorm:"column:provider_ulid;primaryKey;size:40"`      // 供应商 ULID（MPR_ 前缀）
-	ProviderName       string `json:"provider_name" gorm:"column:provider_name;size:64"`                 // 供应商名称
-	ProtocolCode       string `json:"protocol_code" gorm:"column:protocol_code;size:16;index"`           // 协议：openai/anthropic
-	BaseURL            string `json:"base_url" gorm:"column:base_url;size:256"`                          // 网关地址（OpenAI 需含 /v1）
-	APIKeyCipher       string `json:"-" gorm:"column:api_key_cipher;size:512"`                           // API Key 密文（AES-256-GCM）
-	EnabledFlag        bool   `json:"enabled_flag" gorm:"column:enabled_flag;default:true"`              // 是否启用（停用则其下模型一律不可用）
-	SortOrder          int    `json:"sort_order" gorm:"column:sort_order"`                               // 排序号
-	RemarkText         string `json:"remark_text" gorm:"column:remark_text;size:256"`                    // 备注
-	LastTestStatusCode string `json:"last_test_status_code" gorm:"column:last_test_status_code;size:16"` // 最近测试状态：untested/success/failed
-	LastTestMessage    string `json:"last_test_message" gorm:"column:last_test_message;size:512"`        // 最近测试结论
-	LastTestAtMs       int64  `json:"last_test_at_ms" gorm:"column:last_test_at_ms"`                     // 最近测试时间（毫秒）
+	ProviderULID       string    `json:"provider_ulid" gorm:"column:provider_ulid;primaryKey;size:40"`      // 供应商 ULID（MPR_ 前缀）
+	ProviderName       string    `json:"provider_name" gorm:"column:provider_name;size:64"`                 // 供应商名称
+	ProtocolCode       string    `json:"protocol_code" gorm:"column:protocol_code;size:16;index"`           // 协议：openai/anthropic
+	BaseURL            string    `json:"base_url" gorm:"column:base_url;size:256"`                          // 网关地址（OpenAI 需含 /v1）
+	APIKeyCipher       string    `json:"-" gorm:"column:api_key_cipher;size:512"`                           // API Key 密文（AES-256-GCM）
+	EnabledFlag        bool      `json:"enabled_flag" gorm:"column:enabled_flag;default:true"`              // 是否启用（停用则其下模型一律不可用）
+	SortOrder          int       `json:"sort_order" gorm:"column:sort_order"`                               // 排序号
+	RemarkText         string    `json:"remark_text" gorm:"column:remark_text;size:256"`                    // 备注
+	LastTestStatusCode string    `json:"last_test_status_code" gorm:"column:last_test_status_code;size:16"` // 最近测试状态：untested/success/failed
+	LastTestMessage    string    `json:"last_test_message" gorm:"column:last_test_message;size:512"`        // 最近测试结论
+	LastTestAt         time.Time `json:"last_test_at" gorm:"column:last_test_at"`                           // 最近测试时间（RFC3339）
 }
 
 // TableName 指定表名。
@@ -38,20 +40,20 @@ func (ModelProviderDO) TableName() string { return "model_providers" }
 // ModelCatalogDO 模型目录持久化对象（供应商下的具体模型，含调用参数与默认标记）。
 type ModelCatalogDO struct {
 	BaseDO
-	ModelULID          string  `json:"model_ulid" gorm:"column:model_ulid;primaryKey;size:40"`            // 模型 ULID（MDL_ 前缀）
-	ProviderULID       string  `json:"provider_ulid" gorm:"column:provider_ulid;size:40;index"`           // 所属供应商
-	ModelName          string  `json:"model_name" gorm:"column:model_name;size:128"`                      // 模型名（请求体里的 model 字段）
-	ModelLabel         string  `json:"model_label" gorm:"column:model_label;size:64"`                     // 展示名（空则用模型名）
-	Temperature        float64 `json:"temperature" gorm:"column:temperature"`                             // 采样温度
-	MaxTokens          int     `json:"max_tokens" gorm:"column:max_tokens"`                               // 单次输出上限
-	ContextWindowCount int     `json:"context_window_count" gorm:"column:context_window_count"`           // 上下文窗口（token，0 未知）
-	EnabledFlag        bool    `json:"enabled_flag" gorm:"column:enabled_flag;default:true"`              // 是否启用
-	DefaultFlag        bool    `json:"default_flag" gorm:"column:default_flag;default:false;index"`       // 是否系统默认（全局唯一）
-	SortOrder          int     `json:"sort_order" gorm:"column:sort_order"`                               // 排序号
-	RemarkText         string  `json:"remark_text" gorm:"column:remark_text;size:256"`                    // 备注
-	LastTestStatusCode string  `json:"last_test_status_code" gorm:"column:last_test_status_code;size:16"` // 最近测试状态
-	LastTestMessage    string  `json:"last_test_message" gorm:"column:last_test_message;size:512"`        // 最近测试结论
-	LastTestAtMs       int64   `json:"last_test_at_ms" gorm:"column:last_test_at_ms"`                     // 最近测试时间（毫秒）
+	ModelULID          string    `json:"model_ulid" gorm:"column:model_ulid;primaryKey;size:40"`            // 模型 ULID（MDL_ 前缀）
+	ProviderULID       string    `json:"provider_ulid" gorm:"column:provider_ulid;size:40;index"`           // 所属供应商
+	ModelName          string    `json:"model_name" gorm:"column:model_name;size:128"`                      // 模型名（请求体里的 model 字段）
+	ModelLabel         string    `json:"model_label" gorm:"column:model_label;size:64"`                     // 展示名（空则用模型名）
+	Temperature        float64   `json:"temperature" gorm:"column:temperature"`                             // 采样温度
+	MaxTokens          int       `json:"max_tokens" gorm:"column:max_tokens"`                               // 单次输出上限
+	ContextWindowCount int       `json:"context_window_count" gorm:"column:context_window_count"`           // 上下文窗口（token，0 未知）
+	EnabledFlag        bool      `json:"enabled_flag" gorm:"column:enabled_flag;default:true"`              // 是否启用
+	DefaultFlag        bool      `json:"default_flag" gorm:"column:default_flag;default:false;index"`       // 是否系统默认（全局唯一）
+	SortOrder          int       `json:"sort_order" gorm:"column:sort_order"`                               // 排序号
+	RemarkText         string    `json:"remark_text" gorm:"column:remark_text;size:256"`                    // 备注
+	LastTestStatusCode string    `json:"last_test_status_code" gorm:"column:last_test_status_code;size:16"` // 最近测试状态
+	LastTestMessage    string    `json:"last_test_message" gorm:"column:last_test_message;size:512"`        // 最近测试结论
+	LastTestAt         time.Time `json:"last_test_at" gorm:"column:last_test_at"`                           // 最近测试时间（RFC3339）
 }
 
 // TableName 指定表名。
@@ -142,8 +144,8 @@ type ModelProviderVO struct {
 	EnabledModelCount  int    `json:"enabled_model_count"`   // 启用模型数量
 	LastTestStatusCode string `json:"last_test_status_code"` // 最近测试状态
 	LastTestMessage    string `json:"last_test_message"`     // 最近测试结论
-	LastTestAtMs       int64  `json:"last_test_at_ms"`       // 最近测试时间（毫秒）
-	UpdatedAtMs        int64  `json:"updated_at_ms"`         // 更新时间（毫秒）
+	LastTestAt         string `json:"last_test_at"`          // 最近测试时间（RFC3339）
+	UpdatedAt          string `json:"updated_at"`            // 更新时间（RFC3339）
 }
 
 // ModelCatalogVO 模型视图对象（含供应商快照与角色授权）。
@@ -167,15 +169,15 @@ type ModelCatalogVO struct {
 	RoleNameList       []string `json:"role_name_list"`        // 已授权角色名称
 	LastTestStatusCode string   `json:"last_test_status_code"` // 最近测试状态
 	LastTestMessage    string   `json:"last_test_message"`     // 最近测试结论
-	LastTestAtMs       int64    `json:"last_test_at_ms"`       // 最近测试时间（毫秒）
-	UpdatedAtMs        int64    `json:"updated_at_ms"`         // 更新时间（毫秒）
+	LastTestAt         string   `json:"last_test_at"`          // 最近测试时间（RFC3339）
+	UpdatedAt          string   `json:"updated_at"`            // 更新时间（RFC3339）
 }
 
 // ModelProviderTestDTO 供应商连通性测试结果。
 type ModelProviderTestDTO struct {
 	StatusCode   string `json:"status_code"`    // success/failed
 	MessageText  string `json:"message_text"`   // 结论说明
-	LatencyMs    int64  `json:"latency_ms"`     // 往返耗时（毫秒）
+	LatencyMs    int64  `json:"latency_ms"`     // 往返耗时（RFC3339）
 	ReplyText    string `json:"reply_text"`     // 模型回显片段
 	ProbeModelID string `json:"probe_model_id"` // 用于探测的模型 ULID
 }
@@ -184,7 +186,7 @@ type ModelProviderTestDTO struct {
 type ModelCatalogTestDTO struct {
 	StatusCode  string `json:"status_code"`  // success/failed
 	MessageText string `json:"message_text"` // 结论说明
-	LatencyMs   int64  `json:"latency_ms"`   // 往返耗时（毫秒）
+	LatencyMs   int64  `json:"latency_ms"`   // 往返耗时（RFC3339）
 	ReplyText   string `json:"reply_text"`   // 模型回显片段
 }
 

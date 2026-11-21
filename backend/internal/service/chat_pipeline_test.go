@@ -384,3 +384,36 @@ func TestChatStreamContract(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildContextBlocksExplicitSummaryAndPrompt 覆盖 @引用章节摘要与提示词档案：
+// 两者都按显式引用（80）注入，且与自动梗概块（60）互不覆盖。
+func TestBuildContextBlocksExplicitSummaryAndPrompt(t *testing.T) {
+	blocks, _ := buildContextBlocks(chatContextInput{
+		UserInput:      "提问",
+		RefSummaryList: []string{"第一章：主角取得钥匙"},
+		RefPromptList:  []string{"《连载作者》\n你是连载作者，保持悬念"},
+		SummaryList:    []string{"前章梗概"},
+	})
+	summaryBlock := findBlock(blocks, "ref_summary")
+	if summaryBlock == nil || summaryBlock.Priority != ai.PriorityExplicitRef ||
+		!strings.Contains(summaryBlock.ContentText, "主角取得钥匙") {
+		t.Fatalf("引用摘要块错误: %+v", summaryBlock)
+	}
+	promptBlock := findBlock(blocks, "ref_prompt")
+	if promptBlock == nil || promptBlock.Priority != ai.PriorityExplicitRef ||
+		!strings.Contains(promptBlock.ContentText, "保持悬念") {
+		t.Fatalf("引用提示词块错误: %+v", promptBlock)
+	}
+	autoBlock := findBlock(blocks, "chapter_summary")
+	if autoBlock == nil || autoBlock.Priority != ai.PriorityChapterSummary {
+		t.Fatalf("自动梗概块应保留且优先级为 60: %+v", autoBlock)
+	}
+}
+
+// TestBuildContextBlocksNoExplicitRef 覆盖未引用时不产生空块（避免把空标题塞进上下文）。
+func TestBuildContextBlocksNoExplicitRef(t *testing.T) {
+	blocks, _ := buildContextBlocks(chatContextInput{UserInput: "提问"})
+	if findBlock(blocks, "ref_summary") != nil || findBlock(blocks, "ref_prompt") != nil {
+		t.Fatal("未引用摘要/提示词时不应产生对应块")
+	}
+}

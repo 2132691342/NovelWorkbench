@@ -14,6 +14,7 @@ import type { NWChapterDetailVo, NWChapterSnapshotVo } from '@/api/contracts'
 import NWButton from '@/components/NWButton.vue'
 import NWEmpty from '@/components/NWEmpty.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { formatTime } from '@/utils/time'
 
 const props = defineProps<{
   visible: boolean
@@ -159,7 +160,7 @@ watch(
             <span>{{ t('workspace.snapshot.wordCount') }} {{ snapshot.word_count }}</span>
             <span>
               {{ t('workspace.snapshot.createdAt') }}
-              {{ new Date(snapshot.created_at_ms).toLocaleString() }}
+              {{ formatTime(snapshot.created_at) }}
             </span>
           </div>
         </div>

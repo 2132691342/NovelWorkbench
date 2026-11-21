@@ -9,6 +9,7 @@ import NWButton from '@/components/NWButton.vue'
 import NWIcon from '@/components/NWIcon.vue'
 import type { NWChatDisplayMessage } from './chatTypes'
 import ThinkingPanel from './ThinkingPanel.vue'
+import { formatClockTime } from '@/utils/time'
 
 const props = defineProps<{
   message: NWChatDisplayMessage
@@ -66,7 +67,7 @@ function waitedSeconds(): string {
           /{{ message.skill_code }}
         </span>
         <span class="chat-message__time">
-          {{ new Date(message.created_at_ms).toLocaleTimeString() }}
+          {{ formatClockTime(message.created_at) }}
         </span>
       </div>
 

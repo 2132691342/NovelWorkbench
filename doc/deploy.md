@@ -229,7 +229,7 @@ flowchart LR
 | 10 | `pkg.NewJWTSigner(cfg.JWT.Secret, cfg.JWTExpireTTL())` | 致命，退出码 1 |
 | 11 | 装配 repo / service / `ai.NewClient`，`providerService.SeedDefault` 播种出厂供应商 | 播种失败 → 告警「默认模型供应商播种失败，可在页面手工添加」 |
 | 12 | `providerService.MigrateLegacyModels` 补齐模型目录 | 告警，不阻断 |
-| 13 | `skillService.SeedDefaults`（8 个内置技能）与 `promptProfileService.SeedDefaults`（5 份提示词档案） | 致命，退出码 1 |
+| 13 | `skillService.SeedDefaults`（18 个内置技能）与 `promptProfileService.SeedDefaults`（9 份提示词档案） | 致命，退出码 1 |
 | 14 | `settingService.SeedDefaults`（默认应用配置） | 致命，退出码 1 |
 | 15 | `roleService.SeedDefaults`（内置角色与权限） | 致命，退出码 1 |
 | 16 | `menuService.SeedDefaults`（内置菜单与权限登记） | 致命，退出码 1 |

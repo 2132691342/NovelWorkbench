@@ -53,7 +53,7 @@ func (s *LoginLogService) ListPage(ctx context.Context, req *domain.LoginLogList
 			FailReasonText:   dos[i].FailReasonText,
 			IPAddr:           dos[i].IPAddr,
 			UserAgentText:    dos[i].UserAgentText,
-			CreatedAtMs:      dos[i].CreatedAt.UnixMilli(),
+			CreatedAt:        pkg.FormatTime(dos[i].CreatedAt),
 		})
 	}
 	return domain.NewPageDTO(total, req.PageREQ, vos), nil

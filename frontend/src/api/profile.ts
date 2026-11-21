@@ -10,8 +10,8 @@ export interface NWProfileVo {
   user_status_code: string
   role_codes: string[]
   remark_text: string
-  created_at_ms: number
-  updated_at_ms: number
+  created_at: string
+  updated_at: string
 }
 
 /** 更新资料请求（字段对齐后端 UserProfileUpdateREQ） */

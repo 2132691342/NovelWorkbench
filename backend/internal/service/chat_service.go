@@ -4,14 +4,10 @@ package service
 
 import (
 	"context"
-	"errors"
-	"io"
 	"strconv"
-	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/cloudwego/eino/schema"
 	"gorm.io/gorm"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/ai"
@@ -26,6 +22,7 @@ const (
 	settingKeyRAGTopK          = "rag_top_k"          // 应用配置键：知识库默认召回条数
 	globalDocProjectID         = "0"                  // 全局知识库文档的项目标识
 	chatPingInterval           = 15 * time.Second     // 流式无输出心跳间隔
+	chatStreamIdleTimeout      = 6 * time.Minute      // 流式连续无分片的上限：超时判定网关已断，报错而非无限等待
 	docFullTextPageSize        = 200                  // 文档切片全量拼接分页大小
 )
 
@@ -79,6 +76,7 @@ type ChatService struct {
 	chapterRepo      *repo.ChapterRepo     // 章节仓储
 	characterRepo    *repo.CharacterRepo   // 角色仓储
 	knowledgeRepo    *repo.KnowledgeRepo   // 知识库仓储
+	continuityRepo   *repo.ContinuityRepo  // 章节摘要仓储（@引用摘要）
 	settingRepo      *repo.SettingRepo     // 应用配置仓储
 	skillService     *SkillService         // 技能服务（解析、变量与参考资料）
 	promptProfileSvc *PromptProfileService // 提示词档案服务（系统提示词解析）
@@ -91,12 +89,12 @@ type ChatService struct {
 
 // NewChatService 构造对话服务。
 func NewChatService(chatRepo *repo.ChatRepo, projectRepo *repo.ProjectRepo, chapterRepo *repo.ChapterRepo,
-	characterRepo *repo.CharacterRepo, knowledgeRepo *repo.KnowledgeRepo, settingRepo *repo.SettingRepo,
+	characterRepo *repo.CharacterRepo, knowledgeRepo *repo.KnowledgeRepo, continuityRepo *repo.ContinuityRepo, settingRepo *repo.SettingRepo,
 	skillService *SkillService, promptProfileSvc *PromptProfileService, knowledgeService *KnowledgeService, providerSvc *ModelProviderService,
 	aiClient *ai.Client, db *gorm.DB, config ChatConfig) *ChatService {
 	return &ChatService{
 		chatRepo: chatRepo, projectRepo: projectRepo, chapterRepo: chapterRepo,
-		characterRepo: characterRepo, knowledgeRepo: knowledgeRepo, settingRepo: settingRepo,
+		characterRepo: characterRepo, knowledgeRepo: knowledgeRepo, continuityRepo: continuityRepo, settingRepo: settingRepo,
 		skillService: skillService, promptProfileSvc: promptProfileSvc, knowledgeService: knowledgeService,
 		providerSvc: providerSvc, aiClient: aiClient,
 		db: db, config: config,
@@ -122,7 +120,7 @@ func (s *ChatService) SessionCreate(ctx context.Context, userULID string, req *d
 		ProjectULID:  do.ProjectULID,
 		SessionName:  do.SessionName,
 		MessageCount: 0,
-		UpdatedAtMs:  do.UpdatedAt.UnixMilli(),
+		UpdatedAt:    pkg.FormatTime(do.UpdatedAt),
 	}, nil
 }
 
@@ -216,6 +214,8 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		RefDocJSON:     encodeULIDList(req.RefDocULIDList),
 		RefChapterJSON: encodeULIDList(req.RefChapterULIDList),
 		RefMessageJSON: encodeULIDList(req.RefMessageULIDList),
+		RefSummaryJSON: encodeULIDList(req.RefSummaryULIDList),
+		RefPromptJSON:  encodeULIDList(req.RefPromptULIDList),
 		TokenUsedCount: estimateTokenCount(utf8.RuneCountInString(req.ContentText), 0),
 	}
 	if err := s.chatRepo.CreateMessage(ctx, userMessage); err != nil {
@@ -251,6 +251,8 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		RefDocJSON:     encodeULIDList(req.RefDocULIDList),
 		RefChapterJSON: encodeULIDList(req.RefChapterULIDList),
 		RefMessageJSON: encodeULIDList(req.RefMessageULIDList),
+		RefSummaryJSON: encodeULIDList(req.RefSummaryULIDList),
+		RefPromptJSON:  encodeULIDList(req.RefPromptULIDList),
 		TokenUsedCount: estimateTokenCount(countMessagesRunes(messages), utf8.RuneCountInString(replyText)),
 	}
 	// assistant 消息与今日 AI 字数统计同事务，保证两者一致落库
@@ -267,115 +269,6 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	}
 	_ = events.emitWithReasoning(domain.StreamEventDone, replyText, reasoningText, "", contextInput.RagList)
 	return nil
-}
-
-// streamChat 消费模型流并转发 thinking/chunk 事件（15s 无输出发心跳，客户端断开即中止）。
-// completed=false 表示客户端断开或生成失败（生成失败已发 error 事件）。
-func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter,
-	messages []*schema.Message, providerSpec ai.ProviderSpec, promptRunes int) (string, string, bool) {
-	startedAt := time.Now()
-	stream, err := s.aiClient.Stream(ctx, providerSpec, messages)
-	if err != nil {
-		pkg.SLogger().Errorw("模型流式生成启动失败", "error", err)
-		_ = events.emit(domain.StreamEventError, "", "AI 生成启动失败："+err.Error(), nil)
-		return "", "", false
-	}
-	defer stream.Close()
-	type streamItem struct {
-		chunk *schema.Message
-		err   error
-	}
-	items := make(chan streamItem, 1)
-	go func() {
-		defer close(items)
-		for {
-			chunk, err := stream.Recv()
-			select {
-			case items <- streamItem{chunk: chunk, err: err}:
-			case <-ctx.Done():
-				return
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	var reply strings.Builder
-	var reasoning strings.Builder
-	var lastChunk *schema.Message
-	pingTimer := time.NewTimer(chatPingInterval)
-	defer pingTimer.Stop()
-	finish := func(completed bool) (string, string, bool) {
-		// 流结束补记 token 用量（首包已按成功调用计次）
-		usage := &schema.TokenUsage{
-			PromptTokens:     promptRunes,
-			CompletionTokens: utf8.RuneCountInString(reply.String()),
-		}
-		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-		if lastChunk != nil && lastChunk.ResponseMeta != nil && lastChunk.ResponseMeta.Usage != nil {
-			usage = lastChunk.ResponseMeta.Usage
-		}
-		s.aiClient.RecordStreamUsage(providerSpec, usage, time.Since(startedAt))
-		if !completed {
-			return "", "", false
-		}
-		return reply.String(), reasoning.String(), true
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return finish(false) // 客户端断开：中止生成并停止落库
-		case item, ok := <-items:
-			if !ok {
-				return finish(false)
-			}
-			if item.err != nil {
-				if errors.Is(item.err, io.EOF) {
-					return finish(true)
-				}
-				pkg.SLogger().Errorw("模型流式生成失败", "error", item.err)
-				_ = events.emit(domain.StreamEventError, "", "AI 生成失败，请稍后重试", nil)
-				return finish(false)
-			}
-			if item.chunk == nil {
-				continue
-			}
-			lastChunk = item.chunk
-			if item.chunk.ReasoningContent != "" {
-				reasoning.WriteString(item.chunk.ReasoningContent)
-				if err := events.emit(domain.StreamEventThinking, item.chunk.ReasoningContent, "", nil); err != nil {
-					pkg.SLogger().Warnw("SSE 思考事件写入失败，中止生成", "error", err)
-					return finish(false)
-				}
-				resetTimer(pingTimer)
-			}
-			if item.chunk.Content == "" {
-				continue
-			}
-			reply.WriteString(item.chunk.Content)
-			if err := events.emit(domain.StreamEventChunk, item.chunk.Content, "", nil); err != nil {
-				pkg.SLogger().Warnw("SSE 事件写入失败，中止生成", "error", err)
-				return finish(false)
-			}
-			resetTimer(pingTimer)
-		case <-pingTimer.C:
-			if err := events.writer.Ping(); err != nil {
-				return finish(false)
-			}
-			pingTimer.Reset(chatPingInterval)
-		}
-	}
-}
-
-// resetTimer 重置定时器（先停再排空再重置，避免已触发信号串扰）。
-func resetTimer(timer *time.Timer) {
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
-	timer.Reset(chatPingInterval)
 }
 
 // chatSkill 对话链路的技能解析结果（模板与变量分离，供上下文装配渲染）。

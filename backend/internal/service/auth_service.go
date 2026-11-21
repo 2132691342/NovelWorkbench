@@ -225,7 +225,7 @@ func toUserVO(do *domain.UserDO) domain.UserVO {
 		AvatarURL:      do.AvatarURL,
 		UserStatusCode: statusCode,
 		RoleCodes:      []string{},
-		CreatedAtMs:    do.CreatedAt.UnixMilli(),
+		CreatedAt:      pkg.FormatTime(do.CreatedAt),
 	}
 }
 
@@ -246,7 +246,7 @@ func toUserProfileVO(do *domain.UserDO, roleCodes []string) domain.UserProfileVO
 		UserStatusCode: statusCode,
 		RoleCodes:      roleCodes,
 		RemarkText:     do.RemarkText,
-		CreatedAtMs:    do.CreatedAt.UnixMilli(),
-		UpdatedAtMs:    do.UpdatedAt.UnixMilli(),
+		CreatedAt:      pkg.FormatTime(do.CreatedAt),
+		UpdatedAt:      pkg.FormatTime(do.UpdatedAt),
 	}
 }

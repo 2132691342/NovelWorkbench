@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 import NWButton from '@/components/NWButton.vue'
 import NWCard from '@/components/NWCard.vue'
 import NWLoading from '@/components/NWLoading.vue'
+import { formatTime } from '@/utils/time'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
@@ -69,10 +70,6 @@ const passwordRules = computed<FormRules>(() => ({
 
 const avatarText = computed(() => (profileVo.value?.user_name ?? '').slice(0, 1).toUpperCase() || '?')
 const roleText = computed(() => (profileVo.value?.role_codes ?? []).join(' / ') || '-')
-
-function formatTime(timeMs: number): string {
-  return new Date(timeMs).toLocaleString()
-}
 
 /** 加载个人资料并回填表单 */
 async function loadProfile(): Promise<void> {
@@ -175,7 +172,7 @@ onMounted(() => {
         </div>
         <div class="profile-page__hero-side">
           <span class="profile-page__hero-label">{{ t('profile.joinedAt') }}</span>
-          <strong>{{ formatTime(profileVo.created_at_ms) }}</strong>
+          <strong>{{ formatTime(profileVo.created_at) }}</strong>
         </div>
       </section>
 
@@ -285,10 +282,10 @@ onMounted(() => {
                 {{ profileVo.user_status_code === 'active' ? t('profile.statusActive') : t('profile.statusDisabled') }}
               </el-descriptions-item>
               <el-descriptions-item :label="t('profile.createdAt')">
-                {{ formatTime(profileVo.created_at_ms) }}
+                {{ formatTime(profileVo.created_at) }}
               </el-descriptions-item>
               <el-descriptions-item :label="t('profile.updatedAt')">
-                {{ formatTime(profileVo.updated_at_ms) }}
+                {{ formatTime(profileVo.updated_at) }}
               </el-descriptions-item>
             </el-descriptions>
           </NWCard>

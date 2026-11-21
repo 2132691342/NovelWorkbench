@@ -173,4 +173,3 @@ func TestAccessControlChain(t *testing.T) {
 		})
 	}
 }
-
