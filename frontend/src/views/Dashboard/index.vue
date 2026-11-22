@@ -9,6 +9,7 @@
   import type { NWProjectVo, NWStatsOverviewVo } from '@/api/contracts'
   import { usePageQuery } from '@/composables/usePageQuery'
   import { useProjectStore } from '@/store/modules/project'
+  import BootstrapDialog from './components/BootstrapDialog.vue'
   import ProjectFormDialog from './components/ProjectFormDialog.vue'
   import TrendChart from './components/TrendChart.vue'
 
@@ -30,6 +31,7 @@
   })
 
   const formDialog = ref<InstanceType<typeof ProjectFormDialog>>()
+  const bootstrapDialog = ref<InstanceType<typeof BootstrapDialog>>()
 
   const statusOptions = [
     { value: '', label: '全部状态' },
@@ -87,7 +89,12 @@
         @keyup.enter="search()"
         @clear="search()"
       />
-      <ElSelect v-model="query.project_status" class="dashboard__status" @change="search()">
+      <ElSelect
+        v-model="query.project_status"
+        class="dashboard__status"
+        placeholder="全部状态"
+        @change="search()"
+      >
         <ElOption
           v-for="item in statusOptions"
           :key="item.value"
@@ -95,9 +102,13 @@
           :value="item.value"
         />
       </ElSelect>
-      <ElButton type="primary" plain @click="formDialog?.open()">
+      <ElButton type="primary" plain @click="bootstrapDialog?.open()">
+        <Icon icon="mdi:sparkles" :size="15" />
+        <span class="ml-4px">AI 开书</span>
+      </ElButton>
+      <ElButton plain @click="formDialog?.open()">
         <Icon icon="mdi:plus" :size="15" />
-        <span class="ml-4px">新建项目</span>
+        <span class="ml-4px">手动新建</span>
       </ElButton>
       <div class="dashboard__spacer" />
       <span class="nw-hint">{{ t('common.total', { total }) }}</span>
@@ -170,6 +181,7 @@
     </div>
 
     <ProjectFormDialog ref="formDialog" @saved="refreshAll" />
+    <BootstrapDialog ref="bootstrapDialog" @created="enterProject('workspace', $event)" />
   </div>
 </template>
 

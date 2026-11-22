@@ -172,3 +172,21 @@ func (r *OutlineRepo) MaxSceneOrder(ctx context.Context, projectULID, outlineULI
 	}
 	return maxOrder, nil
 }
+
+// DeleteNodesByProject 删除项目下全部大纲节点（项目级联删除用）。
+func (r *OutlineRepo) DeleteNodesByProject(ctx context.Context, projectULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.OutlineNodeDO{}).Error; err != nil {
+		return fmt.Errorf("delete outline nodes by project: %w", err)
+	}
+	return nil
+}
+
+// DeleteScenesByProject 删除项目下全部场景卡片（项目级联删除用）。
+func (r *OutlineRepo) DeleteScenesByProject(ctx context.Context, projectULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.DetailedSceneDO{}).Error; err != nil {
+		return fmt.Errorf("delete detailed scenes by project: %w", err)
+	}
+	return nil
+}

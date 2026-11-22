@@ -266,22 +266,24 @@
           <button v-if="saveStatus === 'failed'" type="button" @click="saveChapter">重试</button>
         </span>
         <div class="editor__spacer" />
-        <ElButton size="small" plain @click="emit('ai-continue')">
-          <Icon icon="mdi:sparkles" :size="14" />
-          <span class="ml-4px">续写</span>
-        </ElButton>
-        <ElButton size="small" plain @click="emit('ai-polish')">
-          <Icon icon="mdi:magic-staff" :size="14" />
-          <span class="ml-4px">润色</span>
-        </ElButton>
-        <ElButton size="small" plain @click="emit('ai-summary')">
-          <Icon icon="mdi:script-text-outline" :size="14" />
-          <span class="ml-4px">梗概</span>
-        </ElButton>
-        <ElButton size="small" plain @click="emit('open-snapshot')">
-          <Icon icon="mdi:history" :size="14" />
-          <span class="ml-4px">快照</span>
-        </ElButton>
+        <div class="editor__actions">
+          <ElButton size="small" plain @click="emit('ai-continue')">
+            <Icon icon="mdi:sparkles" :size="14" />
+            <span class="ml-4px">续写</span>
+          </ElButton>
+          <ElButton size="small" plain @click="emit('ai-polish')">
+            <Icon icon="mdi:magic-staff" :size="14" />
+            <span class="ml-4px">润色</span>
+          </ElButton>
+          <ElButton size="small" plain @click="emit('ai-summary')">
+            <Icon icon="mdi:script-text-outline" :size="14" />
+            <span class="ml-4px">梗概</span>
+          </ElButton>
+          <ElButton size="small" plain @click="emit('open-snapshot')">
+            <Icon icon="mdi:history" :size="14" />
+            <span class="ml-4px">快照</span>
+          </ElButton>
+        </div>
       </header>
 
       <div class="editor__summary">
@@ -315,6 +317,7 @@
     &__head {
       display: flex;
       flex: none;
+      flex-wrap: wrap;
       gap: 8px;
       align-items: center;
       padding: 8px 12px;
@@ -322,11 +325,20 @@
     }
 
     &__name {
-      width: 220px;
+      flex: 1 1 160px;
+      min-width: 120px;
     }
 
     &__status {
+      flex: none;
       width: 96px;
+    }
+
+    &__actions {
+      display: flex;
+      flex: none;
+      gap: 4px;
+      align-items: center;
     }
 
     &__words,

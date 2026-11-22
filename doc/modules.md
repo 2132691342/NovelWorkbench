@@ -15,6 +15,7 @@
 | 6 | 站内通知 | `notifications` | `service/notification_service.go` |
 | 7 | 任务中心 | `jobs` | `service/job_service.go`、`service/knowledge_worker.go` |
 | 8 | 项目 / 卷 / 章节 | `projects`、`volumes`、`chapters`、`chapter_snapshots`、`word_count_stats` | `service/project_service.go`、`service/volume_service.go`、`service/chapter_service.go` |
+| 8.1 | AI 开书 | 同模块 8（+ `outline_nodes`） | `service/bootstrap_service.go`、`api/bootstrap_api.go`、`ai/bootstrap.go` |
 | 9 | 角色卡与关系图 | `characters`、`character_relations` | `service/character_service.go` |
 | 10 | 世界观设定与创作笔记 | `lore_settings` | `service/lore_service.go` |
 | 11 | 大纲树与场景卡 | `outline_nodes`、`detailed_scenes` | `service/outline_service.go` |
@@ -29,7 +30,7 @@
 | 20 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
 | 21 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/store`、`frontend/src/views/Workspace` |
 
-后端在 `backend/internal/api/router.go` 内注册 111 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、18 个内置技能（`backend/internal/ai/domain_<域>.go`，每域两个）与 9 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
+后端在 `backend/internal/api/router.go` 内注册 113 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、18 个内置技能（`backend/internal/ai/domain_<域>.go`，每域两个）与 9 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
 
 ## 1. 认证与会话
 
@@ -262,7 +263,7 @@
 
 - `service/project_service.go` 的 `Create` / `Update` / `List` / `Detail` / `Tree`；`Tree` 返回卷列表与每卷章节（升序），是写作台一次加载的数据源。
 - `mustOwnProject`（`service/project_service.go`）是所有创作模块共用的归属校验：项目不存在 `ERR_NOT_FOUND`，非本人 `ERR_FORBIDDEN`。
-- `ProjectService.Delete`：单个 `repo.WithTx` 事务内依次删快照、章节、卷、角色、关系、设定、会话消息、知识切片与文档、字数统计，最后删项目；事务提交后 `cleanupKnowledgeExternal` 清 MinIO 原文与 Manticore 行，失败仅告警。
+- `ProjectService.Delete`：单个 `repo.WithTx` 事务内依次删快照、章节、卷、角色、关系、设定、大纲节点与场景卡、时间事实与伏笔与摘要、会话消息、知识切片与文档、字数统计，最后删项目；事务提交后 `cleanupKnowledgeExternal` 清 MinIO 原文与 Manticore 行，失败仅告警。
 - `service/volume_service.go` 的 `Create` 缺省排序取 `MaxOrder+1`；`Delete` 先 `SumWordCountByVolume` 汇总字数，删快照与章节后按总量负向回补项目字数。
 - `service/chapter_service.go` 的 `Create` 校验卷属于该项目，`chapter_order` 取 `MaxOrder+1`，初始状态 `draft`。
 - `ChapterService.Update`：单事务内按非空字段更新；正文变化时用 `pkg.CountWords` 重算，差值经 `applyWordDelta` 同时调整 `projects.total_word_count`（`AdjustTotalWordCount` 用 SQL 表达式增减）与当日 `word_count_stats.word_delta`。
@@ -275,11 +276,33 @@
 - 删除项目只校验项目归属，不额外要求权限码。
 - 字数账目只在四条路径维护：章节更新、章节删除、快照回滚、卷删除；直接改库或绕过服务层不会自动修正。
 - 外部存储清理（MinIO / Manticore）在事务外，失败不回滚，可能留下孤儿对象；文档行已删，孤儿对象不再被引用。
-- 级联范围只覆盖快照、章节、卷、角色与关系、设定、会话与消息、知识切片与文档、字数统计；`outline_nodes`、`detailed_scenes`、`temporal_facts`、`foreshadow_hooks`、`chapter_summaries` 不在 `ProjectCascadeDeps` 里，删除项目后这些行会按 `project_ulid` 残留（当前无接口可再访问它们）。
+- 级联范围覆盖快照、章节、卷、角色与关系、设定、大纲节点、场景卡、时间事实、伏笔钩子、章节摘要、会话与消息、知识切片与文档、字数统计；`ProjectCascadeDeps` 持有 `OutlineRepo` 与 `ContinuityRepo`，删除项目后不会残留按 `project_ulid` 孤立的数据行。
 
 ### 8.4 权衡
 
 章节表冗余 `project_ulid`，让「按项目取章节」「按项目鉴权」都不需要 join 卷表，代价是插入时必须保证两列一致（服务层强制）。累计字数用「增量表达式 + 每日增量表」而不是每次聚合全表：读路径 O(1)，写路径只加一个常量；代价是账目正确性依赖所有写入口都调用 `applyWordDelta`，一旦有遗漏就只能靠重算修复。快照采用「整章全文副本」而不是 diff，存储放大但回滚是纯覆盖，没有补丁冲突。
+
+### 8.5 AI 开书（8.1）
+
+一句创意直接长出可写的项目骨架，解决「新建项目后面对空白卷章不知道从哪下手」的冷启动问题。
+
+**实现路径**
+
+- `ai/bootstrap.go`：`bootstrapSystemPrompt` 固定输出严格 JSON（书名 / 卖点 / 简介 / 文风 / 卷章 / 角色 / 设定）；`ParseBootstrapPlan` 容忍代码围栏与前后缀文字，缺 JSON、缺书名或缺卷章一律报错，不产出半成品。
+- `service/bootstrap_service.go` 的 `GeneratePlan`：经 `ModelProviderService.ChatSpecOf` 取当前账号有权限的模型（未指定则默认模型），流式累积全文后一次解析（非流式会撞网关首包超时）；首包超时与输出上限单独放宽到 300s / 8000 token。失败且章节数 >3 时缩半规模重试一次，避免模型输出上限截断导致整份方案作废。`normalizeBootstrapPlan` 再收敛模型输出——卷 ≤3、角色 ≤8、设定 ≤10、章节数按请求截断、`role_type_code` / `lore_type_code` 校正到枚举、名称按列宽截断、空名称补默认值。
+- `ApplyPlan`：单个 `repo.WithTx` 事务内创建项目 → 卷 → 章节 → 角色 → 设定 → 两级大纲节点（卷节点下挂章节点），任一失败整体回滚；成功后回读项目行组装 `ProjectVO` 返回。
+- 前端 `views/Dashboard/components/BootstrapDialog.vue`：两步向导，第一步写创意与章节规模，第二步逐字段可改（书名、卖点、简介、文风、卷章、角色、设定）后确认开书，成功后直接进入新项目的写作台。
+
+**边界**
+
+- 方案只生成不落库，落库必须显式二次提交，避免模型幻觉直接写进作品数据。
+- 不生成正文：章节只有名称与「发生什么 / 章末停在哪」的梗概，正文由作者在写作台起草。
+- 大纲只建卷 → 章两级，不建幕与故事块；场景卡不自动生成。
+- 生成失败返回 `ERR_AI_PROVIDER`（含模型未配置/未授权的情况），不静默降级为手工模板。
+
+**权衡**
+
+选择「两段式（plan → apply）」而不是一次调用直接建库：多一次前端往返，换来作者能在落库前改掉不合适的书名与章节，且服务端只需校验结构、不承担"猜用户意图"的责任。用非流式而非 SSE：开书是一次性结构化产物，逐字流没有意义，前端用加载态表达等待更简单。枚举收敛放在服务层而非提示词里：模型对枚举值的遵从率不可控，落库前必须有一次确定性校正。
 
 ## 9. 角色卡与关系图
 
@@ -702,7 +725,7 @@ flowchart TD
 | 菜单 → 角色 | `MenuService.Nav` 调 `RoleService.PermCodesOfUser` 取权限并集；`RequirePermMiddleware` 调 `RoleService.HasPerm` |
 | 模型 → 角色 | 授权表按角色 ULID 关联；`isAdminUser` 用 `*` 权限码判定管理员 |
 | 认证 / 用户管理 → 通知 | 改密、建号、重置密码各发一条 `account` 通知，失败只告警 |
-| 项目 → 知识库 / 角色 / 设定 | `ProjectService.Delete` 在事务内级联删这些表，提交后清 MinIO 与 Manticore |
+| 项目 → 知识库 / 角色 / 设定 / 大纲 / 连续性 | `ProjectService.Delete` 在事务内级联删这些表，提交后清 MinIO 与 Manticore |
 | 数据总览 → 项目 | 所有统计查询 `JOIN projects` 按 `user_ulid` 过滤，不直接信任前端传入的归属 |
 | 用量分析 ← ai.Client | `ai` 只依赖 `ai.UsageRecorder` 接口，由 `main.go` 注入 `ModelUsageService`，避免叶子层反向依赖 service |
 | 运行状态 → 模型 | 复用 `Capability` 得出「AI 是否就绪」，不自建模型探测逻辑 |

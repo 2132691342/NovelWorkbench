@@ -176,3 +176,20 @@ func (r *ContinuityRepo) ListSummariesByProject(ctx context.Context, projectULID
 	}
 	return dos, nil
 }
+
+// DeleteByProject 删除项目下全部连续性数据（时间事实、伏笔钩子、章节摘要）。
+func (r *ContinuityRepo) DeleteByProject(ctx context.Context, projectULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.TemporalFactDO{}).Error; err != nil {
+		return fmt.Errorf("delete temporal facts by project: %w", err)
+	}
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.ForeshadowHookDO{}).Error; err != nil {
+		return fmt.Errorf("delete foreshadow hooks by project: %w", err)
+	}
+	if err := r.db.WithContext(ctx).
+		Where("project_ulid = ?", projectULID).Delete(&domain.ChapterSummaryDO{}).Error; err != nil {
+		return fmt.Errorf("delete chapter summaries by project: %w", err)
+	}
+	return nil
+}

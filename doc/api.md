@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 业务基础路径 | `/api/v1` | `router.go` 的 `v1 := router.Group("/api/v1")` |
 | 探针路径 | `/health`、`/ready`，注册在 `/api/v1` 之外 | `router.go` 的 `NewRouter` |
-| 接口总数 | `/api/v1` 下 109 条，另有 2 条探针，共 111 条 | `router.go` |
+| 接口总数 | `/api/v1` 下 111 条，另有 2 条探针，共 113 条 | `router.go` |
 | 允许方法 | 仅 `GET` / `POST`；`OPTIONS` 只用于 CORS 预检 | `pkg.MethodWhitelistMiddleware` |
 | 请求编码 | `POST` 默认 `application/json`（`ShouldBindJSON`）；`/knowledge/upload` 为 `multipart/form-data` | 各 `*_api.go` |
 | 查询参数 | `GET` 用 query（`ShouldBindQuery`），路径变量用 `c.Param` | 各 `*_api.go` |
@@ -210,7 +210,20 @@ flowchart LR
 - `ProjectListREQ`：分页字段 + `keyword_text`、`project_status`。
 - `ProjectVO`：`project_ulid`、`project_name`、`genre_code`、`style_text`、`synopsis_text`、`project_status`、`total_word_count`、`volume_count`、`chapter_count`、`created_at`、`updated_at`。
 - `ProjectTreeVO`：`project_vo` + `volume_list`（`VolumeTreeNodeVO`，含 `volume_vo` 与 `chapter_list`（`ChapterBriefVO`））。
-- 删除项目在单个事务内级联清理卷、章节、快照、角色、设定、会话、知识库文档与统计（`ProjectService.Delete`）；事务提交后由 `cleanupKnowledgeExternal` 清理 MinIO 原文与 Manticore 切片，失败仅告警。
+- 删除项目在单个事务内级联清理卷、章节、快照、角色、设定、大纲节点与场景卡、连续性数据、会话、知识库文档与统计（`ProjectService.Delete`）；事务提交后由 `cleanupKnowledgeExternal` 清理 MinIO 原文与 Manticore 切片，失败仅告警。
+
+### 7.4.1 AI 开书（2）
+
+| 方法 | 路径 | 权限 | 请求 | 响应 data | Handler |
+| --- | --- | --- | --- | --- | --- |
+| POST | `/project/bootstrap/plan` | 登录用户（需有可用模型） | `ProjectBootstrapREQ` | `ProjectBootstrapPlanVO` | `BootstrapAPI.Plan` |
+| POST | `/project/bootstrap/apply` | 登录用户 | `ProjectBootstrapApplyREQ` | `ProjectBootstrapResultVO` | `BootstrapAPI.Apply` |
+
+- `ProjectBootstrapREQ`：`idea_text`（6–2000）、`genre_code`、`target_chapter_count`（3–60，缺省 12）、`model_ulid`（缺省取当前账号默认模型）。
+- `ProjectBootstrapPlanVO`：`project_name`、`genre_code`、`selling_point_text`、`synopsis_text`、`style_text`、`volume_list`（`volume_name` / `summary_text` / `volume_order` / `chapter_list`）、`character_list`、`lore_list`。
+- `plan` 只生成不落库；模型输出经 `normalizeBootstrapPlan` 收敛（卷 ≤3、角色 ≤8、设定 ≤10、枚举值校正、名称截断），作者可改字段后回传。
+- `apply` 在单事务内创建项目、卷、章节、角色、设定与两级大纲节点（卷 → 章），失败整体回滚。
+- 生成失败统一返回 `ERR_AI_PROVIDER`，模型未授权返回 `ERR_FORBIDDEN`。
 
 ### 7.5 卷（3）
 

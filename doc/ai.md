@@ -57,7 +57,7 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 默认参数（`internal/ai/client.go` 常量，`spec` 缺省时兜底）：`defaultMaxTokens = 2048`、`defaultTemperature = 0.7`、`defaultTimeout = 120s`。
 
-### 2.4 四种调用
+### 2.4 五种调用
 
 | 方法 | 行为 | 用量上报 |
 | --- | --- | --- |
@@ -65,6 +65,9 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `Stream` | 首片到达即返回 `*schema.StreamReader` | 首包记一次成功调用；流结束由 `RecordStreamUsage` 补记真实 token |
 | `Probe` | 连通性探测（系统「只回复两个字」+ 用户「回复：通」，30s 超时），返回前 40 rune | 走 `Generate`，正常计费 |
 | `Rerank` | 对话模型按候选 ID 重排，严格 JSON | 走 `Generate`，正常计费 |
+| `GenerateBootstrapPlan` | 开书方案：流式累积全文后一次性解析 JSON | 走 `Stream`，流结束补记 token |
+
+`GenerateBootstrapPlan`（`ai/bootstrap.go`）不用 `Generate`：结构化长输出（书名 + 卖点 + 卷章 + 角色 + 设定）在非流式下会长时间不返回响应头，网关 120s 首包超时必然打断。改成流式累积后，首包很快到达，总时长由调用方 `ctx` 控制（`bootstrapPlanTimeout = 300s`），`MaxTokens` 提到 8000 以容纳完整方案。
 
 超时分层（关键：推理模型思考常超过 2 分钟，任何「整体请求超时」都会把长流拦腰切断）：
 

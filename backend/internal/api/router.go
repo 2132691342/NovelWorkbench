@@ -21,6 +21,7 @@ type RouterDeps struct {
 	ReadyCheck       func() error      // 就绪探针（DB Ping）
 	AuthAPI          *AuthAPI          // 认证模块处理器
 	ProjectAPI       *ProjectAPI       // 项目模块处理器
+	BootstrapAPI     *BootstrapAPI     // AI 开书模块处理器
 	VolumeAPI        *VolumeAPI        // 卷模块处理器
 	ChapterAPI       *ChapterAPI       // 章节模块处理器
 	CharacterAPI     *CharacterAPI     // 角色模块处理器
@@ -70,6 +71,7 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	registerProfileRoutes(v1, deps.AuthAPI)
 	registerNotificationRoutes(v1, deps.NotifyAPI)
 	registerProjectRoutes(v1, deps.ProjectAPI)
+	registerBootstrapRoutes(v1, deps.BootstrapAPI)
 	registerVolumeRoutes(v1, deps.VolumeAPI)
 	registerChapterRoutes(v1, deps.ChapterAPI)
 	registerCharacterRoutes(v1, deps.CharacterAPI)
@@ -344,4 +346,10 @@ func registerContinuityRoutes(rg *gin.RouterGroup, handler *ContinuityAPI) {
 	rg.POST("/continuity/hook/list", handler.ListHooks)
 	rg.POST("/continuity/summary/save", handler.SaveSummary)
 	rg.POST("/continuity/summary/list", handler.ListSummaries)
+}
+
+// registerBootstrapRoutes 注册 AI 开书路由（生成方案 → 预览修改 → 落库）。
+func registerBootstrapRoutes(rg *gin.RouterGroup, handler *BootstrapAPI) {
+	rg.POST("/project/bootstrap/plan", handler.Plan)
+	rg.POST("/project/bootstrap/apply", handler.Apply)
 }

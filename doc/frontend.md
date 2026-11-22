@@ -14,7 +14,7 @@
 | `src/App.vue` | 根组件：`ConfigGlobal`（Element Plus 语言包 + 响应式断点）包裹 `RouterView` |
 | `src/api/` | `http.ts`（get/post 薄封装）、`contracts.ts`（后端 VO 类型）与各业务模块 |
 | `src/request/` | 请求实例：注入令牌、解包包络、401 会话过期 |
-| `src/layout/` | `Layout.vue`（外壳）、`components/`（顶栏、导航、项目切换、通知铃铛）、`useNavMenu.ts`、`menuIcons.ts` |
+| `src/layout/` | `Layout.vue`（四种布局外壳）、`components/`（`Menu.vue` 的 ElMenu 导航、顶栏、项目切换、通知铃铛）、`useNavMenu.ts`、`menuIcons.ts` |
 | `src/router/` | 静态路由表（全部页面组件在此声明） |
 | `src/permission.ts` | 唯一全局守卫：登录态、导航加载、页面权限码 |
 | `src/store/modules/` | `user`、`menu`、`project`、`app`、`locale`、`tagsView`、`notification` |
@@ -172,15 +172,28 @@
 
 项目作用域页面的路径带 `:project_ulid`。`Layout.vue` 监听该参数并调用 `projectStore.syncFromRoute()`，把 URL 上的项目同步为当前项目；顶栏项目切换器改选项目时只替换 URL 中的 ULID，停留在同一功能页。
 
-### 4.4 后端驱动导航
+### 4.4 后端驱动导航与四种布局
 
-`layout/useNavMenu.ts` 把 `/menu/nav` 的树转成侧边栏节点：项目作用域菜单用当前项目替换 `:project_ulid`，未选项目时**置灰而非隐藏**（点击提示先选项目）；当前高亮按路径前缀最长匹配计算，因此带 ULID 的项目页也能正确高亮。
+`layout/useNavMenu.ts` 把 `/menu/nav` 的树转成导航节点：项目作用域菜单用当前项目替换 `:project_ulid`，未选项目时**置灰而非隐藏**（点击提示先选项目）；当前高亮按页面路径最长匹配计算，因此带 ULID 的项目页也能正确高亮。
+
+导航渲染在 `layout/components/Menu.vue`，用 Element Plus `ElMenu` / `ElSubMenu` / `ElMenuItem`（与 vue-element-plus-admin 同构），不是自绘列表：折叠、二级展开、弹层与键盘可达性都沿用组件库行为。`mode="horizontal"` 用于顶栏，`mode="vertical"` 用于侧栏。
+
+`layout/Layout.vue` 支持四种布局（`useAppStore().layout`，顶栏「切换布局」即时生效并持久化）：
+
+| 布局 | 结构 | 说明 |
+| --- | --- | --- |
+| `sidebar` | 顶栏 + 左侧完整菜单 | 默认，层级全部在侧栏展开 |
+| `top` | 顶栏横向主菜单（分组下拉）+ 内容 | 适合宽屏，纵向空间全给内容 |
+| `mixed` | 顶栏横向一级 + 左侧二级 | 一级切分组、左侧只显示该分组页面 |
+| `dual` | 左侧图标栏 + 二级菜单栏 | 一级只显示图标，二级常驻 |
+
+`dual` 与 `mixed` 的一级点击只切换二级菜单（`Menu` 的 `group-select` 事件），不跳转；`dual` 默认跟随当前路由的分组。窄屏（≤767px）强制回落 `sidebar` 并以抽屉形式展开。
 
 ## 5. 页面实现
 
 | 页面 | 关键实现 |
 | --- | --- |
-| 仪表盘 | 统计卡（项目数/总字数/今日新增/AI 产出）+ 近 30 天趋势（ECharts）+ 项目卡片网格（进入写作台/大纲/角色/知识库、编辑、删除）+ 分页 |
+| 仪表盘 | 统计卡（项目数/总字数/今日新增/AI 产出）+ 近 30 天趋势（ECharts）+ 项目卡片网格（进入写作台/大纲/角色/知识库、编辑、删除）+ 分页 + **AI 开书向导**（`components/BootstrapDialog.vue`：创意 → 方案预览与逐字段修改 → 一次性落库并进入写作台） |
 | 写作台 | 三栏：目录树（卷/章增删改、搜索、折叠）/ CodeMirror 正文编辑器（2s 防抖自动保存、字数实时、梗概折叠）/ AI 面板（模型与会话切换、斜杠、@、流式、插入/替换） |
 | 创作规划 | 大纲树 + 场景卡（左侧节点、右侧场景列表与编辑器） |
 | 连续性看板 | 三个页签：时间事实（主体+谓词+客体+来源章节，复核确认/推翻）、伏笔台账（计划→埋设→呼应→回收）、章节摘要（可由事实一键起草）；顶部统计待确认事实与未回收伏笔。事实与伏笔的表单在 `views/Continuity/components/EntityDialogs.vue` |

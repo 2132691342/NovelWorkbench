@@ -148,6 +148,8 @@ func main() {
 	projectService := service.NewProjectService(projectRepo, volumeRepo, chapterRepo, db, service.ProjectCascadeDeps{
 		CharacterRepo:  characterRepo,
 		LoreRepo:       loreRepo,
+		OutlineRepo:    outlineRepo,
+		ContinuityRepo: continuityRepo,
 		ChatRepo:       chatRepo,
 		KnowledgeRepo:  knowledgeRepo,
 		ObjectRepo:     objectRepo,
@@ -293,6 +295,8 @@ func main() {
 		},
 		BuildVersion: cfg.App.BuildVersion,
 	}, providerService)
+	bootstrapService := service.NewBootstrapService(providerService, aiClient, projectRepo, volumeRepo,
+		chapterRepo, characterRepo, loreRepo, outlineRepo, db)
 	router := api.NewRouter(cfg.Server.Mode, api.RouterDeps{
 		AuthMW:      authMW,
 		AuditMW:     auditMW,
@@ -308,6 +312,7 @@ func main() {
 		},
 		AuthAPI:          api.NewAuthAPI(authService),
 		ProjectAPI:       api.NewProjectAPI(projectService),
+		BootstrapAPI:     api.NewBootstrapAPI(bootstrapService),
 		VolumeAPI:        api.NewVolumeAPI(volumeService),
 		ChapterAPI:       api.NewChapterAPI(chapterService),
 		CharacterAPI:     api.NewCharacterAPI(characterService),

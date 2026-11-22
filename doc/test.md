@@ -54,6 +54,8 @@ go test -short -run TestChatContextChain ./internal/service/   # 定位单个链
 | `backend/internal/service/knowledge_chain_test.go` | `TestKnowledgeRetrievalChain` | 文本切片（重叠、边界、非法参数）→ 查询词抽取 → RRF 双通道融合 → 单通道排序与 TopK → 重排解析与 fail-open |
 | `backend/internal/service/knowledge_chain_test.go` | `TestManticoreSchemaMigrationChain` | Manticore 表结构识别 → 旧表重建 → 回灌只执行一次；新结构启动不重建 |
 | `backend/internal/service/menu_chain_test.go` | `TestMenuAndPermissionChain` | 导航可见性过滤 → 菜单树装配 → 权限目录汇总 → 重复权限码去重 → 分组编码与展示名 |
+| `backend/internal/ai/bootstrap_test.go` | `TestParseBootstrapPlanFenced` | 开书方案解析：代码围栏与前后缀文字容错 → 书名 / 卷章 / 角色字段完整取出 |
+| `backend/internal/ai/bootstrap_test.go` | `TestParseBootstrapPlanRejects` | 无 JSON / 缺书名 / 缺卷章 / 非法 JSON 一律报错，不产出半成品方案 |
 
 ### 2.3 覆盖取向
 
@@ -99,6 +101,7 @@ pnpm test # vitest run
 | 登录与导航 | `POST /api/v1/auth/login` 取令牌 → `GET /api/v1/menu/nav` 返回按权限过滤后的导航树 |
 | 业务接口 | 按模块调用列表/详情/写入接口，确认业务码为 `SUCCESS` 且字段符合契约 |
 | AI 流式 | `POST /api/v1/chat/send` 观察 `thinking` → `chunk` → `done` 事件序列与 seq 递增 |
+| AI 开书 | `POST /api/v1/project/bootstrap/plan` 返回方案（卷章 / 角色 / 设定齐全）→ `POST /project/bootstrap/apply` 后 `GET /project/tree/:id` 与 `POST /outline/list` 能查到对应卷章与大纲节点 |
 | 检索 | 上传文档 → 索引任务完成（`indexed`）→ 关键词检索返回命中片段与追踪信息 |
 | 前端 | 浏览器逐页访问，检查渲染、空态、加载态与流式输出 |
 

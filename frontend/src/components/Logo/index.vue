@@ -4,9 +4,11 @@
   import { useAppStore } from '@/store/modules/app'
   import { appConfig } from '@/config/app'
 
+  const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
+
   const appStore = useAppStore()
   const title = appConfig.title
-  const showTitle = computed(() => !appStore.collapse || appStore.mobile)
+  const showTitle = computed(() => !props.compact && (!appStore.collapse || appStore.mobile))
 </script>
 
 <template>

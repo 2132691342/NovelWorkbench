@@ -32,11 +32,11 @@ export const useUserStore = defineStore('user', {
     }
   },
   actions: {
-    async login(params: LoginParams) {
+    async login(params: LoginParams, remember = true) {
       const result = await loginApi(params)
       this.token = result.access_token
       this.userInfo = result.user_vo
-      writeToken(result.access_token)
+      writeToken(result.access_token, remember)
     },
     async fetchProfile() {
       this.userInfo = await profileApi()

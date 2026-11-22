@@ -17,6 +17,8 @@ import (
 type ProjectCascadeDeps struct {
 	CharacterRepo  *repo.CharacterRepo    // 角色与关系边
 	LoreRepo       *repo.LoreRepo         // 世界观设定
+	OutlineRepo    *repo.OutlineRepo      // 大纲节点与场景卡
+	ContinuityRepo *repo.ContinuityRepo   // 时间事实、伏笔与章节摘要
 	ChatRepo       *repo.ChatRepo         // AI 会话与消息
 	KnowledgeRepo  *repo.KnowledgeRepo    // 知识库文档与切片
 	ObjectRepo     *repo.ObjectRepo       // MinIO 原文对象
@@ -90,6 +92,8 @@ func (s *ProjectService) Delete(ctx context.Context, userULID string, req *domai
 		txChapter := repo.NewChapterRepo(tx)
 		txCharacter := repo.NewCharacterRepo(tx)
 		txLore := repo.NewLoreRepo(tx)
+		txOutline := repo.NewOutlineRepo(tx)
+		txContinuity := repo.NewContinuityRepo(tx)
 		txChat := repo.NewChatRepo(tx)
 		txKnowledge := repo.NewKnowledgeRepo(tx)
 		if err := txChapter.DeleteSnapshotsByProject(ctx, req.ProjectULID); err != nil {
@@ -105,6 +109,15 @@ func (s *ProjectService) Delete(ctx context.Context, userULID string, req *domai
 			return err
 		}
 		if err := txLore.DeleteByProject(ctx, req.ProjectULID); err != nil {
+			return err
+		}
+		if err := txOutline.DeleteNodesByProject(ctx, req.ProjectULID); err != nil {
+			return err
+		}
+		if err := txOutline.DeleteScenesByProject(ctx, req.ProjectULID); err != nil {
+			return err
+		}
+		if err := txContinuity.DeleteByProject(ctx, req.ProjectULID); err != nil {
 			return err
 		}
 		if err := txChat.DeleteByProject(ctx, req.ProjectULID); err != nil {

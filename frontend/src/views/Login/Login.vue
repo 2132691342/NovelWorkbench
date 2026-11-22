@@ -1,6 +1,6 @@
 <!-- 登录页：账号密码登录并跳转回原目标。 -->
 <script setup lang="ts">
-  import { computed } from 'vue'
+  import { computed, ref } from 'vue'
   import { ElButton, ElCheckbox, ElForm, ElFormItem, ElInput } from 'element-plus'
   import { useRouter } from 'vue-router'
   import type { LoginParams } from '@/api/login'
@@ -33,12 +33,16 @@
   const submitting = computed(() => state.submitting.value)
   const title = appConfig.title
 
+  /** 记住我：勾选把令牌写入 localStorage，否则只保留到关闭标签页 */
+  const rememberFlag = ref(true)
+
   const signIn = () =>
     actions.submit(async (formData) => {
-      await userStore.login(formData)
+      await userStore.login(formData, rememberFlag.value)
       await menuStore.loadNav()
       emit('success')
-      await router.push('/')
+      const redirectPath = String(router.currentRoute.value.query.redirect ?? '')
+      await router.replace(redirectPath.startsWith('/') ? redirectPath : '/')
     })
 </script>
 
@@ -90,7 +94,9 @@
           />
         </ElFormItem>
 
-        <ElCheckbox class="login-form__remember">{{ t('login.remember') }}</ElCheckbox>
+        <ElCheckbox v-model="rememberFlag" class="login-form__remember" :disabled="submitting">
+          {{ t('login.remember') }}
+        </ElCheckbox>
 
         <ElButton
           native-type="submit"

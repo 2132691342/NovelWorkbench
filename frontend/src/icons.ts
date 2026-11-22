@@ -55,6 +55,7 @@ import stop from '@iconify-icons/mdi/stop'
 import sync from '@iconify-icons/mdi/sync'
 import tagOutline from '@iconify-icons/mdi/tag-outline'
 import viewDashboard from '@iconify-icons/mdi/view-dashboard'
+import viewQuiltOutline from '@iconify-icons/mdi/view-quilt-outline'
 import wand from '@iconify-icons/mdi/wand'
 
 /** 离线图标表：只登记界面实际用到的图标，避免整包引入 iconify 数据集 */
@@ -113,5 +114,6 @@ export const icons = {
   'mdi:sync': sync,
   'mdi:tag-outline': tagOutline,
   'mdi:view-dashboard': viewDashboard,
+  'mdi:view-quilt-outline': viewQuiltOutline,
   'mdi:wand': wand
 } satisfies IconRegistry
