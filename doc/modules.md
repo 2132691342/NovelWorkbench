@@ -121,7 +121,7 @@
 - `MenuService.Save`：分组不能配路由；`validateParent` 阻止指向自己或自己的下级（成环检测，深度上限 32）；`menu_code` 由 `GetByCode` 判重，`perm_code` 由 `CountByPermCode` 判重（排除自身）。
 - `MenuService.Delete`：存在下级时返回 `ERR_CONFLICT`，不做级联。
 - `MenuService.PermissionCatalog` / `buildPermCatalog`：把菜单行上的非空 `perm_code` 按首段分组（`permGroupCode` / `permGroupLabel`），`*` 单独登记为「全部权限」，同一权限码重复登记只展示一次。
-- 前端 `frontend/src/store/modules/menu.ts` 的 `loadNav` 拉取 `GET /menu/nav`，把树与权限码同时写入 menu store 与 user store；`frontend/src/layout/components/NavMenu.vue` 按 `menu_tree_list` 渲染侧边栏，项目内菜单在未选项目时置灰。
+- 前端 `frontend/src/store/modules/menu.ts` 的 `loadNav` 拉取 `GET /menu/nav`，把树与权限码同时写入 menu store 与 user store；`frontend/src/layout/components/Menu.vue` 按 `menu_tree_list` 渲染导航（Element Plus `ElMenu`），项目内菜单在未选项目时置灰。
 
 ### 3.3 边界
 
@@ -659,7 +659,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 | 装配点 | 数据来源 | 消费位置 |
 | --- | --- | --- |
-| 侧边栏导航 | `GET /menu/nav` 的 `menu_tree_list` / `perm_code_list` | `store/modules/menu.ts` 的 `loadNav` → `layout/components/NavMenu.vue` |
+| 侧边栏导航 | `GET /menu/nav` 的 `menu_tree_list` / `perm_code_list` | `store/modules/menu.ts` 的 `loadNav` → `layout/components/Menu.vue` |
 | 项目上下文 | 路由参数 `:project_ulid` 优先，其次 `store/modules/project.ts` 的选中态 | `layout/Layout.vue` 的 `syncFromRoute`、`layout/useNavMenu.ts` |
 | 可用模型 | `GET /model/capability` | `views/Workspace/AiPanel.vue` 的 `modelOptions` |
 | 会话与消息 | `POST /chat/session/list`、`POST /chat/history` | `views/Workspace/AiPanel.vue` |

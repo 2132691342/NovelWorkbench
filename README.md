@@ -28,7 +28,7 @@
 
 - 后端：Go 1.24 + Gin 1.11 + GORM(pgx) 1.31 + Viper 1.21 + Zap 1.28 + eino 0.9（OpenAI 兼容 / Anthropic 双协议）+ Redis + RabbitMQ + MinIO + Manticore，`CGO_ENABLED=0` 静态编译
 - 前端：Vue 3.5 + TypeScript + Vite + Element Plus 2.14 + Pinia + Vue Router + Axios + UnoCSS + ECharts + AntV X6 + CodeMirror 6 + marked + docx-preview + vue-pdf-embed + Vue I18n
-- 测试：Go `testing`（链路级）+ Vitest（纯函数）
+- 测试：Go `testing`（11 条链路级用例）+ Vitest（流式链路），详见 [doc/test.md](doc/test.md)
 - 部署：Docker Compose / Podman Compose，GitHub Actions CI/CD，静态二进制 + nginx SPA
 
 ## 快速开始
@@ -79,10 +79,12 @@ docker-compose.yml  应用编排与本地中间件 profile（对外 14399）
 
 ## 文档
 
+从 [doc/architecture.md](doc/architecture.md) 的「文档地图」开始，按顺序读即可梳理整个项目。
+
 | 文档 | 内容 |
 | --- | --- |
-| [doc/architecture.md](doc/architecture.md) | 系统定位、技术选型、分层约束、请求生命周期、启动装配、核心链路、设计取舍 |
-| [doc/modules.md](doc/modules.md) | 每个业务模块的职责、实现路径、边界与权衡 |
+| [doc/architecture.md](doc/architecture.md) | 文档地图、系统定位、技术选型、分层约束、请求生命周期、启动装配、核心链路、设计取舍 |
+| [doc/modules.md](doc/modules.md) | 每个业务模块的职责、数据结构、实现路径、边界与权衡 |
 | [doc/ai.md](doc/ai.md) | 模型网关、上下文装配、系统提示词档案、技能体系、无向量检索、流式协议（含思考事件）、用量统计 |
 | [doc/skills.md](doc/skills.md) | 提示词资产矩阵：9 个流程域 × (1 份档案 + 2 个技能)、提示词构造规则、指纹升级与维护方式 |
 | [doc/database.md](doc/database.md) | 存储分工、表结构、枚举、非关系存储、事务与一致性、迁移与备份 |

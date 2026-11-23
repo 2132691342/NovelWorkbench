@@ -18,14 +18,14 @@
 | `src/router/` | 静态路由表（全部页面组件在此声明） |
 | `src/permission.ts` | 唯一全局守卫：登录态、导航加载、页面权限码 |
 | `src/store/modules/` | `user`、`menu`、`project`、`app`、`locale`、`tagsView`、`notification` |
-| `src/components/` | 通用组件（Logo、Breadcrumb、TagsView、ContextMenu、Echart、ConfigGlobal、UserInfo、Backtop） |
+| `src/components/` | 通用组件（Logo、Breadcrumb、TagsView、ContextMenu、Collapse、Echart、ConfigGlobal、UserInfo、Backtop、Error） |
 | `src/views/` | 业务页面目录 |
 | `src/composables/` | `usePageQuery.ts`（分页列表状态）、`useSSE.ts`（流式请求） |
 | `src/utils/` | `storage.ts`、`time.ts`、`table.ts`（表格行类型还原）、`routerHelper.ts` |
 | `src/locales/` | 界面壳文案（`zh-CN.ts`），业务文案由后端数据提供 |
-| `packages/components` | `Icon`、`ThemeSwitch`、`LocaleDropdown` 与图标注册表 |
+| `packages/components` | `Icon`（按名称渲染已注册图标）与 `ThemeSwitch`（明暗切换）、图标注册表 |
 | `packages/hooks` | `useForm` 与校验器（表单状态机） |
-| `packages/request` | `createRequest`：axios 实例工厂，含前置钩子、响应解包、错误转交与并发取消 |
+| `packages/request` | `createRequest`：axios 实例工厂，含前置钩子、响应解包与错误转交（只实现业务用到的 GET / POST） |
 | `packages/styles` | 品牌令牌、Element Plus 变量桥接、按钮五态与页面骨架类（唯一改造点） |
 
 ### 1.2 样式加载顺序
@@ -176,7 +176,7 @@
 
 `layout/useNavMenu.ts` 把 `/menu/nav` 的树转成导航节点：项目作用域菜单用当前项目替换 `:project_ulid`，未选项目时**置灰而非隐藏**（点击提示先选项目）；当前高亮按页面路径最长匹配计算，因此带 ULID 的项目页也能正确高亮。
 
-导航渲染在 `layout/components/Menu.vue`，用 Element Plus `ElMenu` / `ElSubMenu` / `ElMenuItem`（与 vue-element-plus-admin 同构），不是自绘列表：折叠、二级展开、弹层与键盘可达性都沿用组件库行为。`mode="horizontal"` 用于顶栏，`mode="vertical"` 用于侧栏。
+导航渲染在 `layout/components/Menu.vue`，用 Element Plus `ElMenu` / `ElSubMenu` / `ElMenuItem`，不是自绘列表：折叠、二级展开、弹层与键盘可达性都沿用组件库行为。`mode="horizontal"` 用于顶栏，`mode="vertical"` 用于侧栏。
 
 `layout/Layout.vue` 支持四种布局（`useAppStore().layout`，顶栏「切换布局」即时生效并持久化）：
 

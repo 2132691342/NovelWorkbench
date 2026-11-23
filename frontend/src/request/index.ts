@@ -90,8 +90,7 @@ const client = createRequest({
       isEnvelope(envelope) ? envelope.trace_id : '',
       response.status
     )
-  },
-  getRequestKey: (config) => config.url ?? ''
+  }
 })
 
 /** 登录相关接口：401 表示凭据错误，不能当成会话过期处理 */
@@ -128,7 +127,5 @@ async function send<Data>(config: RequestOptions, method: 'get' | 'post'): Promi
 
 export default {
   get: <Data = unknown>(config: RequestOptions) => send<Data>(config, 'get'),
-  post: <Data = unknown>(config: RequestOptions) => send<Data>(config, 'post'),
-  cancelRequest: (url: string | string[]) => client.cancelRequest(url),
-  cancelAllRequest: () => client.cancelAllRequest()
+  post: <Data = unknown>(config: RequestOptions) => send<Data>(config, 'post')
 }

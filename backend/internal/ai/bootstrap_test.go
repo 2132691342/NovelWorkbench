@@ -1,11 +1,14 @@
-// 本文件覆盖开书方案解析：围栏容错、缺字段拒绝与结构完整性。
+// 开书方案解析的回归：围栏与前后缀容错 → 结构完整性 → 缺字段拒绝。
+// 解析是开书主链的入口，模型输出格式稍有偏差就会让整份方案作废或落库半成品，
+// 因此把容错与拒绝两条路径合并为一条用例。
 
 package ai
 
 import "testing"
 
-// TestParseBootstrapPlanFenced 验证模型输出带代码围栏与前后缀文字时仍能解析出完整方案。
-func TestParseBootstrapPlanFenced(t *testing.T) {
+// TestParseBootstrapPlanChain 覆盖模型输出到可落库方案的完整解析链路。
+func TestParseBootstrapPlanChain(t *testing.T) {
+	// 步骤1：容错。模型常在 JSON 前后加解释文字或代码围栏，解析必须仍能取出完整结构。
 	content := "好的，方案如下：\n```json\n" +
 		`{"project_name":"长夜行","genre_code":"fantasy","selling_point_text":"废柴弟子必须在三年内筑基",
 "synopsis_text":"简介","style_text":"冷峻",
@@ -26,18 +29,16 @@ func TestParseBootstrapPlanFenced(t *testing.T) {
 	if len(plan.CharacterList) != 1 || plan.CharacterList[0].RoleTypeCode != "protagonist" {
 		t.Fatalf("角色解析不符: %+v", plan.CharacterList)
 	}
-}
 
-// TestParseBootstrapPlanRejects 验证无 JSON、缺书名与缺卷章时均返回错误，不产出半成品方案。
-func TestParseBootstrapPlanRejects(t *testing.T) {
+	// 步骤2：拒绝。无 JSON、缺书名、缺卷章与非法 JSON 一律报错，不产出半成品方案。
 	cases := map[string]string{
-		"无 JSON":  "抱歉，我无法完成。",
-		"缺书名":     `{"project_name":"","volume_list":[{"volume_name":"第一卷","chapter_list":[]}]}`,
-		"缺卷章结构":   `{"project_name":"长夜行","volume_list":[]}`,
-		"非法 JSON": `{"project_name":"长夜行","volume_list":[}`,
+		"无 JSON":     "抱歉，我无法完成。",
+		"缺书名":       `{"project_name":"","volume_list":[{"volume_name":"第一卷","chapter_list":[]}]}`,
+		"缺卷章结构":     `{"project_name":"长夜行","volume_list":[]}`,
+		"非法 JSON":     `{"project_name":"长夜行","volume_list":[}`,
 	}
-	for name, content := range cases {
-		if _, err := ParseBootstrapPlan(content); err == nil {
+	for name, bad := range cases {
+		if _, err := ParseBootstrapPlan(bad); err == nil {
 			t.Fatalf("%s：期望解析失败，实际成功", name)
 		}
 	}

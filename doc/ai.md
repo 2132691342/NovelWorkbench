@@ -241,7 +241,7 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 **指纹升级**：内置技能属于产品资产，但允许作者改。每行存 `asset_hash_text`（出厂内容指纹）与 `customized_flag`。
 启动时按「不存在→插入 / 已自改→不动 / 指纹一致→不动 / 其余→覆盖并写新指纹」处理，
-所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/ai_chain_test.go` 断言域形状、编码唯一、占位符合法与指纹长度。
+所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/builtin_assets_test.go` 断言域形状、编码唯一、占位符合法与指纹长度。
 
 ### 5.3 解析与覆盖
 

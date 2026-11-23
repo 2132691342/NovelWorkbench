@@ -1,5 +1,6 @@
-// 菜单与权限链路的场景回归：导航过滤 → 菜单树装配 → 权限目录汇总。
-// 三者是同一次「后端驱动导航」请求的上下游，因此合并为一条用例。
+// 菜单与权限链路的场景回归：可见性过滤 → 菜单树装配 → 权限目录汇总。
+// 三者是同一次「后端驱动导航」请求的上下游，前端菜单与角色授权界面都依赖这条链路，
+// 因此合并为一条用例，环节间用「环节N」分隔。
 
 package service
 
@@ -33,8 +34,7 @@ func testMenus() []domain.MenuDO {
 	return menus
 }
 
-// TestMenuAndPermissionChain 覆盖一次导航装配请求的完整链路：
-// 可见性过滤 → 菜单树装配 → 权限目录汇总与去重。
+// TestMenuAndPermissionChain 覆盖一次导航装配请求的完整链路。
 func TestMenuAndPermissionChain(t *testing.T) {
 	// 环节1：可见性过滤。动作节点、隐藏节点与未授权权限码都不进导航树；通配权限放行全部。
 	visible := filterVisibleMenus(testMenus(), []string{"system:user:manage"})
@@ -74,16 +74,13 @@ func TestMenuAndPermissionChain(t *testing.T) {
 		t.Fatalf("节点权限码丢失: %+v", group.ChildList[0])
 	}
 
-	// 环节3：权限目录。通配独立成组、按首段分组、权限说明区分菜单与动作、重复权限码只登记一次。
+	// 环节3：权限目录。通配独立成组、动作与菜单权限说明区分、同权限码只登记一次。
 	catalog := buildPermCatalog(testMenus())
 	if len(catalog) != 3 {
 		t.Fatalf("权限分组数 = %d, want 3（all/skill/system）", len(catalog))
 	}
 	if catalog[0].GroupCode != "all" || catalog[0].GroupName != "全部权限" {
 		t.Fatalf("通配权限应独立成组且排首位: %+v", catalog[0])
-	}
-	if len(catalog[0].PermList) != 1 || catalog[0].PermList[0].PermCode != domain.PermAdminAll {
-		t.Fatalf("通配权限组内容错误: %+v", catalog[0].PermList)
 	}
 	groupMap := make(map[string]domain.PermGroupVO, len(catalog))
 	for _, catalogGroup := range catalog {

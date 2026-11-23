@@ -850,6 +850,11 @@ flowchart TD
   P --> CH[characters]
   CH --> CR[character_relations]
   P --> L[lore_settings]
+  P --> ON[outline_nodes]
+  ON --> DS[detailed_scenes]
+  P --> TF[temporal_facts]
+  P --> FH[foreshadow_hooks]
+  P --> CSUM[chapter_summaries]
   P --> CS[chat_sessions]
   CS --> CM[chat_messages]
   P --> KD[knowledge_documents]
@@ -859,7 +864,7 @@ flowchart TD
 
 图中箭头表示归属关系；删除顺序与箭头相反（先删子行）。`ProjectService.Delete` 在单个事务内按下列顺序显式删除（无数据库级联）：
 
-`chapter_snapshots` → `chapters` → `volumes` → `character_relations` + `characters` → `lore_settings` → `chat_messages` + `chat_sessions` → `knowledge_chunks` → `knowledge_documents` → `word_count_stats` → `projects`。
+`chapter_snapshots` → `chapters` → `volumes` → `character_relations` + `characters` → `lore_settings` → `detailed_scenes` → `outline_nodes` → `temporal_facts` + `foreshadow_hooks` + `chapter_summaries` → `chat_messages` + `chat_sessions` → `knowledge_chunks` → `knowledge_documents` → `word_count_stats` → `projects`。
 
 事务提交后执行 `cleanupKnowledgeExternal`：逐文档删 MinIO 对象与 Manticore 行，失败只告警，不回滚数据库。
 
@@ -867,11 +872,6 @@ flowchart TD
 
 | 表 | 原因 |
 | --- | --- |
-| `outline_nodes` | `OutlineRepo` 只有按「项目 + 节点 ULID」的 `DeleteNode`，无按项目批量删除方法 |
-| `detailed_scenes` | 同上，只有 `DeleteScene` |
-| `temporal_facts` | `ContinuityRepo` 只有 Create / Update / Get / List，无 Delete |
-| `foreshadow_hooks` | 同上 |
-| `chapter_summaries` | 同上 |
 | `jobs` | `JobRepo` 只有 Create / Update / Get / List，任务留痕永久保留 |
 | `audit_logs`、`login_logs` | 只有 Create / ListPage，日志只增不删 |
 

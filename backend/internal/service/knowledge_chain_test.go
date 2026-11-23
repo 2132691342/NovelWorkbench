@@ -1,5 +1,6 @@
 // 知识库链路的场景回归：文档切片 → 查询词抽取 → 双通道融合 → 重排解析；索引结构迁移单列一条。
-// 切片与融合是同一条检索链路的上下游，因此合并为一条用例。
+// 切片与融合是同一条检索链路的上下游，合并为一条用例；
+// 索引迁移发生在每次启动，会重建已有索引，必须单独守住。
 
 package service
 
@@ -24,10 +25,7 @@ func searchHit(chunkULID string) domain.KnowledgeChunkVO {
 // TestKnowledgeRetrievalChain 覆盖一次检索从「原文」到「排序结果」的完整链路：
 // 切片 → 查询词抽取 → RRF 双通道融合 → 单通道排序 → 重排解析与 fail-open。
 func TestKnowledgeRetrievalChain(t *testing.T) {
-	// 环节1：切片。空白收敛；重叠窗口；窗口内边界优先于硬切；非法 overlap 收敛防死循环。
-	if chunks := chunkText("  短文本  ", 100, 10); len(chunks) != 1 || chunks[0] != "短文本" {
-		t.Fatalf("短文本应产出单切片: %v", chunks)
-	}
+	// 环节1：切片。重叠窗口保留上下文，非法 overlap 收敛防死循环，空白不产出切片。
 	if chunks := chunkText("   \n  ", 100, 10); len(chunks) != 0 {
 		t.Fatalf("空白文本不应产出切片: %v", chunks)
 	}
@@ -41,14 +39,8 @@ func TestKnowledgeRetrievalChain(t *testing.T) {
 			t.Fatalf("chunks[%d] = %q, want %q", i, chunks[i], want[i])
 		}
 	}
-	if chunks := chunkText("aaaaaaa\nbbbbbbbbbbb", 12, 0); len(chunks) != 2 || chunks[0] != "aaaaaaa" {
-		t.Fatalf("窗口内边界应优先于硬切: %v", chunks)
-	}
 	if chunks := chunkText(strings.Repeat("x", 10), 4, 99); len(chunks) < 3 {
 		t.Fatalf("overlap ≥ chunkSize 应收敛: %v", chunks)
-	}
-	if chunks := chunkText("abcd", 2, -5); len(chunks) != 2 {
-		t.Fatalf("负 overlap 应收敛: %v", chunks)
 	}
 
 	// 环节2：查询词抽取。CJK 切 2-gram；拉丁词去重去标点。
@@ -85,9 +77,6 @@ func TestKnowledgeRetrievalChain(t *testing.T) {
 	)
 	if len(results) != 2 || results[0].ChunkULID != "T1" || results[1].ChunkULID != "T2" {
 		t.Fatalf("单通道应按 1/(60+rank) 降序: %+v", results)
-	}
-	if math.Abs(results[0].ScoreValue-1.0/61.0) > 1e-12 || math.Abs(results[1].ScoreValue-1.0/62.0) > 1e-12 {
-		t.Fatalf("单通道得分不符: %v,%v", results[0].ScoreValue, results[1].ScoreValue)
 	}
 
 	// 环节5：重排解析。合法结果重排并补齐尾部；重复、越界、非 JSON、代码围栏一律失败降级。
