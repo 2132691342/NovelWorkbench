@@ -5,11 +5,9 @@
   import { ElMessageBox } from 'element-plus'
   import { useI18n } from 'vue-i18n'
   import { useUserStore } from '@/store/modules/user'
-  import { useMenuStore } from '@/store/modules/menu'
   import { useProjectStore } from '@/store/modules/project'
 
   const userStore = useUserStore()
-  const menuStore = useMenuStore()
   const projectStore = useProjectStore()
   const router = useRouter()
   const { t } = useI18n()
@@ -27,7 +25,6 @@
     } catch {
       return
     }
-    menuStore.reset()
     projectStore.reset()
     await userStore.logout()
   }

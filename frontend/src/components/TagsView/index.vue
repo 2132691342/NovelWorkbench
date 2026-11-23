@@ -9,7 +9,7 @@
   import type { ContextMenuSchema } from '@/components/ContextMenu/types'
   
   import { createTagView, useTagsViewStore, type TagView } from '@/store/modules/tagsView'
-  import { constantRouterMap } from '@/router'
+  import { usePermissionStore } from '@/store/modules/permission'
   import { filterAffixTags } from './helper'
 
   const prefixCls = 'v-tags-view'
@@ -20,14 +20,15 @@
 
   const tagsViewRef = ref<HTMLElement>()
   const scrollbarRef = ref<ScrollbarInstance>()
-  const routers = computed(() => constantRouterMap)
+  const permissionStore = usePermissionStore()
+  const routers = computed(() => permissionStore.routers)
   const visitedViews = computed(() => tagsViewStore.visitedViews)
   const activeTag = computed(() =>
     visitedViews.value.find((view) => view.path === currentRoute.value.path)
   )
   const defaultPath = computed(
     () =>
-      constantRouterMap
+      permissionStore.routers
         .flatMap((route) => route.children ?? [])
         .find((route) => !route.meta?.hidden)?.path ?? '/'
   )

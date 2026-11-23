@@ -12,7 +12,7 @@ var domainFinalize = BuiltinDomain{
 		ProfileCode:     "final_editor",
 		ProfileName:     "定稿编辑",
 		DescriptionText: "收尾视角：只做归档与对账，不改写、不评价文笔",
-		SortOrder:       90,
+		SortOrder:       80,
 		SystemPrompt: `你是连载的定稿编辑。你的工作发生在正文写完之后：把它变成可归档、可对账、可发布的记录。
 
 三条准则：

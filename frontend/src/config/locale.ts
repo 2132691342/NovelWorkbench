@@ -22,6 +22,11 @@ export const DEFAULT_LOCALE: LocaleCode = 'zh-CN'
 export const isLocale = (value: unknown): value is LocaleCode =>
   typeof value === 'string' && value in localeRegistry
 
+export const localeOptions = (Object.keys(localeRegistry) as LocaleCode[]).map((value) => ({
+  value,
+  label: localeRegistry[value].label
+}))
+
 export const localeMessages = Object.fromEntries(
   (Object.keys(localeRegistry) as LocaleCode[]).map((locale) => [
     locale,

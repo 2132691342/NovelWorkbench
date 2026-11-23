@@ -14,14 +14,17 @@ import (
 
 // UserAdminService 用户管理业务：列表、创建、更新、删除、重置密码、角色挂载、启动期管理员引导。
 type UserAdminService struct {
-	userRepo        *repo.UserRepo       // 用户仓储
-	roleRepo        *repo.RoleRepo       // 角色仓储
-	notificationSvc *NotificationService // 站内通知（账号事件提醒）
+	userRepo        *repo.UserRepo          // 用户仓储
+	roleRepo        *repo.RoleRepo          // 角色仓储
+	providerRepo    *repo.ModelProviderRepo // 模型生态仓储（删用户时清理模型直授）
+	notificationSvc *NotificationService    // 站内通知（账号事件提醒）
 }
 
 // NewUserAdminService 构造用户管理服务（通知服务可空，便于测试）。
-func NewUserAdminService(userRepo *repo.UserRepo, roleRepo *repo.RoleRepo, notificationSvc *NotificationService) *UserAdminService {
-	return &UserAdminService{userRepo: userRepo, roleRepo: roleRepo, notificationSvc: notificationSvc}
+func NewUserAdminService(userRepo *repo.UserRepo, roleRepo *repo.RoleRepo,
+	providerRepo *repo.ModelProviderRepo, notificationSvc *NotificationService) *UserAdminService {
+	return &UserAdminService{userRepo: userRepo, roleRepo: roleRepo,
+		providerRepo: providerRepo, notificationSvc: notificationSvc}
 }
 
 // ListPage 分页查询用户（含角色编码）。
@@ -143,7 +146,7 @@ func (s *UserAdminService) Update(ctx context.Context, req *domain.UserAdminUpda
 	return toUserAdminVO(do, roleCodes), nil
 }
 
-// Delete 删除用户（禁止删除自己；级联清理角色挂载）。
+// Delete 删除用户（禁止删除自己；级联清理角色挂载、模型直授与站内通知）。
 func (s *UserAdminService) Delete(ctx context.Context, req *domain.UserAdminDeleteREQ, operatorULID string) error {
 	if req.UserULID == operatorULID {
 		return pkg.NewBizError(domain.RespCodeBizFailed, "不能删除自己")
@@ -153,6 +156,11 @@ func (s *UserAdminService) Delete(ctx context.Context, req *domain.UserAdminDele
 	}
 	if err := s.roleRepo.DeleteUserRoles(ctx, req.UserULID); err != nil {
 		return err
+	}
+	if s.providerRepo != nil {
+		if err := s.providerRepo.DeleteUserGrantsByUser(ctx, req.UserULID); err != nil {
+			return pkg.WrapBizError(domain.RespCodeStorageError, "模型直授清理失败", err)
+		}
 	}
 	if s.notificationSvc != nil {
 		if err := s.notificationSvc.DeleteByUser(ctx, req.UserULID); err != nil {

@@ -32,10 +32,10 @@ func TestParseBootstrapPlanChain(t *testing.T) {
 
 	// 步骤2：拒绝。无 JSON、缺书名、缺卷章与非法 JSON 一律报错，不产出半成品方案。
 	cases := map[string]string{
-		"无 JSON":     "抱歉，我无法完成。",
-		"缺书名":       `{"project_name":"","volume_list":[{"volume_name":"第一卷","chapter_list":[]}]}`,
-		"缺卷章结构":     `{"project_name":"长夜行","volume_list":[]}`,
-		"非法 JSON":     `{"project_name":"长夜行","volume_list":[}`,
+		"无 JSON":  "抱歉，我无法完成。",
+		"缺书名":     `{"project_name":"","volume_list":[{"volume_name":"第一卷","chapter_list":[]}]}`,
+		"缺卷章结构":   `{"project_name":"长夜行","volume_list":[]}`,
+		"非法 JSON": `{"project_name":"长夜行","volume_list":[}`,
 	}
 	for name, bad := range cases {
 		if _, err := ParseBootstrapPlan(bad); err == nil {

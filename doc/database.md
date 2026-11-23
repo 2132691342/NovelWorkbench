@@ -1,6 +1,6 @@
 # 数据存储设计
 
-本文描述 NovelWorkbench 的存储分工与降级行为、命名约定、33 张表的列结构、枚举取值、非关系存储、启动播种、事务与一致性边界、索引约束、迁移策略与备份恢复要点。
+本文描述 NovelWorkbench 的存储分工与降级行为、命名约定、35 张表的列结构、枚举取值、非关系存储、启动播种、事务与一致性边界、索引约束、迁移策略与备份恢复要点。
 
 ## 1. 存储分工与降级
 
@@ -14,7 +14,7 @@
 
 ```mermaid
 flowchart LR
-  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>33 张表)]
+  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>35 张表)]
   SVC -->|PutObject/GetObject| MINIO[(MinIO<br/>novelworkbench)]
   SVC -->|HTTP SQL| MC[(Manticore<br/>nw_chunks)]
   REPO[repo 层] -->|SET/EXISTS| REDIS[(Redis<br/>nw:token:blacklist:*)]
@@ -108,7 +108,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ## 3. 表结构
 
-`AutoMigrate` 一次性声明 33 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）、`updated_at timestamptz`（`autoUpdateTime`）、`created_by varchar(40)` 与 `updated_by varchar(40)`，来自 `domain.BaseDO`，下表不再重复列出。
+`AutoMigrate` 一次性声明 35 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）、`updated_at timestamptz`（`autoUpdateTime`）、`created_by varchar(40)` 与 `updated_by varchar(40)`，来自 `domain.BaseDO`，下表不再重复列出。
 
 `created_by` / `updated_by` 由 GORM 回调自动填充（`pkg.RegisterActorCallbacks`）：`AuthMiddleware` 把当前登录用户 ULID 注入请求 context，回调在 `gorm:create` / `gorm:update` 之前写入对应列。显式赋值优先，不会被覆盖；系统任务（无登录态）留空串。不使用软删除——业务删除是硬删除，且 `user_name`、`role_code`、`menu_code` 带唯一索引，软删除会让已删行长期占位、无法重建同名资源。
 
@@ -174,15 +174,27 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | 列 | 类型 | 约束 | 用途 |
 | --- | --- | --- | --- |
 | `audit_ulid` | `varchar(40)` | PK | 审计 ULID（`AUD_`） |
+| `log_level_code` | `varchar(16)` | `idx_audit_logs_log_level_code` | 级别：`info`（2xx/3xx）/ `warn`（4xx）/ `error`（5xx），由 HTTP 状态推导 |
+| `trace_id` | `varchar(40)` | `idx_audit_logs_trace_id` | 链路 ID，与响应包络 `trace_id` 同值 |
 | `user_ulid` | `varchar(40)` | `idx_audit_logs_user_ul_id` | 操作者，未登录为空串 |
 | `user_name` | `varchar(64)` | `idx_audit_logs_user_name` | 操作者登录名快照 |
 | `action_code` | `varchar(128)` | `idx_audit_logs_action_code` | 接口路径去 `/api/v1/` 前缀 |
-| `target_type` | `varchar(32)` | | 目标类型 |
+| `request_path` | `varchar(256)` | | 完整请求路径 |
+| `request_method` | `varchar(8)` | | `GET` / `POST` |
+| `request_body` | `text` | | 请求体（凭据字段脱敏为 `***`；上传与超 32KB 不采样） |
+| `target_type` | `varchar(32)` | `idx_audit_logs_target_type` | 目标类型：user/role/menu/project/chapter/document/skill/tool/model/provider/prompt_profile/chat_session/notification |
 | `target_ulid` | `varchar(40)` | `idx_audit_logs_target_ul_id` | 目标 ULID |
-| `detail_text` | `varchar(512)` | | 补充信息（如 `status=200`） |
+| `resp_code` | `varchar(32)` | `idx_audit_logs_resp_code` | 业务响应码（如 `SUCCESS`、`ERR_CONFLICT`） |
+| `resp_message` | `varchar(512)` | | 业务响应说明，失败时为原因 |
+| `http_status` | `int` | | HTTP 状态码 |
+| `latency_ms` | `bigint` | | 处理耗时（毫秒） |
 | `ip_addr` | `varchar(64)` | | 客户端 IP |
+| `user_agent_text` | `varchar(512)` | | 客户端 UA |
 
-写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`；落库失败只告警，不阻断业务。`AuditRepo` 只有 `Create` 与 `ListPage`，无删除路径。
+写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`；
+中间件缓冲响应体前 8KB 解析包络（业务码与说明）后透传，普通响应不受影响。
+落库失败只告警，不阻断业务。`AuditRepo` 有 `Create`、`GetByULID`、`ListPage`，无删除路径；
+`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤，历史行缺级别时按 HTTP 状态补全。
 
 #### login_logs
 
@@ -415,7 +427,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 切片由 `KnowledgeWorker.indexDocument` 生成：按 `app.chunk_size` / `app.chunk_overlap` 滑窗切分，命中既有同哈希切片时复用其 `chunk_ulid`，否则新建；同一文档的切片在同一事务内先删后插。
 
-### 3.5 对话、技能与提示词档案（5 张）
+### 3.5 对话、技能、档案与工具（6 张）
 
 #### chat_sessions
 
@@ -496,7 +508,28 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 与技能同构：作用域内编码唯一由 `PromptProfileRepo.CountByCode` 查重保证（无唯一索引），内置档案由 `PromptProfileService.SeedDefaults` 播种并按 `asset_hash_text` 做版本升级，写入走 `prompt:manage` 权限。
 
-### 3.6 模型与用量（4 张）
+#### tools
+
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `tool_ulid` | `varchar(40)` | PK | 工具 ULID（`TOL_`） |
+| `tool_code` | `varchar(32)` | UNIQUE `idx_tools_tool_code` | 工具编码（`#编码` 触发） |
+| `tool_name` | `varchar(64)` | | 工具名称 |
+| `tool_type_code` | `varchar(16)` | `idx_tools_tool_type_code` | `builtin`（当前仅内置，服务端函数实现） |
+| `description_text` | `varchar(256)` | | 一句话说明（模型与用户可见） |
+| `trigger_keywords` | `varchar(256)` | | 自动触发关键词（逗号分隔） |
+| `param_schema_json` | `text` | | 参数声明 JSON 数组（`ToolParamDO`） |
+| `enabled_flag` | `boolean` | `DEFAULT true` | 是否启用 |
+| `builtin_flag` | `boolean` | `DEFAULT false` | 内置工具不可删除，可停用 |
+| `asset_hash_text` | `varchar(64)` | | 出厂指纹（sha256） |
+| `customized_flag` | `boolean` | `DEFAULT false` | 改过则代码升级不覆盖 |
+| `sort_order` | `bigint` | | 排序号 |
+
+工具与技能的分工：技能让模型「按格式写」，工具让服务端「先算出事实」。内置 6 个工具全部是确定性逻辑
+（`ai/check.Analyze` + 仓储读），不额外消耗模型调用；结果以「工具结果」上下文块注入（优先级等同技能参考资料）。
+播种与执行在 `service/tool_service.go`，出厂定义在 `ai/builtin_tools.go`，写入走 `tool:manage` 权限。
+
+### 3.6 模型与用量（5 张）
 
 #### model_providers
 
@@ -545,7 +578,21 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `model_ulid` | `varchar(40)` | `idx_model_role_grants_model_ul_id` | 模型 |
 | `role_ulid` | `varchar(40)` | `idx_model_role_grants_role_ul_id` | 角色 |
 
-授权整体覆盖：`ModelProviderRepo.ReplaceGrants` 在同一事务内先删后插。删除模型前先 `DeleteGrantsByModel`。无授权行时仅管理员可用；可用模型 = 模型启用 ∧ 供应商启用 ∧（管理员 ∨ 命中角色授权）。
+授权整体覆盖：`ModelProviderRepo.ReplaceGrants` 在同一事务内先删后插。删除模型前先 `DeleteGrantsByModel`。无授权行时仅管理员可用。
+
+#### model_user_grants
+
+| 列 | 类型 | 约束 | 用途 |
+| --- | --- | --- | --- |
+| `grant_ulid` | `varchar(40)` | PK | 授权 ULID（`MUG_`） |
+| `model_ulid` | `varchar(40)` | `idx_model_user_grants_model_ul_id` | 模型 |
+| `user_ulid` | `varchar(40)` | `idx_model_user_grants_user_ul_id` | 用户 |
+
+用户直授与角色授权取并集：`ReplaceUserGrants` 整体覆盖；`DeleteUserGrantsByUser` 在删用户时级联清理；
+`DeleteRoleGrantsByRole` 在删角色时清理该角色的模型授权。因此删除用户/角色不会留下悬空授权，
+模型列表对已删除用户显示「已删除用户」占位，便于管理员发现历史遗留。
+
+可用模型 = 模型启用 ∧ 供应商启用 ∧（管理员 ∨ 命中角色授权 ∨ 命中用户直授）。
 
 #### model_usage_stats
 
@@ -793,7 +840,7 @@ ORDER BY score DESC LIMIT <topK>
 | 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model` 且 `model_providers` 为空 | 告警，继续启动 |
 | 2 | `ModelProviderService.MigrateLegacyModels` 把 `model_providers.chat_model_name` 非空的行转成 `model_catalogs` 行 | `model_catalogs` 为空 | 告警，继续启动 |
 | 3 | `SkillService.SeedDefaults` 播种 18 个内置全局技能并按指纹升级、下线旧内置技能 | 按 `(global, "", skill_code)` 查行：不存在则插入；`customized_flag` 或指纹一致则跳过；否则覆盖正文并写新指纹。不在 `BuiltinSkillCodeSet` 内的内置技能连带参考资料删除 | `os.Exit(1)` |
-| 3.1 | `PromptProfileService.SeedDefaults` 播种 9 份内置全局提示词档案并按指纹升级 | 同上；已下线编码的内置档案直接删除 | `os.Exit(1)` |
+| 3.1 | `PromptProfileService.SeedDefaults` 播种 12 份内置全局提示词档案并按指纹升级 | 同上；已下线编码的内置档案直接删除 | `os.Exit(1)` |
 | 4 | `SettingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插；已存在时仅同步 `setting_desc` | `os.Exit(1)` |
 | 5 | `RoleService.SeedDefaults` 播种内置角色 | 按 `role_code` 查缺补插 | `os.Exit(1)` |
 | 6 | `MenuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插，父级编码先解析 | `os.Exit(1)` |

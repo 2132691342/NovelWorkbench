@@ -1,58 +1,88 @@
-<!-- 布局外壳：sidebar / top / mixed / dual 四种布局，导航统一由后端菜单树驱动。 -->
+<!-- 布局外壳：sidebar / top / mixed / dual 四种布局，导航由后端菜单树生成的路由驱动。 -->
 <script setup lang="ts">
-  import { computed, ref, watch } from 'vue'
-  import { useRoute } from 'vue-router'
+  import { computed, watch } from 'vue'
   import { ElScrollbar } from 'element-plus'
+  import { useRouter } from 'vue-router'
   import { useAppStore } from '@/store/modules/app'
   import { useProjectStore } from '@/store/modules/project'
-  import Logo from '@/components/Logo/index.vue'
+  import { usePermissionStore } from '@/store/modules/permission'
+  import { isUrl, pathResolve, substituteProject } from '@/utils/routerHelper'
+  import Menu from '@/components/Menu/index.vue'
   import TagsView from '@/components/TagsView/index.vue'
+  import Logo from '@/components/Logo/index.vue'
   import Backtop from '@/components/Backtop/index.vue'
   import AppView from './components/AppView.vue'
   import ToolHeader from './components/ToolHeader.vue'
-  import Menu from './components/Menu.vue'
-  import { useNavMenu, type NavNode } from './useNavMenu'
+  import PrimaryNav from './components/PrimaryNav.vue'
 
   const appStore = useAppStore()
   const projectStore = useProjectStore()
-  const route = useRoute()
-  const { navNodes, activeKey } = useNavMenu()
+  const permissionStore = usePermissionStore()
+  const router = useRouter()
 
+  const visibleRoutes = computed(() =>
+    permissionStore.routers.filter((route) => !route.meta?.hidden)
+  )
   const layout = computed(() => (appStore.mobile ? 'sidebar' : appStore.layout))
-  const collapsed = computed(() => appStore.collapse && !appStore.mobile)
-
-  /** 当前页面所属的一级分组（mixed/dual 的二级菜单来源） */
-  const routeGroupKey = computed(() => {
-    const hit = (node: NavNode): boolean =>
-      node.key === activeKey.value || node.children.some((child) => child.key === activeKey.value)
-    return navNodes.value.find(hit)?.key ?? ''
-  })
-
-  /** dual 布局下用户手动选中的一级分组：默认跟随当前路由 */
-  const pickedGroupKey = ref('')
-  watch(routeGroupKey, (key) => {
-    if (key) pickedGroupKey.value = key
-  }, { immediate: true })
-
-  const activeGroup = computed<NavNode | undefined>(() => {
-    const key = pickedGroupKey.value || routeGroupKey.value
-    const picked = navNodes.value.find((node) => node.key === key && node.children.length > 0)
-    // 当前页是顶层页面（仪表盘/系统设置）时没有所属分组，退到首个有子项的分组，避免二级栏空白
-    return picked ?? navNodes.value.find((node) => node.children.length > 0)
-  })
-
-  /** 一级导航：分组只切换二级菜单，页面直接跳转 */
-  const primaryNodes = computed<NavNode[]>(() =>
-    navNodes.value.map((node) =>
-      node.children.length > 0 ? { ...node, path: '', disabled: false } : node
-    )
+  const activePrimary = computed(
+    () =>
+      visibleRoutes.value.find(
+        (route) =>
+          router.currentRoute.value.path === route.path ||
+          router.currentRoute.value.path.startsWith(`${route.path}/`)
+      ) ?? visibleRoutes.value[0]
   )
 
-  const secondaryNodes = computed<NavNode[]>(() => activeGroup.value?.children ?? [])
+  const makeAbsoluteRoutes = (
+    routes: AppRouteRecordRaw[],
+    parentPath: string
+  ): AppRouteRecordRaw[] =>
+    routes.map((route) => {
+      const path = isUrl(route.path) ? route.path : pathResolve(parentPath, route.path)
+      return {
+        ...route,
+        path,
+        children: route.children ? makeAbsoluteRoutes(route.children, path) : undefined
+      }
+    })
 
-  // 深链进入项目页时同步项目选中态，顶栏切换器与项目作用域菜单据此高亮
+  const secondaryRoutes = computed(() =>
+    activePrimary.value?.children
+      ? makeAbsoluteRoutes(activePrimary.value.children, activePrimary.value.path)
+      : []
+  )
+
+  /** 菜单 index 必须是可点击的具体路径：项目作用域路由补当前项目 */
+  const menuRoutes = computed(() =>
+    substituteProject(visibleRoutes.value, projectStore.currentProjectUlid)
+  )
+  const menuSecondaryRoutes = computed(() =>
+    substituteProject(secondaryRoutes.value, projectStore.currentProjectUlid)
+  )
+
+  const firstRoutePath = (route: AppRouteRecordRaw, parentPath = '/'): string => {
+    if (typeof route.redirect === 'string') return route.redirect
+    const path = isUrl(route.path) ? route.path : pathResolve(parentPath, route.path)
+    const child = route.children?.find((item) => !item.meta?.hidden)
+    return child ? firstRoutePath(child, path) : path
+  }
+
+  const selectPrimary = (route: AppRouteRecordRaw) => {
+    const path = firstRoutePath(route)
+    if (isUrl(path)) {
+      window.open(path)
+    } else {
+      router.push(path)
+    }
+  }
+
+  const closeMobileMenu = () => {
+    appStore.collapse = true
+  }
+
+  // 深链进入项目页时同步项目选中态：顶栏切换器与项目作用域页面据此高亮/取数
   watch(
-    () => String(route.params.project_ulid ?? ''),
+    () => String(router.currentRoute.value.params.project_ulid ?? ''),
     (projectUlid) => {
       if (projectUlid) void projectStore.syncFromRoute(projectUlid)
     },
@@ -61,51 +91,61 @@
 </script>
 
 <template>
-  <section class="nw-layout" :class="`nw-layout--${layout}`">
-    <header class="nw-layout__topbar">
-      <Logo :compact="layout === 'dual'" />
-      <Menu
-        v-if="layout === 'top' || layout === 'mixed'"
-        mode="horizontal"
-        :nodes="primaryNodes"
-        @group-select="pickedGroupKey = $event"
+  <section :class="['v-layout', `v-layout--${layout}`]">
+    <header v-if="layout === 'top' || layout === 'mixed'" class="v-layout__topbar">
+      <Logo />
+      <Menu v-if="layout === 'top'" mode="horizontal" :routers="menuRoutes" />
+      <PrimaryNav
+        v-else
+        :routes="menuRoutes"
+        :active-path="activePrimary?.path"
+        @select="selectPrimary"
       />
-      <ToolHeader :class="{ 'is-inline': layout === 'top' || layout === 'mixed' }" />
+      <ToolHeader
+        :show-collapse="layout === 'mixed'"
+        :show-breadcrumb="false"
+        class="v-layout__top-tools"
+      />
     </header>
 
-    <div class="nw-layout__body">
-      <aside v-if="layout === 'sidebar'" :class="['nw-layout__sidebar', { 'is-collapsed': collapsed }]">
-        <ElScrollbar>
-          <Menu :collapsed="collapsed" />
-        </ElScrollbar>
+    <div class="v-layout__body">
+      <aside
+        v-if="layout === 'sidebar'"
+        :class="[
+          'v-layout__sidebar',
+          { 'is-collapsed': appStore.collapse, 'is-mobile': appStore.mobile }
+        ]"
+      >
+        <Logo />
+        <Menu :routers="menuRoutes" />
       </aside>
 
-      <aside v-if="layout === 'dual'" class="nw-layout__rail">
+      <aside v-if="layout === 'dual'" class="v-layout__rail">
+        <Logo compact />
         <ElScrollbar>
-          <Menu
-            mode="vertical"
-            collapsed
-            :nodes="primaryNodes"
-            @group-select="pickedGroupKey = $event"
+          <PrimaryNav
+            mode="rail"
+            :routes="visibleRoutes"
+            :active-path="activePrimary?.path"
+            @select="selectPrimary"
           />
         </ElScrollbar>
       </aside>
 
       <aside
         v-if="layout === 'mixed' || layout === 'dual'"
-        :class="['nw-layout__secondary', { 'is-collapsed': collapsed && layout === 'mixed' }]"
+        :class="['v-layout__secondary', { 'is-collapsed': appStore.collapse }]"
       >
-        <div v-if="layout === 'mixed' && !collapsed" class="nw-layout__secondary-title">
-          {{ activeGroup?.label ?? '' }}
+        <div v-if="!appStore.collapse" class="v-layout__secondary-title">
+          {{ activePrimary?.meta?.title ? $t(activePrimary.meta.title) : '' }}
         </div>
-        <ElScrollbar>
-          <Menu mode="vertical" :nodes="secondaryNodes" />
-        </ElScrollbar>
+        <Menu :routers="menuSecondaryRoutes" />
       </aside>
 
-      <main class="nw-layout__workspace">
-        <TagsView class="nw-layout__tags" />
-        <ElScrollbar v-loading="appStore.pageLoading" class="nw-layout__scroll">
+      <main class="v-layout__workspace">
+        <ToolHeader v-if="layout === 'sidebar' || layout === 'dual'" class="v-layout__toolbar" />
+        <TagsView class="v-layout__tags" />
+        <ElScrollbar v-loading="appStore.pageLoading" class="v-layout-content-scrollbar">
           <AppView />
         </ElScrollbar>
       </main>
@@ -113,10 +153,10 @@
 
     <button
       v-if="appStore.mobile && !appStore.collapse"
-      class="nw-layout__mask"
+      class="v-layout__mask"
       type="button"
       aria-label="关闭导航菜单"
-      @click="appStore.collapse = true"
+      @click="closeMobileMenu"
     ></button>
 
     <Backtop />
@@ -124,7 +164,7 @@
 </template>
 
 <style lang="less" scoped>
-  .nw-layout {
+  .v-layout {
     display: flex;
     flex-direction: column;
     width: 100%;
@@ -136,26 +176,22 @@
       z-index: 20;
       display: flex;
       flex: none;
-      gap: 8px;
       align-items: center;
       height: var(--top-tool-height);
-      background: var(--top-header-bg-color);
+      background: color-mix(in srgb, var(--top-header-bg-color) 94%, transparent);
       border-bottom: 1px solid var(--layout-border-color);
       box-shadow: var(--layout-shadow);
+      backdrop-filter: blur(16px);
 
-      :deep(.nw-logo) {
+      :deep(.v-logo) {
         min-width: var(--left-menu-max-width);
       }
+    }
 
-      /* 顶栏已承载主菜单时，工具区收窄：只隐藏面包屑与布局文字，项目切换仍保留 */
-      :deep(.nw-tool-header.is-inline) {
-        flex: none;
-
-        .nw-tool-header__breadcrumb,
-        .nw-tool-header__layout-label {
-          display: none;
-        }
-      }
+    &__top-tools {
+      flex: none;
+      padding-left: 6px;
+      border-left: 1px solid var(--layout-border-color);
     }
 
     &__body {
@@ -164,16 +200,24 @@
       min-height: 0;
     }
 
-    &__sidebar {
+    &__sidebar,
+    &__secondary,
+    &__rail {
       z-index: 30;
       display: flex;
       flex: none;
       flex-direction: column;
-      width: var(--left-menu-max-width);
       min-height: 0;
+      overflow: hidden;
       background: var(--left-menu-bg-color);
       border-right: 1px solid var(--layout-border-color);
-      transition: width var(--transition-time-02);
+      transition:
+        width var(--transition-time-02),
+        transform var(--transition-time-02);
+    }
+
+    &__sidebar {
+      width: var(--left-menu-max-width);
 
       &.is-collapsed {
         width: var(--left-menu-min-width);
@@ -181,52 +225,52 @@
     }
 
     &__secondary {
-      z-index: 25;
-      display: flex;
-      flex: none;
-      flex-direction: column;
       width: var(--left-menu-max-width);
-      min-height: 0;
       background: var(--left-menu-bg-light-color);
-      border-right: 1px solid var(--layout-border-color);
-      transition: width var(--transition-time-02);
+
+      :deep(.v-menu) {
+        background: transparent !important;
+      }
 
       &.is-collapsed {
-        display: none;
-      }
-    }
-
-    &__rail {
-      z-index: 30;
-      display: flex;
-      flex: none;
-      flex-direction: column;
-      width: var(--left-menu-min-width);
-      min-height: 0;
-      background: var(--left-menu-bg-color);
-      border-right: 1px solid var(--layout-border-color);
-
-      :deep(.nw-menu__label) {
-        display: none;
-      }
-
-      :deep(.el-sub-menu__icon-arrow) {
-        display: none;
+        width: var(--left-menu-min-width);
       }
     }
 
     &__secondary-title {
-      display: flex;
       flex: none;
-      align-items: center;
-      height: 44px;
+      height: 46px;
       padding: 0 18px;
-      font-size: 12px;
+      overflow: hidden;
+      font-size: 13px;
       font-weight: 700;
-      letter-spacing: 0.06em;
-      color: var(--nw-text-muted);
-      text-transform: uppercase;
+      line-height: 46px;
+      color: var(--logo-title-text-color);
+      text-overflow: ellipsis;
+      white-space: nowrap;
       border-bottom: 1px solid var(--layout-border-color);
+
+      &::before {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        margin-right: 9px;
+        vertical-align: 1px;
+        background: var(--el-color-primary);
+        border-radius: 50%;
+        box-shadow: 0 0 0 4px var(--el-color-primary-light-9);
+        content: '';
+      }
+    }
+
+    &__rail {
+      width: var(--layout-rail-width);
+
+      :deep(.v-logo) {
+        justify-content: center;
+        width: var(--layout-rail-width);
+        padding: 0;
+      }
     }
 
     &__workspace {
@@ -237,13 +281,21 @@
       min-height: 0;
     }
 
+    &__toolbar,
     &__tags {
+      z-index: 10;
       flex: none;
-      background: var(--top-header-bg-color);
+      background: color-mix(in srgb, var(--top-header-bg-color) 96%, transparent);
       border-bottom: 1px solid var(--layout-border-color);
+      backdrop-filter: blur(16px);
     }
 
-    &__scroll {
+    &__toolbar {
+      z-index: 20;
+      box-shadow: var(--layout-shadow);
+    }
+
+    &-content-scrollbar {
       flex: 1;
       min-height: 0;
     }
@@ -255,47 +307,34 @@
       cursor: pointer;
       background: rgb(15 23 42 / 45%);
       border: 0;
-    }
-
-    /* dual：图标栏 + 二级菜单，图标栏不显示文字 */
-    &--dual .nw-layout__sidebar {
-      :deep(.nw-menu__label) {
-        display: none;
-      }
-
-      :deep(.el-sub-menu__icon-arrow) {
-        display: none;
-      }
-    }
-
-    /* top/mixed：顶栏承载主菜单，内容区不再有左侧一级菜单 */
-    &--top .nw-layout__workspace,
-    &--mixed .nw-layout__workspace {
-      min-width: 0;
+      backdrop-filter: blur(2px);
     }
   }
 
   @media (width <= 767px) {
-    .nw-layout__sidebar {
-      position: fixed;
-      inset: var(--top-tool-height) auto 0 0;
-      z-index: 30;
-      width: min(82vw, var(--left-menu-max-width));
-      box-shadow: 20px 0 50px rgb(15 23 42 / 25%);
+    .v-layout {
+      &__sidebar.is-mobile {
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 30;
+        width: min(82vw, var(--left-menu-max-width));
+        box-shadow: 20px 0 50px rgb(15 23 42 / 25%);
 
-      &.is-collapsed {
-        transform: translateX(-100%);
+        &.is-collapsed {
+          transform: translateX(-100%);
+        }
+
+        :deep(.v-menu) {
+          width: 100%;
+        }
       }
-    }
-
-    .nw-layout__secondary {
-      display: none;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .nw-layout__sidebar,
-    .nw-layout__secondary {
+    .v-layout__sidebar,
+    .v-layout__secondary,
+    .v-layout__rail {
       transition: none;
     }
   }

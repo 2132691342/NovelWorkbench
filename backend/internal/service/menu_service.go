@@ -10,49 +10,51 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/repo"
 )
 
-// menuSeed 内置菜单定义（编码 → 层级、路由、图标、权限码；启动期按编码查缺补插）。
+// menuSeed 内置菜单定义（编码 → 层级、路由、组件、图标、权限码；启动期按编码查缺补插）。
 type menuSeed struct {
-	MenuCode     string // 菜单编码
-	ParentCode   string // 上级菜单编码
-	MenuName     string // 菜单名称
-	MenuTypeCode string // 类型：group/page/action
-	ScopeCode    string // 作用域：global/project
-	RoutePath    string // 路由路径
-	IconCode     string // 图标编码
-	PermCode     string // 权限码
-	SortOrder    int    // 排序号
+	MenuCode      string // 菜单编码
+	ParentCode    string // 上级菜单编码
+	MenuName      string // 菜单名称
+	MenuTypeCode  string // 类型：group/page/action
+	ScopeCode     string // 作用域：global/project
+	RoutePath     string // 路由路径
+	ComponentPath string // 前端组件路径（views/Xxx/index）
+	IconCode      string // 图标编码
+	PermCode      string // 权限码
+	SortOrder     int    // 排序号
 }
 
 // menuSeedList 内置菜单清单（导航与权限登记的唯一来源）。
 var menuSeedList = []menuSeed{
-	{MenuCode: "dashboard", MenuName: "仪表盘", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/dashboard", IconCode: "dashboard", SortOrder: 10},
+	{MenuCode: "dashboard", MenuName: "工作台", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/dashboard", ComponentPath: "views/Dashboard/index", IconCode: "dashboard", SortOrder: 10},
 
 	{MenuCode: "group_project", MenuName: "创作", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "book", SortOrder: 20},
-	{MenuCode: "workspace", ParentCode: "group_project", MenuName: "写作台", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/workspace/:project_ulid", IconCode: "edit", SortOrder: 10},
-	{MenuCode: "outline", ParentCode: "group_project", MenuName: "创作规划", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/outline/:project_ulid", IconCode: "tree", SortOrder: 20},
-	{MenuCode: "continuity", ParentCode: "group_project", MenuName: "连续性看板", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/continuity/:project_ulid", IconCode: "shield", SortOrder: 30},
-	{MenuCode: "character", ParentCode: "group_project", MenuName: "角色管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/character/:project_ulid", IconCode: "user", SortOrder: 40},
-	{MenuCode: "lore", ParentCode: "group_project", MenuName: "世界观设定", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/lore/:project_ulid", IconCode: "globe", SortOrder: 50},
-	{MenuCode: "knowledge", ParentCode: "group_project", MenuName: "知识库", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/knowledge/:project_ulid", IconCode: "database", SortOrder: 60},
-	{MenuCode: "notes", ParentCode: "group_project", MenuName: "素材笔记", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/notes/:project_ulid", IconCode: "note", SortOrder: 70},
+	{MenuCode: "workspace", ParentCode: "group_project", MenuName: "写作台", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/workspace/:project_ulid", ComponentPath: "views/Workspace/index", IconCode: "edit", SortOrder: 10},
+	{MenuCode: "outline", ParentCode: "group_project", MenuName: "创作规划", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/outline/:project_ulid", ComponentPath: "views/Outline/index", IconCode: "tree", SortOrder: 20},
+	{MenuCode: "continuity", ParentCode: "group_project", MenuName: "连续性看板", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/continuity/:project_ulid", ComponentPath: "views/Continuity/index", IconCode: "shield", SortOrder: 30},
+	{MenuCode: "character", ParentCode: "group_project", MenuName: "角色管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/character/:project_ulid", ComponentPath: "views/Character/index", IconCode: "user", SortOrder: 40},
+	{MenuCode: "lore", ParentCode: "group_project", MenuName: "世界观设定", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/lore/:project_ulid", ComponentPath: "views/Lore/index", IconCode: "globe", SortOrder: 50},
+	{MenuCode: "knowledge", ParentCode: "group_project", MenuName: "知识库", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/knowledge/:project_ulid", ComponentPath: "views/Knowledge/index", IconCode: "database", SortOrder: 60},
+	{MenuCode: "notes", ParentCode: "group_project", MenuName: "素材笔记", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/notes/:project_ulid", ComponentPath: "views/Notes/index", IconCode: "note", SortOrder: 70},
 
-	{MenuCode: "group_platform", MenuName: "平台", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "layers", SortOrder: 30},
-	{MenuCode: "models", ParentCode: "group_platform", MenuName: "模型供应商", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/models", IconCode: "model", PermCode: domain.PermModelManage, SortOrder: 10},
-	{MenuCode: "skills", ParentCode: "group_platform", MenuName: "技能管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/skills", IconCode: "wand", PermCode: domain.PermSkillManage, SortOrder: 20},
-	{MenuCode: "prompts", ParentCode: "group_platform", MenuName: "提示词档案", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/prompts", IconCode: "sparkles", PermCode: domain.PermPromptManage, SortOrder: 25},
-	{MenuCode: "notifications", ParentCode: "group_platform", MenuName: "通知中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/notifications", IconCode: "bell", SortOrder: 30},
+	{MenuCode: "group_platform", MenuName: "AI 资产", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "layers", SortOrder: 30},
+	{MenuCode: "models", ParentCode: "group_platform", MenuName: "模型供应商", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/models", ComponentPath: "views/Models/index", IconCode: "model", PermCode: domain.PermModelManage, SortOrder: 10},
+	{MenuCode: "skills", ParentCode: "group_platform", MenuName: "技能管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/skills", ComponentPath: "views/Skills/index", IconCode: "wand", PermCode: domain.PermSkillManage, SortOrder: 20},
+	{MenuCode: "tools", ParentCode: "group_platform", MenuName: "工具管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/tools", ComponentPath: "views/Tools/index", IconCode: "tool", PermCode: domain.PermToolManage, SortOrder: 25},
+	{MenuCode: "prompts", ParentCode: "group_platform", MenuName: "提示词档案", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/prompts", ComponentPath: "views/Prompts/index", IconCode: "sparkles", PermCode: domain.PermPromptManage, SortOrder: 30},
+	{MenuCode: "notifications", ParentCode: "group_platform", MenuName: "通知中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/notifications", ComponentPath: "views/Notifications/index", IconCode: "bell", SortOrder: 40},
 
 	{MenuCode: "group_system", MenuName: "系统", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "settings", SortOrder: 40},
-	{MenuCode: "admin_users", ParentCode: "group_system", MenuName: "用户管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/users", IconCode: "users", PermCode: domain.PermUserManage, SortOrder: 10},
-	{MenuCode: "admin_roles", ParentCode: "group_system", MenuName: "角色权限", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/roles", IconCode: "key", PermCode: domain.PermRoleManage, SortOrder: 20},
-	{MenuCode: "admin_menus", ParentCode: "group_system", MenuName: "菜单管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/menus", IconCode: "menu", PermCode: domain.PermMenuManage, SortOrder: 30},
-	{MenuCode: "admin_perms", ParentCode: "group_system", MenuName: "权限目录", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/permissions", IconCode: "lock", PermCode: domain.PermPermissionRead, SortOrder: 40},
-	{MenuCode: "admin_audit", ParentCode: "group_system", MenuName: "审计日志", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/audit", IconCode: "history", PermCode: domain.PermAuditRead, SortOrder: 50},
-	{MenuCode: "admin_login_log", ParentCode: "group_system", MenuName: "登录日志", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/login-logs", IconCode: "lock", PermCode: domain.PermLoginLogRead, SortOrder: 55},
-	{MenuCode: "admin_usage", ParentCode: "group_system", MenuName: "用量分析", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/usage", IconCode: "chart", PermCode: domain.PermUsageRead, SortOrder: 60},
-	{MenuCode: "admin_jobs", ParentCode: "group_system", MenuName: "任务中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/jobs", IconCode: "pulse", PermCode: domain.PermJobManage, SortOrder: 65},
-	{MenuCode: "admin_status", ParentCode: "group_system", MenuName: "运行状态", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/status", IconCode: "pulse", PermCode: domain.PermSystemRead, SortOrder: 70},
-	{MenuCode: "settings", MenuName: "系统设置", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/settings", IconCode: "sliders", PermCode: domain.PermSettingManage, SortOrder: 50},
+	{MenuCode: "admin_users", ParentCode: "group_system", MenuName: "用户管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/users", ComponentPath: "views/Admin/Users", IconCode: "users", PermCode: domain.PermUserManage, SortOrder: 10},
+	{MenuCode: "admin_roles", ParentCode: "group_system", MenuName: "角色权限", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/roles", ComponentPath: "views/Admin/Roles", IconCode: "key", PermCode: domain.PermRoleManage, SortOrder: 20},
+	{MenuCode: "admin_menus", ParentCode: "group_system", MenuName: "菜单管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/menus", ComponentPath: "views/Admin/Menus", IconCode: "menu", PermCode: domain.PermMenuManage, SortOrder: 30},
+	{MenuCode: "admin_perms", ParentCode: "group_system", MenuName: "权限目录", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/permissions", ComponentPath: "views/Admin/Permissions", IconCode: "lock", PermCode: domain.PermPermissionRead, SortOrder: 40},
+	{MenuCode: "admin_audit", ParentCode: "group_system", MenuName: "审计日志", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/audit", ComponentPath: "views/Admin/Audit", IconCode: "history", PermCode: domain.PermAuditRead, SortOrder: 50},
+	{MenuCode: "admin_login_log", ParentCode: "group_system", MenuName: "登录日志", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/login-logs", ComponentPath: "views/Admin/LoginLogs", IconCode: "lock", PermCode: domain.PermLoginLogRead, SortOrder: 55},
+	{MenuCode: "admin_usage", ParentCode: "group_system", MenuName: "用量分析", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/usage", ComponentPath: "views/Admin/Usage", IconCode: "chart", PermCode: domain.PermUsageRead, SortOrder: 60},
+	{MenuCode: "admin_jobs", ParentCode: "group_system", MenuName: "任务中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/jobs", ComponentPath: "views/Admin/Jobs", IconCode: "pulse", PermCode: domain.PermJobManage, SortOrder: 65},
+	{MenuCode: "admin_status", ParentCode: "group_system", MenuName: "运行状态", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/status", ComponentPath: "views/Admin/Status", IconCode: "pulse", PermCode: domain.PermSystemRead, SortOrder: 70},
+	{MenuCode: "settings", MenuName: "系统设置", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/settings", ComponentPath: "views/Settings/index", IconCode: "sliders", PermCode: domain.PermSettingManage, SortOrder: 50},
 
 	// 动作权限（不进入导航，仅登记权限码，由角色勾选后控制接口）
 	{MenuCode: "action_model_write", MenuName: "维护模型供应商", MenuTypeCode: domain.MenuTypeAction, ScopeCode: domain.MenuScopeGlobal, PermCode: domain.PermModelManage, SortOrder: 910},
@@ -93,18 +95,19 @@ func (s *MenuService) SeedDefaults(ctx context.Context) error {
 			parentULID = resolved
 		}
 		do := &domain.MenuDO{
-			MenuULID:     pkg.NewULID(domain.IDPrefixMenu),
-			ParentULID:   parentULID,
-			MenuCode:     item.MenuCode,
-			MenuName:     item.MenuName,
-			MenuTypeCode: item.MenuTypeCode,
-			ScopeCode:    item.ScopeCode,
-			RoutePath:    item.RoutePath,
-			IconCode:     item.IconCode,
-			PermCode:     item.PermCode,
-			VisibleFlag:  true,
-			EnabledFlag:  true,
-			SortOrder:    item.SortOrder,
+			MenuULID:      pkg.NewULID(domain.IDPrefixMenu),
+			ParentULID:    parentULID,
+			MenuCode:      item.MenuCode,
+			MenuName:      item.MenuName,
+			MenuTypeCode:  item.MenuTypeCode,
+			ScopeCode:     item.ScopeCode,
+			RoutePath:     item.RoutePath,
+			ComponentPath: item.ComponentPath,
+			IconCode:      item.IconCode,
+			PermCode:      item.PermCode,
+			VisibleFlag:   true,
+			EnabledFlag:   true,
+			SortOrder:     item.SortOrder,
 		}
 		if item.ScopeCode == "" {
 			do.ScopeCode = domain.MenuScopeGlobal
@@ -131,6 +134,9 @@ func (s *MenuService) syncSeed(ctx context.Context, existing *domain.MenuDO, ite
 	}
 	if existing.RoutePath != item.RoutePath {
 		fields["route_path"] = item.RoutePath
+	}
+	if existing.ComponentPath != item.ComponentPath {
+		fields["component_path"] = item.ComponentPath
 	}
 	if existing.IconCode != item.IconCode {
 		fields["icon_code"] = item.IconCode
@@ -190,14 +196,15 @@ func buildMenuTree(dos []domain.MenuDO, parentULID string) []domain.MenuTreeNode
 			continue
 		}
 		node := domain.MenuTreeNodeVO{
-			MenuCode:     dos[i].MenuCode,
-			MenuName:     dos[i].MenuName,
-			MenuTypeCode: dos[i].MenuTypeCode,
-			ScopeCode:    dos[i].ScopeCode,
-			RoutePath:    dos[i].RoutePath,
-			IconCode:     dos[i].IconCode,
-			PermCode:     dos[i].PermCode,
-			ChildList:    buildMenuTree(dos, dos[i].MenuULID),
+			MenuCode:      dos[i].MenuCode,
+			MenuName:      dos[i].MenuName,
+			MenuTypeCode:  dos[i].MenuTypeCode,
+			ScopeCode:     dos[i].ScopeCode,
+			RoutePath:     dos[i].RoutePath,
+			ComponentPath: dos[i].ComponentPath,
+			IconCode:      dos[i].IconCode,
+			PermCode:      dos[i].PermCode,
+			ChildList:     buildMenuTree(dos, dos[i].MenuULID),
 		}
 		nodes = append(nodes, node)
 	}
@@ -280,19 +287,20 @@ func (s *MenuService) Save(ctx context.Context, req *domain.MenuREQ) (domain.Men
 	}
 	if req.MenuULID == "" {
 		do := &domain.MenuDO{
-			MenuULID:     pkg.NewULID(domain.IDPrefixMenu),
-			ParentULID:   req.ParentULID,
-			MenuCode:     req.MenuCode,
-			MenuName:     req.MenuName,
-			MenuTypeCode: req.MenuTypeCode,
-			ScopeCode:    scopeCode,
-			RoutePath:    req.RoutePath,
-			IconCode:     req.IconCode,
-			PermCode:     req.PermCode,
-			VisibleFlag:  visibleFlag,
-			EnabledFlag:  enabledFlag,
-			SortOrder:    req.SortOrder,
-			RemarkText:   req.RemarkText,
+			MenuULID:      pkg.NewULID(domain.IDPrefixMenu),
+			ParentULID:    req.ParentULID,
+			MenuCode:      req.MenuCode,
+			MenuName:      req.MenuName,
+			MenuTypeCode:  req.MenuTypeCode,
+			ScopeCode:     scopeCode,
+			RoutePath:     req.RoutePath,
+			ComponentPath: req.ComponentPath,
+			IconCode:      req.IconCode,
+			PermCode:      req.PermCode,
+			VisibleFlag:   visibleFlag,
+			EnabledFlag:   enabledFlag,
+			SortOrder:     req.SortOrder,
+			RemarkText:    req.RemarkText,
 		}
 		if err := s.menuRepo.Create(ctx, do); err != nil {
 			return domain.MenuVO{}, err
@@ -313,6 +321,7 @@ func (s *MenuService) Save(ctx context.Context, req *domain.MenuREQ) (domain.Men
 		"menu_type_code": req.MenuTypeCode,
 		"scope_code":     scopeCode,
 		"route_path":     req.RoutePath,
+		"component_path": req.ComponentPath,
 		"icon_code":      req.IconCode,
 		"perm_code":      req.PermCode,
 		"visible_flag":   visibleFlag,
@@ -329,6 +338,7 @@ func (s *MenuService) Save(ctx context.Context, req *domain.MenuREQ) (domain.Men
 	current.MenuTypeCode = req.MenuTypeCode
 	current.ScopeCode = scopeCode
 	current.RoutePath = req.RoutePath
+	current.ComponentPath = req.ComponentPath
 	current.IconCode = req.IconCode
 	current.PermCode = req.PermCode
 	current.VisibleFlag = visibleFlag

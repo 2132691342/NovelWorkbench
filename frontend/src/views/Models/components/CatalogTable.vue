@@ -81,19 +81,33 @@
           {{ row.context_window_count ? row.context_window_count.toLocaleString() : '—' }}
         </template>
       </ElTableColumn>
-      <ElTableColumn label="授权角色" min-width="150">
+      <ElTableColumn label="授权" min-width="200">
         <template #default="{ row }">
           <div class="cell-tags">
             <ElTag
               v-for="roleName in row.role_name_list"
-              :key="roleName"
+              :key="`role-${roleName}`"
               size="small"
               effect="plain"
               type="success"
             >
-              {{ roleName }}
+              角色 · {{ roleName }}
             </ElTag>
-            <span v-if="row.role_name_list.length === 0" class="nw-hint">仅管理员</span>
+            <ElTag
+              v-for="userLabel in row.user_label_list"
+              :key="`user-${userLabel}`"
+              size="small"
+              effect="plain"
+              type="warning"
+            >
+              用户 · {{ userLabel }}
+            </ElTag>
+            <span
+              v-if="row.role_name_list.length === 0 && row.user_label_list.length === 0"
+              class="nw-hint"
+            >
+              仅管理员
+            </span>
           </div>
         </template>
       </ElTableColumn>
@@ -120,7 +134,7 @@
           <ElButton size="small" text :disabled="row.default_flag" @click="emit('setDefault', row as NWModelCatalogVo)">
             设默认
           </ElButton>
-          <ElButton size="small" text @click="emit('grant', row as NWModelCatalogVo)">授权角色</ElButton>
+          <ElButton size="small" text @click="emit('grant', row as NWModelCatalogVo)">授权使用</ElButton>
           <ElButton size="small" text @click="emit('edit', row as NWModelCatalogVo)">编辑</ElButton>
           <ElButton size="small" text type="danger" @click="emit('remove', row as NWModelCatalogVo)">删除</ElButton>
         </template>

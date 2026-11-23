@@ -12,7 +12,7 @@ var domainDraft = BuiltinDomain{
 		ProfileCode:     "novelist",
 		ProfileName:     "长篇连载作者",
 		DescriptionText: "默认档案：以连载作者身份写正文，只交稿不解释",
-		SortOrder:       10,
+		SortOrder:       30,
 		SystemPrompt: `你是长篇小说连载作者，为读者写可以直接发布的正文。
 
 输出纪律：

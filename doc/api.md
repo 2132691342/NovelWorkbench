@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 业务基础路径 | `/api/v1` | `router.go` 的 `v1 := router.Group("/api/v1")` |
 | 探针路径 | `/health`、`/ready`，注册在 `/api/v1` 之外 | `router.go` 的 `NewRouter` |
-| 接口总数 | `/api/v1` 下 111 条，另有 2 条探针，共 113 条 | `router.go` |
+| 接口总数 | `/api/v1` 下 120 条，另有 2 条探针，共 122 条 | `router.go` |
 | 允许方法 | 仅 `GET` / `POST`；`OPTIONS` 只用于 CORS 预检 | `pkg.MethodWhitelistMiddleware` |
 | 请求编码 | `POST` 默认 `application/json`（`ShouldBindJSON`）；`/knowledge/upload` 为 `multipart/form-data` | 各 `*_api.go` |
 | 查询参数 | `GET` 用 query（`ShouldBindQuery`），路径变量用 `c.Param` | 各 `*_api.go` |
@@ -119,7 +119,7 @@ flowchart LR
 
 ## 5. 权限码
 
-权限码定义在 `backend/internal/domain/role.go`，共 14 个常量。`RequirePermMiddleware` 通过 `pkg.PermChecker`（由 `service.RoleService` 实现）判定，命中 `*` 视为全部权限。
+权限码定义在 `backend/internal/domain/role.go`，共 15 个常量。`RequirePermMiddleware` 通过 `pkg.PermChecker`（由 `service.RoleService` 实现）判定，命中 `*` 视为全部权限。
 
 | 权限码 | 常量 | 校验路由 |
 | --- | --- | --- |
@@ -137,6 +137,7 @@ flowchart LR
 | `system:job:manage` | `PermJobManage` | `/admin/job/list`、`/admin/job/stats`、`/admin/job/retry` |
 | `skill:manage` | `PermSkillManage` | `/skill/save`、`/skill/delete`、`/skill/reference/save`、`/skill/reference/delete` |
 | `prompt:manage` | `PermPromptManage` | `/prompt/profile/save`、`/prompt/profile/delete` |
+| `tool:manage` | `PermToolManage` | `/tool/save`、`/tool/delete` |
 
 未列入上表的其余 `/api/v1` 路由均为「登录用户即可访问」，数据范围由归属校验收窄。
 
@@ -325,6 +326,20 @@ flowchart LR
 - 内置技能 `builtin_flag=true`：不可删除（返回 `ERR_BIZ_FAILED`），可停用或改提示词；`scope_code` 与 `skill_code` 不可改。保存内容与出厂指纹不同时 `customized_flag` 置 `true`，此后代码升级不再覆盖该行；改回出厂内容会置回 `false`。
 - `PromptProfileVO`：`prompt_profile_ulid`、`prompt_profile_code`、`prompt_profile_name`、`scope_code`、`project_ulid`、`description_text`、`system_prompt_text`、`builtin_flag`、`enabled_flag`、`customized_flag`、`domain_code` / `domain_name`、`sort_order`、`updated_at`。作用域规则与技能一致；项目档案的归属校验比技能更严（`mustOwnProject`，校验创建者）。内置档案不可删、编码不可改，可改正文与名称。
 
+### 7.10.1 工具（4）
+
+| 方法 | 路径 | 权限 | 请求 | 响应 data | Handler |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/tool/list` | 登录用户 | query：`keyword_text`、`enabled_only` | `[]ToolVO` | `ToolAPI.List` |
+| POST | `/tool/invoke` | 登录用户 | `ToolInvokeREQ`（`project_ulid`、`tool_code`、`chapter_ulid`、`content_text`、`param_value`） | `ToolInvokeDTO`（`result_text`、`metric_map`、`latency_ms`） | `ToolAPI.Invoke` |
+| POST | `/tool/save` | `tool:manage` | `ToolREQ` | `ToolVO` | `ToolAPI.Save` |
+| POST | `/tool/delete` | `tool:manage` | `ToolDeleteREQ` | `null` | `ToolAPI.Delete` |
+
+- 内置工具不可删、不可改编码；`customized_flag` 由名称/说明/关键词/参数的改动推导，改过后代码升级不再覆盖。
+- `/tool/invoke` 按登录用户执行归属校验（`project_ulid` 必须属于本人），结果只读、不写项目数据；`content_text` 为空时回落到 `chapter_ulid` 的库内正文。
+- 对话期自动触发不看权限码，只看工具 `enabled_flag` 与正文是否命中 `trigger_keywords`，单次最多 2 个。
+
+
 ### 7.11 菜单与权限目录（6）
 
 | 方法 | 路径 | 权限 | 请求 | 响应 data | Handler |
@@ -490,6 +505,7 @@ flowchart LR
 | POST | `/admin/role/save` | `system:role:manage` | `RoleSaveREQ` | `RoleVO` | `RoleAPI.Save` |
 | POST | `/admin/role/delete` | `system:role:manage` | `RoleDeleteREQ` | `null` | `RoleAPI.Delete` |
 | POST | `/admin/audit/list` | `system:audit:read` | `AuditListREQ` | `PageDTO<AuditVO>` | `AuditAPI.List` |
+| GET | `/admin/audit/detail/:AuditULID` | `system:audit:read` | 路径变量 | `AuditDetailVO` | `AuditAPI.Detail` |
 | POST | `/admin/login_log/list` | `system:loginlog:read` | `LoginLogListREQ` | `PageDTO<LoginLogVO>` | `LoginLogAPI.List` |
 | POST | `/admin/job/list` | `system:job:manage` | `JobListREQ` | `PageDTO<JobVO>` | `JobAPI.List` |
 | GET | `/admin/job/stats` | `system:job:manage` | 无 | `JobStatsVO` | `JobAPI.Stats` |
@@ -497,7 +513,7 @@ flowchart LR
 
 - 用户：`UserAdminCreateREQ`（`user_name` 3–64、`user_email`、`password_text` 6–64、`role_codes`、`remark_text`），用户名或邮箱重复返回 `ERR_CONFLICT`，`role_codes` 为空时默认挂 `user` 角色；`UserAdminUpdateREQ.role_codes` 为整体覆盖语义；`UserResetPasswordREQ` 只收 `user_ulid` 与 `new_password_text`；不能删除自己（`ERR_BIZ_FAILED`）。
 - 角色：`RoleListREQ` 仅含分页字段；`RoleSaveREQ`：`role_ulid`、`role_code`、`role_name`、`remark_text`、`perm_codes`（≤32）。内置角色（`admin` / `user`）不可删除（`ERR_BIZ_FAILED`）、不可改编码；仍有用户挂载的角色不可删除（`ERR_CONFLICT`）；角色编码重复返回 `ERR_CONFLICT`。
-- 审计：`AuditListREQ`：分页字段 + `action_code`（模糊）+ `user_ulid`（精确）。`AuditVO` 含 `audit_ulid`、`user_ulid`、`user_name`、`action_code`、`target_type`、`target_ulid`、`detail_text`、`ip_addr`、`created_at`。
+- 审计：`AuditListREQ`：分页字段 + `log_level_code`（`info`/`warn`/`error`）+ `trace_id`（精确）+ `target_type` + `action_code`（模糊）+ `keyword_text`（路径/用户/响应说明模糊）+ `user_ulid` + `date_from`/`date_to`（`YYYY-MM-DD`）。`AuditVO` 含 `audit_ulid`、`log_level_code`、`trace_id`、`user_ulid`、`user_name`、`action_code`、`request_path`、`request_method`、`target_type`、`target_ulid`、`resp_code`、`resp_message`、`http_status`、`latency_ms`、`ip_addr`、`user_agent_text`、`created_at`；`AuditDetailVO` 额外含 `request_body`（凭据字段脱敏；上传请求与超过 32KB 的请求体不采样）。
 - 登录日志：`LoginLogListREQ`：分页字段 + `keyword_text`（账号/IP）+ `login_result_code`（`success` / `failed` / `disabled`）+ `date_from` / `date_to`。
 - 任务：`JobListREQ`：分页字段 + `job_type_code`、`job_status_code`、`keyword_text`。状态 `queued` / `running` / `success` / `failed`，类型 `doc_index` / `doc_reindex`；重试仅接受 `failed`，成功后任务回到 `queued`、文档回到 `pending`。`JobStatsVO` 给四态计数。
 

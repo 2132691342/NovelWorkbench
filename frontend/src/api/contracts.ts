@@ -135,6 +135,7 @@ export interface NWMenuItemVo {
   menu_type_code: string
   scope_code: string
   route_path: string
+  component_path: string
   icon_code: string
   perm_code: string
   child_list: NWMenuItemVo[]

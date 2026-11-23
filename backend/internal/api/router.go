@@ -35,6 +35,7 @@ type RouterDeps struct {
 	SettingAPI       *SettingAPI       // 应用配置模块处理器
 	StatsAPI         *StatsAPI         // 数据总览模块处理器
 	ChatAPI          *ChatAPI          // AI 对话模块处理器
+	ToolAPI          *ToolAPI          // AI 工具模块处理器
 	UserAdminAPI     *UserAdminAPI     // 用户管理模块处理器
 	RoleAPI          *RoleAPI          // 角色管理模块处理器
 	AuditAPI         *AuditAPI         // 审计日志模块处理器
@@ -80,6 +81,7 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	registerOutlineRoutes(v1, deps.OutlineAPI)
 	registerContinuityRoutes(v1, deps.ContinuityAPI)
 	registerSkillRoutes(v1, deps)
+	registerToolRoutes(v1, deps)
 	registerPromptProfileRoutes(v1, deps)
 	registerSettingRoutes(v1, deps)
 	registerStatsRoutes(v1, deps.StatsAPI)
@@ -160,6 +162,7 @@ func registerAdminRoutes(rg *gin.RouterGroup, deps RouterDeps) {
 	auditGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermAuditRead))
 	{
 		auditGroup.POST("/list", deps.AuditAPI.List)
+		auditGroup.GET("/detail/:AuditULID", deps.AuditAPI.Detail)
 	}
 	loginLogGroup := rg.Group("/admin/login_log")
 	loginLogGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermLoginLogRead))
@@ -222,6 +225,7 @@ func registerChapterRoutes(rg *gin.RouterGroup, handler *ChapterAPI) {
 	rg.POST("/chapter/delete", handler.Delete)
 	rg.GET("/chapter/detail/:ChapterULID", handler.Detail)
 	rg.GET("/chapter/snapshot/list/:ChapterULID", handler.SnapshotList)
+	rg.POST("/chapter/check", handler.Check)
 	rg.POST("/chapter/snapshot/create", handler.SnapshotCreate)
 	rg.POST("/chapter/snapshot/restore", handler.SnapshotRestore)
 }
@@ -269,6 +273,19 @@ func registerSkillRoutes(rg *gin.RouterGroup, deps RouterDeps) {
 		skillWrite.POST("/delete", deps.SkillAPI.Delete)
 		skillWrite.POST("/reference/save", deps.SkillAPI.ReferenceSave)
 		skillWrite.POST("/reference/delete", deps.SkillAPI.ReferenceDelete)
+	}
+}
+
+// registerToolRoutes 注册工具路由（读对所有登录用户开放，写收口到 tool:manage，试运行按登录用户执行）。
+func registerToolRoutes(rg *gin.RouterGroup, deps RouterDeps) {
+	toolGroup := rg.Group("/tool")
+	toolGroup.GET("/list", deps.ToolAPI.List)
+	toolGroup.POST("/invoke", deps.ToolAPI.Invoke)
+	toolWrite := toolGroup.Group("")
+	toolWrite.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermToolManage))
+	{
+		toolWrite.POST("/save", deps.ToolAPI.Save)
+		toolWrite.POST("/delete", deps.ToolAPI.Delete)
 	}
 }
 

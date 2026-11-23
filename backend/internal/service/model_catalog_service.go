@@ -41,12 +41,63 @@ func (s *ModelProviderService) ListModels(ctx context.Context, providerULID stri
 	for i := range roleDOS {
 		roleNameMap[roleDOS[i].RoleULID] = roleDOS[i].RoleName
 	}
+	userGrantMap, err := s.providerRepo.ListUserGrantsByModelULIDList(ctx, modelULIDList)
+	if err != nil {
+		return nil, pkg.WrapBizError(domain.RespCodeStorageError, "模型用户直授读取失败", err)
+	}
+	userLabelMap, err := s.userLabelMap(ctx, userGrantMap)
+	if err != nil {
+		return nil, err
+	}
 	vos := make([]domain.ModelCatalogVO, 0, len(modelDOS))
 	for i := range modelDOS {
-		vos = append(vos, s.toModelVO(&modelDOS[i], providerMap[modelDOS[i].ProviderULID],
-			grantMap[modelDOS[i].ModelULID], roleNameMap))
+		vo := s.toModelVO(&modelDOS[i], providerMap[modelDOS[i].ProviderULID],
+			grantMap[modelDOS[i].ModelULID], roleNameMap)
+		vo.UserULIDList = userGrantMap[modelDOS[i].ModelULID]
+		vo.UserLabelList = userLabelList(vo.UserULIDList, userLabelMap)
+		vos = append(vos, vo)
 	}
 	return vos, nil
+}
+
+// userLabelMap 批量把用户 ULID 映射为登录名（模型列表一次查询，防 N+1）。
+func (s *ModelProviderService) userLabelMap(ctx context.Context, grantMap map[string][]string) (map[string]string, error) {
+	labelMap := make(map[string]string, 8)
+	if len(grantMap) == 0 || s.userRepo == nil {
+		return labelMap, nil
+	}
+	seen := make(map[string]bool, 8)
+	userULIDList := make([]string, 0, 8)
+	for _, list := range grantMap {
+		for _, userULID := range list {
+			if seen[userULID] {
+				continue
+			}
+			seen[userULID] = true
+			userULIDList = append(userULIDList, userULID)
+		}
+	}
+	userDOS, err := s.userRepo.ListByULIDList(ctx, userULIDList)
+	if err != nil {
+		return nil, pkg.WrapBizError(domain.RespCodeStorageError, "用户列表读取失败", err)
+	}
+	for i := range userDOS {
+		labelMap[userDOS[i].UserULID] = userDOS[i].UserName
+	}
+	return labelMap, nil
+}
+
+// userLabelList 按 ULID 顺序组装展示名（已删除用户显示占位，便于管理员发现悬空授权）。
+func userLabelList(userULIDList []string, labelMap map[string]string) []string {
+	labels := make([]string, 0, len(userULIDList))
+	for _, userULID := range userULIDList {
+		label, ok := labelMap[userULID]
+		if !ok || label == "" {
+			label = "已删除用户"
+		}
+		labels = append(labels, label)
+	}
+	return labels
 }
 
 // SaveModel 创建/更新模型（model_ulid 为空创建；default_flag 全局唯一；role_ulid_list 整体覆盖授权）。
@@ -87,6 +138,9 @@ func (s *ModelProviderService) SaveModel(ctx context.Context, req *domain.ModelC
 		if err := s.providerRepo.ReplaceGrants(ctx, do.ModelULID, req.RoleULIDList); err != nil {
 			return domain.ModelCatalogVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "模型授权失败", err)
 		}
+		if err := s.providerRepo.ReplaceUserGrants(ctx, do.ModelULID, req.UserULIDList); err != nil {
+			return domain.ModelCatalogVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "模型用户直授失败", err)
+		}
 		return s.modelVOOf(ctx, do.ModelULID)
 	}
 	current, err := s.providerRepo.GetModelByULID(ctx, req.ModelULID)
@@ -126,6 +180,11 @@ func (s *ModelProviderService) SaveModel(ctx context.Context, req *domain.ModelC
 	if req.RoleULIDList != nil {
 		if err := s.providerRepo.ReplaceGrants(ctx, req.ModelULID, req.RoleULIDList); err != nil {
 			return domain.ModelCatalogVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "模型授权失败", err)
+		}
+	}
+	if req.UserULIDList != nil {
+		if err := s.providerRepo.ReplaceUserGrants(ctx, req.ModelULID, req.UserULIDList); err != nil {
+			return domain.ModelCatalogVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "模型用户直授失败", err)
 		}
 	}
 	return s.modelVOOf(ctx, req.ModelULID)
@@ -198,7 +257,7 @@ func (s *ModelProviderService) TestModel(ctx context.Context, req *domain.ModelC
 	return dto, nil
 }
 
-// GrantModel 整体覆盖模型的角色授权（按角色分配模型使用权限）。
+// GrantModel 整体覆盖模型的授权（角色授权 + 用户直授；管理员不受限）。
 func (s *ModelProviderService) GrantModel(ctx context.Context, req *domain.ModelGrantREQ) error {
 	modelDO, err := s.providerRepo.GetModelByULID(ctx, req.ModelULID)
 	if err != nil {
@@ -208,7 +267,10 @@ func (s *ModelProviderService) GrantModel(ctx context.Context, req *domain.Model
 		return pkg.NewBizError(domain.RespCodeNotFound, "模型不存在")
 	}
 	if err := s.providerRepo.ReplaceGrants(ctx, req.ModelULID, req.RoleULIDList); err != nil {
-		return pkg.WrapBizError(domain.RespCodeStorageError, "模型授权失败", err)
+		return pkg.WrapBizError(domain.RespCodeStorageError, "模型角色授权失败", err)
+	}
+	if err := s.providerRepo.ReplaceUserGrants(ctx, req.ModelULID, req.UserULIDList); err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "模型用户直授失败", err)
 	}
 	return nil
 }
@@ -230,6 +292,14 @@ func (s *ModelProviderService) modelVOOf(ctx context.Context, modelULID string) 
 	if err != nil {
 		return domain.ModelCatalogVO{}, err
 	}
+	userGrantMap, err := s.providerRepo.ListUserGrantsByModelULIDList(ctx, []string{modelULID})
+	if err != nil {
+		return domain.ModelCatalogVO{}, err
+	}
+	userLabelMap, err := s.userLabelMap(ctx, userGrantMap)
+	if err != nil {
+		return domain.ModelCatalogVO{}, err
+	}
 	roleDOS, err := s.roleRepo.ListAll(ctx)
 	if err != nil {
 		return domain.ModelCatalogVO{}, err
@@ -238,7 +308,10 @@ func (s *ModelProviderService) modelVOOf(ctx context.Context, modelULID string) 
 	for i := range roleDOS {
 		roleNameMap[roleDOS[i].RoleULID] = roleDOS[i].RoleName
 	}
-	return s.toModelVO(modelDO, providerDO, grantMap[modelULID], roleNameMap), nil
+	vo := s.toModelVO(modelDO, providerDO, grantMap[modelULID], roleNameMap)
+	vo.UserULIDList = userGrantMap[modelULID]
+	vo.UserLabelList = userLabelList(vo.UserULIDList, userLabelMap)
+	return vo, nil
 }
 
 // toModelVO 组装模型视图对象（供应商快照 + 角色授权）。

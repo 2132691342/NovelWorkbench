@@ -72,10 +72,12 @@ func main() {
 		&domain.ModelProviderDO{},
 		&domain.ModelCatalogDO{},
 		&domain.ModelRoleGrantDO{},
+		&domain.ModelUserGrantDO{},
 		&domain.ModelUsageStatDO{},
 		&domain.NotificationDO{},
 		&domain.LoginLogDO{},
 		&domain.PromptProfileDO{},
+		&domain.ToolDO{},
 	); err != nil {
 		pkg.SLogger().Errorw("数据库迁移失败", "error", err)
 		os.Exit(1)
@@ -134,14 +136,15 @@ func main() {
 	mqRepo := repo.NewMQRepo(mqConn, cfg.RabbitMQ.QueueDocIndex)
 	notificationRepo := repo.NewNotificationRepo(db)
 	loginLogRepo := repo.NewLoginLogRepo(db)
+	providerRepo := repo.NewModelProviderRepo(db)
 
 	notificationService := service.NewNotificationService(notificationRepo)
 	loginLogService := service.NewLoginLogService(loginLogRepo)
 	jobService := service.NewJobService(jobRepo, knowledgeRepo, mqRepo)
 	authService := service.NewAuthService(userRepo, roleRepo, signer, tokenRepo, loginLogService, notificationService)
-	roleService := service.NewRoleService(roleRepo, userRepo)
+	roleService := service.NewRoleService(roleRepo, userRepo, providerRepo)
 	menuService := service.NewMenuService(menuRepo, roleService)
-	userAdminService := service.NewUserAdminService(userRepo, roleRepo, notificationService)
+	userAdminService := service.NewUserAdminService(userRepo, roleRepo, providerRepo, notificationService)
 	auditService := service.NewAuditService(auditRepo, userRepo)
 	outlineService := service.NewOutlineService(outlineRepo, projectRepo)
 	continuityService := service.NewContinuityService(continuityRepo, projectRepo)
@@ -161,6 +164,7 @@ func main() {
 	characterService := service.NewCharacterService(characterRepo, projectRepo, db)
 	loreService := service.NewLoreService(loreRepo, projectRepo)
 	skillService := service.NewSkillService(skillRepo, projectRepo)
+	toolService := service.NewToolService(repo.NewToolRepo(db), projectRepo, chapterRepo, characterRepo, loreRepo, continuityRepo)
 	promptProfileRepo := repo.NewPromptProfileRepo(db)
 	promptProfileService := service.NewPromptProfileService(promptProfileRepo, projectRepo)
 	settingService := service.NewSettingService(settingRepo)
@@ -171,12 +175,11 @@ func main() {
 		aiTimeoutSec = 60 // 默认模型调用超时（秒）
 	}
 	aiClient := ai.NewClient()
-	providerRepo := repo.NewModelProviderRepo(db)
 	usageRepo := repo.NewModelUsageRepo(db)
 	usageService := service.NewModelUsageService(usageRepo, ctx)
 	aiClient.SetUsageRecorder(usageService)
-	providerService := service.NewModelProviderService(providerRepo, roleRepo, aiClient, cfg.JWT.Secret,
-		time.Duration(aiTimeoutSec)*time.Second)
+	providerService := service.NewModelProviderService(providerRepo, roleRepo, userRepo, aiClient,
+		cfg.JWT.Secret, time.Duration(aiTimeoutSec)*time.Second)
 	// 供应商表为空且配置了网关时播种默认供应商（配置文件即"出厂默认"，之后在页面上管理）。
 	if cfg.AI.BaseURL != "" && cfg.AI.ChatModel != "" {
 		if err := providerService.SeedDefault(ctx, service.ProviderSeed{
@@ -206,10 +209,14 @@ func main() {
 	knowledgeService := service.NewKnowledgeService(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
 		settingRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, knowledgeRepo,
-		continuityRepo, settingRepo, skillService, promptProfileService, knowledgeService, providerService, aiClient, db,
+		continuityRepo, settingRepo, skillService, promptProfileService, knowledgeService, toolService, providerService, aiClient, db,
 		service.ChatConfig{HistoryCount: cfg.AI.HistoryCount})
 
 	// 内置技能与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
+	if err := toolService.SeedDefaults(ctx); err != nil {
+		pkg.SLogger().Errorw("内置工具播种失败", "error", err)
+		os.Exit(1)
+	}
 	if err := skillService.SeedDefaults(ctx); err != nil {
 		pkg.SLogger().Errorw("内置技能播种失败", "error", err)
 		os.Exit(1)
@@ -326,6 +333,7 @@ func main() {
 		SettingAPI:       api.NewSettingAPI(settingService),
 		StatsAPI:         api.NewStatsAPI(statsService),
 		ChatAPI:          api.NewChatAPI(chatService),
+		ToolAPI:          api.NewToolAPI(toolService),
 		UserAdminAPI:     api.NewUserAdminAPI(userAdminService),
 		RoleAPI:          api.NewRoleAPI(roleService),
 		AuditAPI:         api.NewAuditAPI(auditService),

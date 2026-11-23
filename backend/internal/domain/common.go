@@ -31,6 +31,8 @@ const (
 	IDPrefixModelProvider   = "MPR_" // 模型供应商
 	IDPrefixModelCatalog    = "MDL_" // 模型目录
 	IDPrefixModelGrant      = "MGR_" // 模型角色授权
+	IDPrefixModelUserGrant  = "MUG_" // 模型用户直授
+	IDPrefixTool            = "TOL_" // AI 工具
 	IDPrefixModelUsage      = "MUS_" // 模型用量统计
 	IDPrefixNotification    = "NTF_" // 站内通知
 	IDPrefixLoginLog        = "LGL_" // 登录日志

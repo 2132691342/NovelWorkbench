@@ -133,6 +133,14 @@ func (s *ModelProviderService) usableModelList(ctx context.Context, userULID str
 		for _, modelULID := range modelULIDList {
 			grantedSet[modelULID] = true
 		}
+		// 用户直授与角色授权取并集：直授的模型不依赖角色变更
+		directULIDList, err := s.providerRepo.ListUserGrantedModelULIDList(ctx, userULID)
+		if err != nil {
+			return nil, pkg.WrapBizError(domain.RespCodeStorageError, "模型用户直授读取失败", err)
+		}
+		for _, modelULID := range directULIDList {
+			grantedSet[modelULID] = true
+		}
 	}
 	allowed := make([]domain.ModelCatalogDO, 0, len(modelDOS))
 	for i := range modelDOS {

@@ -26,20 +26,21 @@ type ProviderSeed struct {
 	TimeoutSec    int     // 调用超时（秒）
 }
 
-// ModelProviderService 模型生态业务：供应商、模型目录、角色授权与调用规格解析。
+// ModelProviderService 模型生态业务：供应商、模型目录、角色/用户授权与调用规格解析。
 type ModelProviderService struct {
 	providerRepo *repo.ModelProviderRepo // 模型生态仓储
 	roleRepo     *repo.RoleRepo          // 角色仓储（授权与管理员判定）
+	userRepo     *repo.UserRepo          // 用户仓储（用户直授的登录名展示）
 	gateway      *ai.Client              // 模型网关（流式调用与用量上报）
 	secretKey    string                  // 密钥封存材料（取 JWT 密钥派生）
 	timeout      time.Duration           // 默认调用超时
 }
 
 // NewModelProviderService 构造模型生态服务。
-func NewModelProviderService(providerRepo *repo.ModelProviderRepo, roleRepo *repo.RoleRepo,
+func NewModelProviderService(providerRepo *repo.ModelProviderRepo, roleRepo *repo.RoleRepo, userRepo *repo.UserRepo,
 	gateway *ai.Client, secretKey string, timeout time.Duration) *ModelProviderService {
-	return &ModelProviderService{providerRepo: providerRepo, roleRepo: roleRepo, gateway: gateway,
-		secretKey: secretKey, timeout: timeout}
+	return &ModelProviderService{providerRepo: providerRepo, roleRepo: roleRepo, userRepo: userRepo,
+		gateway: gateway, secretKey: secretKey, timeout: timeout}
 }
 
 // SeedDefault 供应商表为空时按配置播种「一个供应商 + 一个默认模型」，并授权给内置角色（幂等）。

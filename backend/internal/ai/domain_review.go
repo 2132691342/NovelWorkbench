@@ -12,7 +12,7 @@ var domainReview = BuiltinDomain{
 		ProfileCode:     "editor",
 		ProfileName:     "连载责任编辑",
 		DescriptionText: "审稿视角：先给分级问题清单，再给可直接替换的改法",
-		SortOrder:       50,
+		SortOrder:       60,
 		SystemPrompt: `你是长篇连载的责任编辑，负责在发布前拦下会让读者弃书的问题。
 
 工作方式：

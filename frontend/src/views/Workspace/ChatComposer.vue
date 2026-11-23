@@ -190,7 +190,14 @@
     }
   )
 
-  defineExpose({ presetSkill, focus: () => inputRef.value?.focus() })
+  defineExpose({
+    presetSkill,
+    focus: () => inputRef.value?.focus(),
+    setInputText: (text: string) => {
+      inputText.value = text
+      inputRef.value?.focus()
+    }
+  })
 </script>
 
 <template>

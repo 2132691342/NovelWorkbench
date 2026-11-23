@@ -24,13 +24,14 @@
 | 14 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`（会话与落库）、`service/chat_context.go`（上下文装配）、`service/chat_stream.go`（流式转发与看门狗） |
 | 15 | 技能资产 | `skills`、`skill_references` | `service/skill_service.go`、`service/skill_reference_service.go` |
 | 16 | 提示词档案 | `prompt_profiles` | `service/prompt_profile_service.go`、`api/prompt_profile_api.go` |
-| 17 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants` | `service/model_provider_service.go`、`service/model_catalog_service.go`、`service/model_access_service.go` |
+| 16.1 | 工具资产 | `tools` | `service/tool_service.go`、`api/tool_api.go`、`ai/builtin_tools.go`、`ai/check/chapter_check.go` |
+| 17 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants` | `service/model_provider_service.go`、`service/model_catalog_service.go`、`service/model_access_service.go` |
 | 18 | 数据总览 | `word_count_stats`、`projects` | `service/stats_service.go` |
 | 19 | 用量分析 | `model_usage_stats` | `service/model_usage_service.go` |
 | 20 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
 | 21 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/store`、`frontend/src/views/Workspace` |
 
-后端在 `backend/internal/api/router.go` 内注册 113 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、18 个内置技能（`backend/internal/ai/domain_<域>.go`，每域两个）与 9 份内置提示词档案（`BuiltinPromptProfiles`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
+后端在 `backend/internal/api/router.go` 内注册 122 条 GET/POST 路由（含 `/health`、`/ready` 两个探针）、35 张 AutoMigrate 表（`backend/cmd/server/main.go`）、24 个内置技能（`backend/internal/ai/domain_<域>.go`，每域两个）、12 份内置提示词档案与 6 个内置工具（`ai/builtin_tools.go`）。所有业务接口挂在 `api → service → repo → domain` 单向依赖上，`ai`/`infra`/`pkg` 为叶子层，不反向依赖 service。
 
 ## 1. 认证与会话
 
@@ -140,14 +141,16 @@
 
 | 表 | 记录内容 | 触发者 |
 | --- | --- | --- |
-| `audit_logs` | 操作者、动作码（去掉 `/api/v1/` 的路径）、目标类型与 ULID、`status=<HTTP 码>`、IP | `pkg.AuditMiddleware` |
+| `audit_logs` | 操作者、动作码（去掉 `/api/v1/` 的路径）、级别、链路 ID、请求路径/方法/体（脱敏）、目标类型与 ULID、业务响应码与说明、HTTP 状态、耗时、IP、UA | `pkg.AuditMiddleware` |
 | `login_logs` | 账号、命中用户、结果码、失败原因、IP、UA | `AuthService.recordLogin` → `LoginLogService.Record` |
 
 ### 4.2 实现路径
 
-- `pkg/access_middleware.go` 的 `AuditMiddleware`：仅对 `POST` 且不在跳过名单内的请求生效，先 `c.Next()` 执行业务，再按最终状态码落库；`extractAuditTarget` 只在 `/api/v1/admin/` 路径下、且 body ≤ 64KB（`auditBodyLimitBytes`）时按 `auditTargetKeys` 白名单提取 `user_ulid` / `role_ulid` / `project_ulid` / `chapter_ulid` / `doc_ulid`。
+- `pkg/access_middleware.go` 的 `AuditMiddleware`：仅对 `POST` 且不在跳过名单内的请求生效。请求前读取并还原 body（≤32KB，`multipart` 不采样），把凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）替换为 `***`；用包装后的 `ResponseWriter` 捕获响应前 8KB，`c.Next()` 后解析包络得到 `resp_code` / `resp_message`，再按 HTTP 状态推导级别（`info` / `warn` / `error`）。
+- `extractAuditTarget` 按 `auditTargetKeys` 白名单从请求体提取目标（user / role / menu / project / chapter / document / skill / tool / model / provider / prompt_profile / chat_session / notification），取第一个命中键。
 - 跳过名单在 `cmd/server/main.go` 装配：`/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`（SSE 流不适合等待后置写入）。
-- `service/audit_service.go` 的 `Record`：补 `audit_ulid`，`user_name` 为空时回查用户登录名；`ListPage` 分页返回。
+- `service/audit_service.go` 的 `Record`：补 `audit_ulid`，`user_name` 为空时回查用户登录名；`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤；`Detail` 返回单条含请求体原文；历史行缺级别时按 HTTP 状态补全（`pkg.AuditLevelOf`）。
+- 前端 `views/Admin/Audit.vue`：级别徽标、目标、响应码与说明、HTTP 状态、耗时、链路 ID（点击复制），抽屉展示脱敏请求体。
 - `service/login_log_service.go` 的 `Record`：账号 128、失败原因 256、IP 64、UA 512 字符截断后落库，写失败只 `Warnw`。
 - `service/auth_service.go` 的 `Login` 在三条失败分支（账号不存在 / 已禁用 / 密码错误）与成功分支各调用一次 `recordLogin`，因此成功与失败都有痕迹。
 
@@ -155,12 +158,12 @@
 
 - 审计只覆盖 `POST`：GET 查询不记录，避免读接口把表打成热点。
 - 业务失败也记录（`status=4xx/5xx`），因为写入发生在 `c.Next()` 之后；审计写失败不阻断业务，只记 `audit_record_failed` 警告。
-- 只有 `/admin/` 路径读 body 提取目标，其余路径的 `target_type` / `target_ulid` 为空，避免对创作接口做大 body 拷贝。
+- 请求体采样上限 32KB：上传请求与超大请求体只记占位说明，避免把正文整段拷进审计表。
 - 登录日志失败不阻断登录链路；日志里的失败原因比接口响应更具体（如「密码错误」「账号已被禁用」），只对管理员可见。
 
 ### 4.4 权衡
 
-同步落库保证「业务提交即有审计」的顺序一致性，代价是每个 POST 多一次写；当前管理端写操作稀疏，表不会成为瓶颈。body 采样限制在 admin 路径 + 64KB，是对「审计价值 / 拷贝成本」的折中：创作接口的正文可能有几十 KB，逐条拷贝会显著放大内存与磁盘。登录日志与审计日志分表，是因为查询维度与保留策略不同（前者按账号与结果过滤，后者按动作码与操作者过滤）。
+同步落库保证「业务提交即有审计」的顺序一致性，代价是每个 POST 多一次写；当前管理端写操作稀疏，表不会成为瓶颈。body 采样上限 32KB 是对「审计价值 / 拷贝成本」的折中：正文可能有几十 KB，逐条拷贝会显著放大内存与磁盘，因此超限只留占位；凭据字段一律脱敏，审计表即使被读也不泄露口令。登录日志与审计日志分表，是因为查询维度与保留策略不同（前者按账号与结果过滤，后者按级别、链路与动作码过滤）。
 
 ## 5. 应用配置
 
@@ -532,18 +535,56 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 把系统提示词做成可编辑资产，让「换一种 AI 身份」不需要改代码；代价是多一层解析与一次数据库读取（每次发送一次 `GetByULID` 或 `GetDefaultGlobal`，单行主键查询，可忽略）。不做缓存是刻意的：档案改完要立刻生效，缓存失效逻辑比查询本身更贵。
 
+## 16A 工具资产
+
+### 16A.1 职责与数据
+
+`tools` 表存「对话期可被调用的能力单元」。与技能的分工是：技能让模型**按格式写**，工具让服务端**先算出事实**，
+结果以「工具结果」上下文块注入，模型据此作答，避免自己心算或编造。
+
+| 列 | 说明 |
+| --- | --- |
+| `tool_code` | 唯一编码，`#编码` 触发；内置不可改 |
+| `trigger_keywords` | 逗号分隔的自动触发词，正文命中即运行 |
+| `param_schema_json` | 参数声明（`ToolParamDO` 数组），前端表单与调用校验共用 |
+| `builtin_flag` / `customized_flag` / `asset_hash_text` | 与技能同构的出厂资产三件套 |
+
+### 16A.2 实现路径
+
+- `ai/builtin_tools.go`：6 个内置工具定义（`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`）与 `ContentHash` 指纹。
+- `service/tool_service.go` 的 `SeedDefaults`：按 `tool_code` 查缺补插；指纹变化且未自改时覆盖；已下线编码删除。
+- `Invoke`：按编码取工具 → 校验启用 → `execute` 分发。`chapter_check` / `deai_scan` 复用 `ai/check.Analyze`；
+  `chapter_digest` 抽取每段首句；`character_scan` 统计角色卡姓名（含别名）在本章的命中；`foreshadow_scan` 用双字片段粗匹配伏笔相关词；
+  `lore_lookup` 按关键词查设定并剥掉富文本标签。结果统一截断到 4000 字符。
+- `ResolveAutoTools`：正文命中 `trigger_keywords` 的启用工具，按排序号最多取 2 个；`ChatService.runAutoTools` 在上下文装配前调用，
+  失败只 `Warnw` 不阻断对话。
+- `api/tool_api.go`：`/tool/list`、`/tool/invoke` 对登录用户开放，`/tool/save`、`/tool/delete` 收口到 `tool:manage`。
+
+### 16A.3 边界
+
+- 只支持内置类型（`tool_type_code=builtin`）：自定义工具需要服务端实现，因此新建入口仅对管理员开放且类型固定。
+- 工具不写业务数据：全部是只读计算，`/tool/invoke` 不产生章节、消息或统计变更。
+- 自动触发不看权限码，只看启用状态；参数缺失时由执行器给明确提示（如「请提供正文或指定章节」），不抛 panic。
+
+### 16A.4 权衡
+
+把「可机检的门禁」从提示词搬进代码，换来三件事：结果可复现（同一正文永远同一结论）、可单测（`ai/check` 是纯函数）、
+零模型成本（不额外调用）。代价是规则改动需要发版，因此阈值集中定义在 `ai/check/chapter_check.go` 顶部常量，
+并且工具只做「发现问题」，改稿仍由技能（`/deai`、`/polish`）完成——工具给依据，技能给产出。
+
 ## 17. 模型生态
 
 ### 17.1 职责与数据
 
-三层结构：供应商（`model_providers`：名称、协议、BaseURL、加密 API Key、启停、测试状态）→ 模型目录（`model_catalogs`：模型名、标签、温度、max tokens、上下文窗口、默认标记、测试状态）→ 角色授权（`model_role_grants`：模型 × 角色）。
+三层结构：供应商（`model_providers`：名称、协议、BaseURL、加密 API Key、启停、测试状态）→ 模型目录（`model_catalogs`：模型名、标签、温度、max tokens、上下文窗口、默认标记、测试状态）→ 授权（`model_role_grants` 角色 × 模型、`model_user_grants` 用户 × 模型）。
 
 | 规则 | 实现 |
 | --- | --- |
 | 协议 | `openai`（`/v1/chat/completions` 兼容）与 `anthropic`（`/v1/messages`），Anthropic 的 BaseURL 会自动剥掉尾部 `/v1` |
 | 密钥 | `pkg.SealSecret` / `OpenSecret` 用 JWT 密钥做 AES-GCM 封存，读取只回掩码（首 4 + `***` + 末 3） |
 | 默认模型 | 全局唯一，设置前先 `ClearDefaultModel`；默认模型不可删除 |
-| 授权 | `ReplaceGrants` 整体覆盖，管理员（`*`）无需授权即可见全部启用模型 |
+| 授权 | 角色授权与用户直授都可整体覆盖，可用集合取并集；管理员（`*`）无需授权即可见全部启用模型 |
+| 关联清理 | 删用户 → `DeleteUserGrantsByUser`；删角色 → `DeleteRoleGrantsByRole`；删模型 → `DeleteGrantsByModel`。不存在悬空授权 |
 
 ### 17.2 实现路径
 
@@ -551,15 +592,15 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - `SaveProvider`：首次创建必须填 Key；更新时 Key 传空表示保持不变；协议与 BaseURL 规范化后落库。
 - `TestProvider` / `TestModel` → `probe`：构造 `ProviderSpec` 后调 `gateway.Probe` 跑一次极小对话，结果（状态、消息、延迟、回复）回写 `last_test_*` 字段。
 - `DeleteProvider`：其下仍有模型时拒绝，避免误删模型与授权。
-- `service/model_catalog_service.go` 的 `SaveModel` / `DeleteModel` / `SetDefaultModel` / `TestModel` / `GrantModel`：`temperatureOf` 缺省 0.7；`toModelVO` 把供应商快照（名称、协议、BaseURL、启停）与角色授权（ULID + 名称）一起返回。
-- `service/model_access_service.go` 的 `usableModelList`：管理员看全部「模型启用且供应商启用」的模型，其他用户取角色授权并集再过滤；`pickModel` 依次尝试指定 ULID、`default_flag`、第一个可用。
+- `service/model_catalog_service.go` 的 `SaveModel` / `DeleteModel` / `SetDefaultModel` / `TestModel` / `GrantModel`：`temperatureOf` 缺省 0.7；`toModelVO` 把供应商快照（名称、协议、BaseURL、启停）、角色授权（ULID + 名称）与用户直授（ULID + 登录名）一起返回；`GrantModel` 同时覆盖两张授权表。
+- `service/model_access_service.go` 的 `usableModelList`：管理员看全部「模型启用且供应商启用」的模型，其他用户取「角色授权 ∪ 用户直授」再过滤；`pickModel` 依次尝试指定 ULID、`default_flag`、第一个可用。
 - `ChatSpecOf` / `DefaultChatSpec` / `Capability`：前者给对话链路（含授权与停用校验），中者给检索重排等后台链路（只看系统默认模型），后者给前端模型下拉（可用列表 + 默认模型 + 提示文案）。
 
 ### 17.3 边界
 
 - 不支持向量模型与 embedding 协议，只有对话协议。
 - 没有可用模型时 `ChatSpecOf` 返回 `ERR_AI_PROVIDER`（提示去分配），指定了未授权模型返回 `ERR_FORBIDDEN`。
-- 授权粒度是角色，不是用户；单用户特例只能通过新建角色实现。
+- 授权粒度是「角色 + 用户」两档：单用户特例直接给用户直授，不必新建角色；用户直授独立于角色，改角色不影响它。
 - 密钥解密失败时 `specOf` 返回 `ERR_BIZ_FAILED` 并提示重新填写；掩码在解密失败时显示「无法解密，请重新填写」。
 - 供应商/模型的测试结果只是快照，不影响是否可用；真正可用性判断看 `enabled_flag` 与授权。
 

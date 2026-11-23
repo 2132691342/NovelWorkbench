@@ -5,6 +5,7 @@ package repo
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -29,14 +30,46 @@ func (r *AuditRepo) Create(ctx context.Context, do *domain.AuditLogDO) error {
 	return nil
 }
 
-// ListPage 分页查询审计日志（按时间倒序），支持动作码模糊与用户过滤。
+// GetByULID 按 ULID 查询审计详情，不存在时返回 (nil, nil)。
+func (r *AuditRepo) GetByULID(ctx context.Context, auditULID string) (*domain.AuditLogDO, error) {
+	var do domain.AuditLogDO
+	err := r.db.WithContext(ctx).Where("audit_ulid = ?", auditULID).First(&do).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get audit log: %w", err)
+	}
+	return &do, nil
+}
+
+// ListPage 分页查询审计日志（按时间倒序），支持级别/链路/目标/关键字/日期过滤。
 func (r *AuditRepo) ListPage(ctx context.Context, req *domain.AuditListREQ) ([]domain.AuditLogDO, int64, error) {
 	query := r.db.WithContext(ctx).Model(&domain.AuditLogDO{})
-	if req.ActionCode != "" {
-		query = query.Where("action_code LIKE ?", "%"+req.ActionCode+"%")
+	if req.LogLevelCode != "" {
+		query = query.Where("log_level_code = ?", req.LogLevelCode)
+	}
+	if req.TraceID != "" {
+		query = query.Where("trace_id = ?", req.TraceID)
+	}
+	if req.TargetType != "" {
+		query = query.Where("target_type = ?", req.TargetType)
 	}
 	if req.UserULID != "" {
 		query = query.Where("user_ulid = ?", req.UserULID)
+	}
+	if req.ActionCode != "" {
+		query = query.Where("action_code LIKE ?", "%"+req.ActionCode+"%")
+	}
+	if keyword := strings.TrimSpace(req.KeywordText); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("action_code ILIKE ? OR user_name ILIKE ? OR resp_message ILIKE ?", like, like, like)
+	}
+	if req.DateFrom != "" {
+		query = query.Where("created_at >= ?", req.DateFrom+" 00:00:00")
+	}
+	if req.DateTo != "" {
+		query = query.Where("created_at <= ?", req.DateTo+" 23:59:59")
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {

@@ -4,10 +4,12 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
+	"github.com/2132691342/NovelWorkbench/backend/internal/ai/check"
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
 	"github.com/2132691342/NovelWorkbench/backend/internal/repo"
@@ -319,4 +321,39 @@ func toSnapshotVO(do *domain.ChapterSnapshotDO) domain.ChapterSnapshotVO {
 		WordCount:    pkg.CountWords(do.ContentText),
 		CreatedAt:    pkg.FormatTime(do.CreatedAt),
 	}
+}
+
+// Check 章节量化体检：正文优先用请求体，否则读库内章节正文（需项目归属）。
+func (s *ChapterService) Check(ctx context.Context, userULID string, req *domain.ChapterCheckREQ) (domain.ChapterCheckVO, error) {
+	contentText := req.ContentText
+	if strings.TrimSpace(contentText) == "" {
+		if req.ChapterULID == "" {
+			return domain.ChapterCheckVO{}, pkg.NewBizError(domain.RespCodeInvalidParam, "请提供章节或正文")
+		}
+		chapter, err := s.mustOwnChapter(ctx, userULID, req.ChapterULID)
+		if err != nil {
+			return domain.ChapterCheckVO{}, err
+		}
+		contentText = chapter.ContentText
+	} else if req.ChapterULID != "" {
+		if _, err := s.mustOwnChapter(ctx, userULID, req.ChapterULID); err != nil {
+			return domain.ChapterCheckVO{}, err
+		}
+	}
+	report := check.Analyze(contentText)
+	vo := domain.ChapterCheckVO{
+		WordCount: report.WordCount, ParagraphCount: report.ParagraphCount,
+		DialogueRatio: report.DialogueRatio, DashCount: report.DashCount,
+		BannedWordCount: report.BannedWordCount, WarnWordCount: report.WarnWordCount,
+		EmotionWordCount: report.EmotionWordCount, BareTagCount: report.BareTagCount,
+		HookPresent: report.HookPresent, ScoreValue: report.ScoreValue, VerdictCode: report.VerdictCode,
+		IssueList: make([]domain.ChapterCheckIssueVO, 0, len(report.IssueList)),
+	}
+	for _, issue := range report.IssueList {
+		vo.IssueList = append(vo.IssueList, domain.ChapterCheckIssueVO{
+			IssueCode: issue.IssueCode, LevelCode: issue.LevelCode, TitleText: issue.TitleText,
+			DetailText: issue.DetailText, HitCount: issue.HitCount, SampleText: issue.SampleText,
+		})
+	}
+	return vo, nil
 }

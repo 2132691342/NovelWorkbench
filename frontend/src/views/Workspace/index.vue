@@ -7,6 +7,7 @@
   import type { NWChapterBriefVo, NWChapterDetailVo, NWProjectTreeVo } from '@/api/contracts'
   import { useProjectStore } from '@/store/modules/project'
   import AiPanel from './AiPanel.vue'
+  import ChapterCheckPanel from './ChapterCheckPanel.vue'
   import ChapterEditor from './ChapterEditor.vue'
   import SnapshotDialog from './SnapshotDialog.vue'
   import WorkspaceTree from './WorkspaceTree.vue'
@@ -24,6 +25,8 @@
 
   const editorRef = ref<InstanceType<typeof ChapterEditor> | null>(null)
   const aiPanelRef = ref<InstanceType<typeof AiPanel> | null>(null)
+  const checkPanelRef = ref<InstanceType<typeof ChapterCheckPanel> | null>(null)
+  const checkVisible = ref(false)
 
   const flatChapterList = computed<NWChapterBriefVo[]>(() =>
     (treeData.value?.volume_list ?? []).flatMap((volumeNode) => volumeNode.chapter_list)
@@ -112,6 +115,25 @@
     ElMessage.success('已插入光标处')
   }
 
+  /** 打开体检面板并对当前正文跑一次门禁 */
+  const openCheck = async () => {
+    if (!currentChapter.value) {
+      ElMessage.warning('请先打开一个章节')
+      return
+    }
+    await editorRef.value?.flushSave()
+    checkVisible.value = true
+    await checkPanelRef.value?.run()
+  }
+
+  /** 体检面板把问题清单交给 AI 面板（带当前章节引用，用去 AI 味档案改） */
+  const askAiWithPrompt = (promptText: string) => {
+    rightCollapsed.value = false
+    const refList = currentChapter.value ? [currentChapter.value.chapter_ulid] : []
+    aiPanelRef.value?.presetSkill('deai', refList)
+    aiPanelRef.value?.presetText(promptText)
+  }
+
   const replaceChapter = async (contentText: string) => {
     if (!currentChapter.value) {
       ElMessage.warning('请先打开一个章节')
@@ -192,6 +214,10 @@
         <ElButton size="small" text @click="rightCollapsed = !rightCollapsed">
           <Icon icon="mdi:robot-outline" :size="15" />
         </ElButton>
+        <ElButton size="small" text @click="openCheck">
+          <Icon icon="mdi:clipboard-check-outline" :size="15" />
+          <span class="ml-4px">体检</span>
+        </ElButton>
       </div>
     </header>
 
@@ -219,6 +245,13 @@
           @ai-polish="openAiWithSkill('polish')"
           @ai-summary="openAiWithSkill('summary')"
           @open-snapshot="openSnapshot"
+        />
+        <ChapterCheckPanel
+          v-if="checkVisible"
+          ref="checkPanelRef"
+          :chapter-ulid="currentChapter?.chapter_ulid ?? ''"
+          :content-text="editorRef?.getContentText() ?? ''"
+          @ask-ai="askAiWithPrompt"
         />
       </section>
 
@@ -319,9 +352,16 @@
     }
 
     &__center {
+      display: flex;
       flex: 1;
+      flex-direction: column;
       min-width: 0;
       min-height: 0;
+
+      :deep(.editor) {
+        flex: 1;
+        min-height: 0;
+      }
     }
 
     &__right {

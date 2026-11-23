@@ -262,3 +262,76 @@ func (r *ModelProviderRepo) ListGrantedModelULIDList(ctx context.Context, roleUL
 	}
 	return modelULIDList, nil
 }
+
+// ReplaceUserGrants 整体覆盖模型的用户直授（同一事务内先删后插）。
+func (r *ModelProviderRepo) ReplaceUserGrants(ctx context.Context, modelULID string, userULIDList []string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("model_ulid = ?", modelULID).Delete(&domain.ModelUserGrantDO{}).Error; err != nil {
+			return fmt.Errorf("clear model user grants: %w", err)
+		}
+		if len(userULIDList) == 0 {
+			return nil
+		}
+		grantList := make([]domain.ModelUserGrantDO, 0, len(userULIDList))
+		for _, userULID := range userULIDList {
+			grantList = append(grantList, domain.ModelUserGrantDO{
+				GrantULID: pkg.NewULID(domain.IDPrefixModelUserGrant),
+				ModelULID: modelULID,
+				UserULID:  userULID,
+			})
+		}
+		if err := tx.Create(&grantList).Error; err != nil {
+			return fmt.Errorf("create model user grants: %w", err)
+		}
+		return nil
+	})
+}
+
+// DeleteUserGrantsByUser 删除某用户的全部模型直授（删用户时级联）。
+func (r *ModelProviderRepo) DeleteUserGrantsByUser(ctx context.Context, userULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("user_ulid = ?", userULID).Delete(&domain.ModelUserGrantDO{}).Error; err != nil {
+		return fmt.Errorf("delete model user grants: %w", err)
+	}
+	return nil
+}
+
+// DeleteRoleGrantsByRole 删除某角色关联的全部模型授权（删角色时级联）。
+func (r *ModelProviderRepo) DeleteRoleGrantsByRole(ctx context.Context, roleULID string) error {
+	if err := r.db.WithContext(ctx).
+		Where("role_ulid = ?", roleULID).Delete(&domain.ModelRoleGrantDO{}).Error; err != nil {
+		return fmt.Errorf("delete model role grants: %w", err)
+	}
+	return nil
+}
+
+// ListUserGrantsByModelULIDList 批量查询模型的用户直授（模型列表一次查询）。
+func (r *ModelProviderRepo) ListUserGrantsByModelULIDList(ctx context.Context, modelULIDList []string) (map[string][]string, error) {
+	grantMap := make(map[string][]string, len(modelULIDList))
+	if len(modelULIDList) == 0 {
+		return grantMap, nil
+	}
+	var dos []domain.ModelUserGrantDO
+	if err := r.db.WithContext(ctx).
+		Where("model_ulid IN ?", modelULIDList).Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list model user grants: %w", err)
+	}
+	for _, do := range dos {
+		grantMap[do.ModelULID] = append(grantMap[do.ModelULID], do.UserULID)
+	}
+	return grantMap, nil
+}
+
+// ListUserGrantedModelULIDList 查询某用户直授可见的模型 ULID。
+func (r *ModelProviderRepo) ListUserGrantedModelULIDList(ctx context.Context, userULID string) ([]string, error) {
+	if userULID == "" {
+		return nil, nil
+	}
+	var modelULIDList []string
+	if err := r.db.WithContext(ctx).Model(&domain.ModelUserGrantDO{}).
+		Where("user_ulid = ?", userULID).
+		Pluck("model_ulid", &modelULIDList).Error; err != nil {
+		return nil, fmt.Errorf("list user granted models: %w", err)
+	}
+	return modelULIDList, nil
+}

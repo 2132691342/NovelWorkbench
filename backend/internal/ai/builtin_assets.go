@@ -38,17 +38,20 @@ type BuiltinDomain struct {
 }
 
 // builtinDomainList 内置流程域清单，按创作作业顺序排列：
-// 起草 → 架构 → 打磨 → 去 AI 味 → 质检 → 连续性 → 定稿 → 上架。
+// 立项 → 架构 → 起草 → 打磨 → 去 AI 味 → 质检 → 连续性 → 定稿 → 上架 → 短篇 → 改编。
 var builtinDomainList = []BuiltinDomain{
-	domainDraft,
+	domainPitch,
 	domainArchitect,
+	domainDraft,
 	domainStyle,
 	domainDeAI,
 	domainReview,
 	domainContinuity,
 	domainFinalize,
 	domainOperation,
-	domainPitch,
+	domainPublish,
+	domainShort,
+	domainAdapt,
 }
 
 // BuiltinDomains 返回内置流程域定义（只读副本，技能列表逐项复制）。

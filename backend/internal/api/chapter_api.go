@@ -123,3 +123,18 @@ func (a *ChapterAPI) SnapshotRestore(c *gin.Context) {
 	}
 	pkg.Ok(c, vo)
 }
+
+// Check 章节量化体检（POST /chapter/check，正文可覆盖：先保存再体检由前端控制）。
+func (a *ChapterAPI) Check(c *gin.Context) {
+	var req domain.ChapterCheckREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "chapter.check", bindErr(err))
+		return
+	}
+	vo, err := a.svc.Check(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), &req)
+	if err != nil {
+		respondErr(c, "chapter.check", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}

@@ -55,6 +55,7 @@ type chatContextInput struct {
 	CharacterList  []domain.CharacterDO      // 项目角色卡
 	LoreList       []domain.LoreDO           // 项目设定条目（note 类型禁止注入）
 	HistoryList    []domain.ChatMessageDO    // 注入历史（旧→新）
+	ToolResultList []string                  // 工具执行结果（按工具顺序注入）
 }
 
 // buildContextBlocks 组装上下文块并返回最终指令文本（纯函数）。
@@ -126,6 +127,13 @@ func buildContextBlocks(input chatContextInput) ([]ai.ContextBlock, string) {
 		blocks = append(blocks, ai.ContextBlock{BlockKey: "lore", Priority: ai.PriorityCharacter, ContentText: loreText})
 	}
 	// 历史不注入上下文块：它以原生 role 消息追加到消息序列，两处同时注入会让模型看到两份对话。
+	if len(input.ToolResultList) > 0 {
+		blocks = append(blocks, ai.ContextBlock{
+			BlockKey:    "tool_result",
+			Priority:    ai.PrioritySkillRef,
+			ContentText: "【工具结果】\n" + strings.Join(input.ToolResultList, "\n\n"),
+		})
+	}
 	if len(input.SkillRefList) > 0 {
 		blocks = append(blocks, ai.ContextBlock{
 			BlockKey:    "skill_reference",

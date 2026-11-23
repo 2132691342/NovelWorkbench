@@ -54,6 +54,8 @@ export interface NWModelCatalogVo {
   remark_text: string
   role_ulid_list: string[]
   role_name_list: string[]
+  user_ulid_list: string[]
+  user_label_list: string[]
   last_test_status_code: string
   last_test_message: string
   last_test_at: string
@@ -74,6 +76,7 @@ export interface NWModelCatalogSaveReqVo {
   sort_order?: number
   remark_text?: string
   role_ulid_list?: string[]
+  user_ulid_list?: string[]
 }
 
 /** 连通性测试结果 */
@@ -207,8 +210,16 @@ export async function setDefaultModelCatalog(modelUlid: string): Promise<void> {
 }
 
 /** 整体覆盖模型的角色授权 */
-export async function grantModelCatalog(modelUlid: string, roleUlidList: string[]): Promise<void> {
-  await post('/model/catalog/grant', { model_ulid: modelUlid, role_ulid_list: roleUlidList })
+export async function grantModelCatalog(
+  modelUlid: string,
+  roleUlidList: string[],
+  userUlidList: string[]
+): Promise<void> {
+  await post('/model/catalog/grant', {
+    model_ulid: modelUlid,
+    role_ulid_list: roleUlidList,
+    user_ulid_list: userUlidList
+  })
 }
 
 /** 当前用户的 AI 能力（含可用模型选项） */

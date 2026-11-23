@@ -19,13 +19,14 @@ var roleDefaultList = []domain.RoleDO{
 
 // RoleService 角色与权限业务：内置角色播种、角色 CRUD、用户授权、权限判定。
 type RoleService struct {
-	roleRepo *repo.RoleRepo // 角色仓储
-	userRepo *repo.UserRepo // 用户仓储
+	roleRepo     *repo.RoleRepo          // 角色仓储
+	userRepo     *repo.UserRepo          // 用户仓储
+	providerRepo *repo.ModelProviderRepo // 模型生态仓储（删角色时清理模型授权）
 }
 
 // NewRoleService 构造角色服务。
-func NewRoleService(roleRepo *repo.RoleRepo, userRepo *repo.UserRepo) *RoleService {
-	return &RoleService{roleRepo: roleRepo, userRepo: userRepo}
+func NewRoleService(roleRepo *repo.RoleRepo, userRepo *repo.UserRepo, providerRepo *repo.ModelProviderRepo) *RoleService {
+	return &RoleService{roleRepo: roleRepo, userRepo: userRepo, providerRepo: providerRepo}
 }
 
 // SeedDefaults 播种内置角色（幂等：按 role_code 查缺补插；admin 补齐全部权限）。
@@ -138,6 +139,11 @@ func (s *RoleService) Delete(ctx context.Context, req *domain.RoleDeleteREQ) err
 	}
 	if userCount > 0 {
 		return pkg.NewBizError(domain.RespCodeConflict, "角色下仍有用户，请先移除挂载")
+	}
+	if s.providerRepo != nil {
+		if err := s.providerRepo.DeleteRoleGrantsByRole(ctx, req.RoleULID); err != nil {
+			return pkg.WrapBizError(domain.RespCodeStorageError, "模型角色授权清理失败", err)
+		}
 	}
 	return s.roleRepo.Delete(ctx, req.RoleULID)
 }

@@ -12,7 +12,7 @@ var domainDeAI = BuiltinDomain{
 		ProfileCode:     "deai",
 		ProfileName:     "去 AI 味修订",
 		DescriptionText: "修订视角：只改「怎么说」，不动「说什么」",
-		SortOrder:       40,
+		SortOrder:       50,
 		SystemPrompt: `你是去 AI 味修订编辑。AI 味 = 太工整、太定性、太旁白、缺现场。改的是"怎么说"，不是"说什么"。
 
 必须先扫描的痕迹：

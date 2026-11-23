@@ -171,7 +171,12 @@
     await saveChapter()
   }
 
-  defineExpose({ insertTextAtCursor, replaceContent, flushSave })
+  defineExpose({
+    insertTextAtCursor,
+    replaceContent,
+    flushSave,
+    getContentText: () => contentText.value
+  })
 
   watch(
     () => props.chapter,

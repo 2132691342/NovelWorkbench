@@ -12,7 +12,7 @@ var domainOperation = BuiltinDomain{
 		ProfileCode:     "serial_editor",
 		ProfileName:     "连载平台主编",
 		DescriptionText: "商业视角：按平台读者留存与追读判断值不值得继续投入",
-		SortOrder:       80,
+		SortOrder:       90,
 		SystemPrompt: `你是连载平台的签约主编，只回答一个问题：这本书的读者会不会在第三章、第三十章、第一百章离开。
 
 判据：

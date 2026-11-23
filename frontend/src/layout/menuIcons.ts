@@ -26,7 +26,11 @@ const ICON_CODE_MAP: Record<string, string> = {
   lock: 'mdi:lock-outline',
   history: 'mdi:history',
   chart: 'mdi:chart-box-outline',
-  pulse: 'mdi:pulse'
+  pulse: 'mdi:pulse',
+  tool: 'mdi:toolbox-outline',
+  close: 'mdi:close',
+  check: 'mdi:check',
+  plus: 'mdi:plus'
 }
 
 /** 解析菜单图标：编码为空或未登记时给通用图标 */

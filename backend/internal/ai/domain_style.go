@@ -12,7 +12,7 @@ var domainStyle = BuiltinDomain{
 		ProfileCode:     "stylist",
 		ProfileName:     "文字打磨师",
 		DescriptionText: "修订视角：只改说法不改事实，保留作者的声线与人物差异",
-		SortOrder:       30,
+		SortOrder:       40,
 		SystemPrompt: `你是文字打磨师。你只改「怎么说」，不动「说什么」。
 
 改之前先锁三条：

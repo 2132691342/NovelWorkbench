@@ -301,7 +301,8 @@
 
   defineExpose({
     presetSkill: (skillCode: string, chapterUlidList: string[]) =>
-      composerRef.value?.presetSkill(skillCode, chapterUlidList)
+      composerRef.value?.presetSkill(skillCode, chapterUlidList),
+    presetText: (promptText: string) => composerRef.value?.setInputText(promptText)
   })
 </script>
 

@@ -81,6 +81,7 @@ type ChatService struct {
 	skillService     *SkillService         // 技能服务（解析、变量与参考资料）
 	promptProfileSvc *PromptProfileService // 提示词档案服务（系统提示词解析）
 	knowledgeService *KnowledgeService     // 知识库服务（RAG 召回）
+	toolService      *ToolService          // 工具服务（关键词自动触发与执行）
 	providerSvc      *ModelProviderService // 供应商服务（模型选择）
 	aiClient         *ai.Client            // 模型网关（流式调用与用量上报）
 	db               *gorm.DB              // 事务入口
@@ -90,13 +91,13 @@ type ChatService struct {
 // NewChatService 构造对话服务。
 func NewChatService(chatRepo *repo.ChatRepo, projectRepo *repo.ProjectRepo, chapterRepo *repo.ChapterRepo,
 	characterRepo *repo.CharacterRepo, knowledgeRepo *repo.KnowledgeRepo, continuityRepo *repo.ContinuityRepo, settingRepo *repo.SettingRepo,
-	skillService *SkillService, promptProfileSvc *PromptProfileService, knowledgeService *KnowledgeService, providerSvc *ModelProviderService,
+	skillService *SkillService, promptProfileSvc *PromptProfileService, knowledgeService *KnowledgeService, toolService *ToolService, providerSvc *ModelProviderService,
 	aiClient *ai.Client, db *gorm.DB, config ChatConfig) *ChatService {
 	return &ChatService{
 		chatRepo: chatRepo, projectRepo: projectRepo, chapterRepo: chapterRepo,
 		characterRepo: characterRepo, knowledgeRepo: knowledgeRepo, continuityRepo: continuityRepo, settingRepo: settingRepo,
 		skillService: skillService, promptProfileSvc: promptProfileSvc, knowledgeService: knowledgeService,
-		providerSvc: providerSvc, aiClient: aiClient,
+		toolService: toolService, providerSvc: providerSvc, aiClient: aiClient,
 		db: db, config: config,
 	}
 }
@@ -200,6 +201,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	contextInput.SkillRefList = skill.RefTextList
 	contextInput.UserInput = userInput
 	contextInput.HistoryList = historyList
+	contextInput.ToolResultList = s.runAutoTools(ctx, userULID, req, userInput, contextInput)
 	blocks, instructionText := buildContextBlocks(contextInput)
 	assembledText, droppedKeys := ai.AssembleContext(blocks, ai.ContextBudgetChars)
 	if len(droppedKeys) > 0 {
@@ -345,6 +347,42 @@ func (s *ChatService) mustOwnSession(ctx context.Context, userULID, sessionULID 
 		return nil, pkg.NewBizError(domain.RespCodeForbidden, "无权操作该会话")
 	}
 	return session, nil
+}
+
+// runAutoTools 按正文关键词自动触发工具并把结果转为上下文块（失败只告警，不阻断对话）。
+func (s *ChatService) runAutoTools(ctx context.Context, userULID string, req *domain.ChatSendREQ,
+	userInput string, contextInput chatContextInput) []string {
+	if s.toolService == nil {
+		return nil
+	}
+	matchedList, err := s.toolService.ResolveAutoTools(ctx, req.ContentText)
+	if err != nil {
+		pkg.SLogger().Warnw("工具关键词匹配失败", "error", err)
+		return nil
+	}
+	if len(matchedList) == 0 {
+		return nil
+	}
+	contentText := userInput
+	if len(contextInput.ChapterList) > 0 {
+		contentText = contextInput.ChapterList[0].ContentText
+	}
+	paramValue := map[string]string{"content_text": contentText, "query_text": req.ContentText}
+	resultList := make([]string, 0, len(matchedList))
+	for i := range matchedList {
+		dto, invokeErr := s.toolService.Invoke(ctx, userULID, &domain.ToolInvokeREQ{
+			ProjectULID: req.ProjectULID,
+			ToolCode:    matchedList[i].ToolCode,
+			ContentText: contentText,
+			ParamValue:  paramValue,
+		})
+		if invokeErr != nil {
+			pkg.SLogger().Warnw("工具执行失败", "tool_code", matchedList[i].ToolCode, "error", invokeErr)
+			continue
+		}
+		resultList = append(resultList, dto.ResultText)
+	}
+	return resultList
 }
 
 // resolveHistoryLimit 历史注入条数：请求值 > 应用配置 chat_history_count > 全局配置。

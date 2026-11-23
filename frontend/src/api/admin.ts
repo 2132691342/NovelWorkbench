@@ -34,14 +34,27 @@ export interface NWRoleVo {
 /** 审计日志视图对象（字段对齐后端 AuditVO） */
 export interface NWAuditVo {
   audit_ulid: string
+  log_level_code: string
+  trace_id: string
   user_ulid: string
   user_name: string
   action_code: string
+  request_path: string
+  request_method: string
   target_type: string
   target_ulid: string
-  detail_text: string
+  resp_code: string
+  resp_message: string
+  http_status: number
+  latency_ms: number
   ip_addr: string
+  user_agent_text: string
   created_at: string
+}
+
+/** 审计详情视图（含请求体原文，字段对齐后端 AuditDetailVO） */
+export interface NWAuditDetailVo extends NWAuditVo {
+  request_body: string
 }
 
 // ============================================================
@@ -100,8 +113,14 @@ export interface NWRoleSaveReqVo {
 export interface NWAuditListReqVo {
   page_num: number
   page_size: number
+  log_level_code?: string
+  trace_id?: string
+  target_type?: string
   action_code?: string
+  keyword_text?: string
   user_ulid?: string
+  date_from?: string
+  date_to?: string
 }
 
 // ============================================================
@@ -161,6 +180,11 @@ export async function deleteAdminRole(roleUlid: string): Promise<void> {
 /** 审计日志分页列表 */
 export function listAdminAudits(req: NWAuditListReqVo): Promise<NWPageDto<NWAuditVo>> {
   return post<NWPageDto<NWAuditVo>>('/admin/audit/list', req)
+}
+
+/** 审计详情（含请求体原文） */
+export function getAdminAuditDetail(auditUlid: string): Promise<NWAuditDetailVo> {
+  return get<NWAuditDetailVo>(`/admin/audit/detail/${auditUlid}`)
 }
 
 // ============================================================

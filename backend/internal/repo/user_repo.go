@@ -106,6 +106,29 @@ func (r *UserRepo) ListPage(ctx context.Context, req *domain.UserAdminListREQ) (
 	return dos, total, nil
 }
 
+// ListByULIDList 批量按 ULID 查询用户（模型授权展示等场景，防 N+1）。
+func (r *UserRepo) ListByULIDList(ctx context.Context, userULIDList []string) ([]domain.UserDO, error) {
+	if len(userULIDList) == 0 {
+		return []domain.UserDO{}, nil
+	}
+	var dos []domain.UserDO
+	if err := r.db.WithContext(ctx).Where("user_ulid IN ?", userULIDList).Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list users by ulid: %w", err)
+	}
+	return dos, nil
+}
+
+// ListBrief 查询全部用户的最小字段集（授权选择器用）。
+func (r *UserRepo) ListBrief(ctx context.Context) ([]domain.UserDO, error) {
+	var dos []domain.UserDO
+	if err := r.db.WithContext(ctx).
+		Select("user_ulid", "user_name", "user_email", "user_status_code").
+		Order("user_name ASC").Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list users brief: %w", err)
+	}
+	return dos, nil
+}
+
 // Count 统计用户总数（启动期引导判断用）。
 func (r *UserRepo) Count(ctx context.Context) (int64, error) {
 	var total int64

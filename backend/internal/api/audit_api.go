@@ -34,3 +34,18 @@ func (a *AuditAPI) List(c *gin.Context) {
 	}
 	pkg.Ok(c, page)
 }
+
+// Detail 查询审计详情（GET /admin/audit/detail/{AuditULID}，含请求体原文）。
+func (a *AuditAPI) Detail(c *gin.Context) {
+	req := domain.AuditDetailREQ{AuditULID: c.Param("AuditULID")}
+	if err := c.ShouldBindQuery(&req); err != nil {
+		respondErr(c, "admin.audit.detail", bindErr(err))
+		return
+	}
+	vo, err := a.svc.Detail(c.Request.Context(), &req)
+	if err != nil {
+		respondErr(c, "admin.audit.detail", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}

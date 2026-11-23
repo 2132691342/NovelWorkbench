@@ -1,11 +1,12 @@
-// 用户状态：令牌、用户信息与权限码，负责登录与登出。
+// 用户状态：令牌、用户信息与权限码，负责登录、导航加载与登出。
+
 import { defineStore } from 'pinia'
 import { store } from '../index'
-import type { NWUserVo } from '@/api/contracts'
-import { loginApi, logoutApi, profileApi, type LoginParams } from '@/api/login'
+import type { NWMenuItemVo, NWUserVo } from '@/api/contracts'
+import { loginApi, logoutApi, menuNavApi, profileApi, type LoginParams } from '@/api/login'
 
 import { useTagsViewStore } from './tagsView'
-import { useMenuStoreWithOut } from './menu'
+import { usePermissionStoreWithOut } from './permission'
 import router, { resetRouter } from '@/router'
 import { clearToken, readToken, writeToken } from '@/utils/storage'
 
@@ -13,13 +14,17 @@ interface UserState {
   userInfo?: NWUserVo
   token: string
   permCodes: string[]
+  menuTree: NWMenuItemVo[]
+  navLoaded: boolean
 }
 
 export const useUserStore = defineStore('user', {
   state: (): UserState => ({
     token: readToken(),
     userInfo: undefined,
-    permCodes: []
+    permCodes: [],
+    menuTree: [],
+    navLoaded: false
   }),
   getters: {
     isAuthenticated(): boolean {
@@ -27,8 +32,7 @@ export const useUserStore = defineStore('user', {
     },
     /** 权限判定：'*' 通配全部权限 */
     hasPerm(): (permCode: string) => boolean {
-      return (permCode: string) =>
-        this.permCodes.includes('*') || this.permCodes.includes(permCode)
+      return (permCode: string) => this.permCodes.includes('*') || this.permCodes.includes(permCode)
     }
   },
   actions: {
@@ -41,15 +45,22 @@ export const useUserStore = defineStore('user', {
     async fetchProfile() {
       this.userInfo = await profileApi()
     },
-    setPermCodes(permCodes: string[]) {
-      this.permCodes = permCodes
+    /** 拉取导航树与权限码（导航可见性、路由注册与页面门禁同源） */
+    async loadNav() {
+      const nav = await menuNavApi()
+      this.menuTree = nav.menu_tree_list ?? []
+      this.permCodes = nav.perm_code_list ?? []
+      this.navLoaded = true
+      return nav
     },
     clearSession() {
       this.token = ''
       this.userInfo = undefined
       this.permCodes = []
+      this.menuTree = []
+      this.navLoaded = false
       clearToken()
-      useMenuStoreWithOut().reset()
+      usePermissionStoreWithOut().reset()
       useTagsViewStore().removeAllViews(false)
       resetRouter()
     },
@@ -64,7 +75,7 @@ export const useUserStore = defineStore('user', {
     }
   },
   persist: {
-    key: 'nw-session-v1',
+    key: 'nw-session-v2',
     pick: ['token']
   }
 })

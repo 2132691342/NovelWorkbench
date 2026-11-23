@@ -103,3 +103,35 @@ type ChapterSnapshotVO struct {
 	WordCount    int64  `json:"word_count"`    // 快照字数
 	CreatedAt    string `json:"created_at"`    // 生成时间（RFC3339）
 }
+
+// ChapterCheckREQ 章节体检请求（content_text 为空时取库内正文）。
+type ChapterCheckREQ struct {
+	ChapterULID string `json:"chapter_ulid" binding:"omitempty,max=40"`     // 章节 ULID（可空）
+	ContentText string `json:"content_text" binding:"omitempty,max=200000"` // 待检正文（优先于库内正文）
+}
+
+// ChapterCheckVO 章节体检视图（check.Report 的对外投影，避免 domain 依赖 check 包）。
+type ChapterCheckVO struct {
+	WordCount        int64                 `json:"word_count"`         // 字数
+	ParagraphCount   int                   `json:"paragraph_count"`    // 段落数
+	DialogueRatio    float64               `json:"dialogue_ratio"`     // 对话段占比（0-1）
+	DashCount        int                   `json:"dash_count"`         // 破折号数量
+	BannedWordCount  int                   `json:"banned_word_count"`  // 零容忍词命中数
+	WarnWordCount    int                   `json:"warn_word_count"`    // 警示词命中数
+	EmotionWordCount int                   `json:"emotion_word_count"` // 情绪命名命中数
+	BareTagCount     int                   `json:"bare_tag_count"`     // 裸对话标签数
+	HookPresent      bool                  `json:"hook_present"`       // 章末是否有钩子
+	ScoreValue       int                   `json:"score_value"`        // 综合分（0-100）
+	VerdictCode      string                `json:"verdict_code"`       // 结论：pass/revise/block
+	IssueList        []ChapterCheckIssueVO `json:"issue_list"`         // 问题清单
+}
+
+// ChapterCheckIssueVO 体检问题条目。
+type ChapterCheckIssueVO struct {
+	IssueCode  string `json:"issue_code"`  // 问题编码
+	LevelCode  string `json:"level_code"`  // 级别：block/warn/info
+	TitleText  string `json:"title_text"`  // 问题标题
+	DetailText string `json:"detail_text"` // 说明与改法
+	HitCount   int    `json:"hit_count"`   // 命中次数
+	SampleText string `json:"sample_text"` // 命中示例
+}

@@ -44,7 +44,7 @@ go test -short -run TestChatContextChain ./internal/service/   # 定位单个链
 
 ### 2.2 用例清单
 
-后端共 6 个测试文件、11 条用例，每条用例对应一条完整链路。
+后端共 7 个测试文件、12 条用例，每条用例对应一条完整链路。
 
 | 文件 | 用例 | 覆盖链路 |
 | --- | --- | --- |
@@ -59,6 +59,7 @@ go test -short -run TestChatContextChain ./internal/service/   # 定位单个链
 | `backend/internal/service/knowledge_chain_test.go` | `TestKnowledgeRetrievalChain` | 文本切片（重叠窗口、非法 overlap 收敛）→ 查询词抽取 → RRF 双通道融合 → 单通道排序与 TopK → 重排解析与 fail-open |
 | `backend/internal/service/knowledge_chain_test.go` | `TestManticoreSchemaMigrationChain` | Manticore 表结构识别 → 旧表重建 → 回灌只执行一次；新结构启动不重建 |
 | `backend/internal/service/menu_chain_test.go` | `TestMenuAndPermissionChain` | 导航可见性过滤 → 菜单树装配 → 权限目录汇总 → 重复权限码去重 → 动作与菜单权限说明区分 |
+| `backend/internal/ai/check/chapter_check_test.go` | `TestChapterCheckChain` | 空正文判阻断 → 零容忍词计数与分级 → 缺钩子警示 → 干净正文不误判 → 同一输入结论确定性 |
 
 ### 2.3 覆盖取向
 
@@ -67,7 +68,8 @@ go test -short -run TestChatContextChain ./internal/service/   # 定位单个链
 1. **权限与凭据**。鉴权绕过与密钥解不开都是「配错才在生产暴露」的问题。
 2. **上下文装配**。技能、引用、设定、摘要、历史与预算的交互是全系统最复杂的部分，一旦偏移会静默产出错误上下文。
 3. **检索链路**。切片、查询词、融合与重排是一条上下游链路，中途改动会直接影响召回质量。
-4. **出厂资产**。内置技能与档案的形状、编码唯一性与占位符合法性直接决定播种产物能否使用。
+4. **出厂资产**。内置技能、档案与工具的形状、编码唯一性与占位符合法性直接决定播种产物能否使用。
+5. **量化门禁**。体检阈值与分级一旦漂移，写作台与对话期工具会给出互相矛盾的结论。
 
 其余（CRUD 透传、字段校验、常量查表）由类型检查与集成验证兜住，不单独建用例。
 
@@ -100,13 +102,16 @@ pnpm test # vitest run
 
 | 场景 | 验证方式 |
 | --- | --- |
-| 启动与播种 | 后端启动日志显示迁移 33 张表、播种内置技能与菜单；`/health` 与 `/ready` 返回 200 |
+| 启动与播种 | 后端启动日志显示迁移 35 张表、播种内置技能与菜单；`/health` 与 `/ready` 返回 200 |
 | 登录与导航 | `POST /api/v1/auth/login` 取令牌 → `GET /api/v1/menu/nav` 返回按权限过滤后的导航树 |
 | 业务接口 | 按模块调用列表/详情/写入接口，确认业务码为 `SUCCESS` 且字段符合契约 |
 | AI 流式 | `POST /api/v1/chat/send` 观察 `thinking` → `chunk` → `done` 事件序列与 seq 递增 |
 | AI 开书 | `POST /api/v1/project/bootstrap/plan` 返回方案（卷章 / 角色 / 设定齐全）→ `POST /project/bootstrap/apply` 后 `GET /project/tree/:id` 与 `POST /outline/list` 能查到对应卷章与大纲节点 |
 | 检索 | 上传文档 → 索引任务完成（`indexed`）→ 关键词检索返回命中片段与追踪信息 |
-| 前端 | 浏览器逐页访问，检查渲染、空态、加载态与流式输出 |
+| 审计闭环 | 任意写接口调用后 `POST /admin/audit/list` 能查到该记录，`GET /admin/audit/detail/:id` 返回脱敏请求体与响应码 |
+| 工具 | `GET /tool/list` 返回 6 个内置工具；`POST /tool/invoke`（`chapter_check`）对含零容忍词的正文返回 `verdict_code=block` |
+| 章节体检 | `POST /chapter/check` 对同一正文给出稳定分数与问题清单 |
+| 前端 | 浏览器逐页访问，检查渲染、空态、加载态与流式输出；写作台点「体检」应出现评分与问题清单 |
 
 集成验证不在 CI 中自动执行（依赖外部中间件与模型网关），由部署阶段人工确认。
 

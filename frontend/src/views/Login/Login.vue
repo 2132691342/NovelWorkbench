@@ -8,7 +8,6 @@
   import { required, useForm } from '@novelworkbench/hooks'
   import { ThemeSwitch } from '@novelworkbench/components'
   import { useUserStore } from '@/store/modules/user'
-  import { useMenuStore } from '@/store/modules/menu'
   import { useAppStore } from '@/store/modules/app'
   import { appConfig } from '@/config/app'
 
@@ -17,7 +16,6 @@
   const { t } = useI18n()
   const router = useRouter()
   const userStore = useUserStore()
-  const menuStore = useMenuStore()
   const appStore = useAppStore()
 
   const { state, actions } = useForm<LoginParams>({
@@ -39,7 +37,7 @@
   const signIn = () =>
     actions.submit(async (formData) => {
       await userStore.login(formData, rememberFlag.value)
-      await menuStore.loadNav()
+      await userStore.loadNav()
       emit('success')
       const redirectPath = String(router.currentRoute.value.query.redirect ?? '')
       await router.replace(redirectPath.startsWith('/') ? redirectPath : '/')

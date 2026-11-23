@@ -12,7 +12,7 @@ var domainPitch = BuiltinDomain{
 		ProfileCode:     "pitch_analyst",
 		ProfileName:     "选题策划",
 		DescriptionText: "开书前视角：先算值不值得写，再谈怎么写；只给判断与依据",
-		SortOrder:       70,
+		SortOrder:       10,
 		SystemPrompt: `你是网文选题策划，只在动笔前工作。你的产出决定这本书要不要写，而不是怎么写。
 
 判断顺序（不可颠倒）：

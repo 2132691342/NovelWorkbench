@@ -1,21 +1,42 @@
-// 全局路由守卫：登录态、导航加载与页面权限码校验。
+// 全局路由守卫：登录态、后端导航 → 动态路由注册、页面权限码兜底与项目作用域路径补全。
+
+import type { RouteRecordRaw } from 'vue-router'
 import NProgress from 'nprogress'
 import router from './router'
 import { NO_REDIRECT_WHITE_LIST } from '@/constants'
 import { useAppStoreWithOut } from '@/store/modules/app'
+import { usePermissionStoreWithOut } from '@/store/modules/permission'
 import { useUserStoreWithOut } from '@/store/modules/user'
-import { useMenuStoreWithOut } from '@/store/modules/menu'
+import { useProjectStoreWithOut } from '@/store/modules/project'
 import 'nprogress/nprogress.css'
 
 NProgress.configure({ showSpinner: false })
 
 /**
- * 页面权限校验：路由 meta.permCode 命中用户权限码即放行。
- * 菜单可见性由后端导航树决定，这里是直接输 URL 时的兜底门禁。
+ * 动态路由注册：后端导航树 → 路由记录 → router.addRoute。
+ * 已注册过返回 false；本次新注册返回 true（调用方需重新导航一次，否则首帧会落到 Fallback）。
  */
-const ensureNavLoaded = async () => {
-  const menuStore = useMenuStoreWithOut()
-  if (!menuStore.navLoaded) await menuStore.loadNav()
+export const ensureDynamicRoutes = async (): Promise<boolean> => {
+  const permissionStore = usePermissionStoreWithOut()
+  if (permissionStore.isAddRouters) return false
+  const userStore = useUserStoreWithOut()
+  const nav = await userStore.loadNav()
+  const routeList = permissionStore.generateRoutes(nav.menu_tree_list ?? [])
+  routeList.forEach((route) => {
+    router.addRoute('Root', route as unknown as RouteRecordRaw)
+  })
+  permissionStore.setIsAddRouters(true)
+  return true
+}
+
+/** 项目作用域页面路径仍带 :project_ulid 占位时，替换为当前项目（否则原样放行，避免自我重定向） */
+const resolveProjectScope = async (to: { path: string; meta: Record<string, unknown> }) => {
+  if (!to.meta.projectScope || !to.path.includes(':project_ulid')) return null
+  const projectStore = useProjectStoreWithOut()
+  if (projectStore.projectOptions.length === 0) await projectStore.loadProjectOptions()
+  const projectUlid = projectStore.currentProjectUlid || projectStore.projectOptions[0]?.project_ulid
+  if (!projectUlid) return null
+  return projectUlid
 }
 
 export const setupPermission = async () => {
@@ -23,7 +44,7 @@ export const setupPermission = async () => {
 
   if (userStore.isAuthenticated) {
     try {
-      await ensureNavLoaded()
+      await ensureDynamicRoutes()
     } catch {
       userStore.clearSession()
     }
@@ -41,16 +62,31 @@ export const setupPermission = async () => {
     if (to.path === '/login') return { path: '/' }
 
     try {
-      await ensureNavLoaded()
+      const routesAdded = await ensureDynamicRoutes()
+      if (routesAdded) return { path: to.fullPath, replace: true }
       if (userStore.userInfo === undefined) await userStore.fetchProfile()
     } catch {
       userStore.clearSession()
       return { path: '/login', query: { redirect: to.fullPath } }
     }
 
-    const permCode = String(to.meta.permCode ?? '')
-    if (permCode && !userStore.hasPerm(permCode)) return { path: '/', replace: true }
+    // 项目作用域页面：路径里的占位符在导航层已替换，这里兜住直接输 URL 的情况
+    const projectUlid = await resolveProjectScope(to as never)
+    if (projectUlid) {
+      const replaced = to.fullPath.replace('/:project_ulid', `/${projectUlid}`)
+      return { path: replaced, replace: true }
+    }
 
+    const permCode = String(to.meta.permCode ?? '')
+    if (permCode && !userStore.hasPerm(permCode)) {
+      const permissionStore = usePermissionStoreWithOut()
+      const firstPage = permissionStore.addRouters
+        .flatMap((route) => [route, ...(route.children ?? [])])
+        .find((route) => route.meta && !route.meta.hidden && route.component)
+      return { path: firstPage?.path ?? '/404', replace: true }
+    }
+
+    if (to.name === 'Fallback') return { path: '/404', replace: true }
     return true
   })
 

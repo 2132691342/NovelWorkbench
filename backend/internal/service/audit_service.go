@@ -1,4 +1,4 @@
-// 本文件实现审计日志业务：变更记录落库与分页查询。
+// 本文件实现审计日志业务：变更记录落库、分页查询与详情读取。
 
 package service
 
@@ -45,17 +45,46 @@ func (s *AuditService) ListPage(ctx context.Context, req *domain.AuditListREQ) (
 	}
 	vos := make([]domain.AuditVO, 0, len(dos))
 	for i := range dos {
-		vos = append(vos, domain.AuditVO{
-			AuditULID:  dos[i].AuditULID,
-			UserULID:   dos[i].UserULID,
-			UserName:   dos[i].UserName,
-			ActionCode: dos[i].ActionCode,
-			TargetType: dos[i].TargetType,
-			TargetULID: dos[i].TargetULID,
-			DetailText: dos[i].DetailText,
-			IPAddr:     dos[i].IPAddr,
-			CreatedAt:  pkg.FormatTime(dos[i].CreatedAt),
-		})
+		vos = append(vos, toAuditVO(&dos[i]))
 	}
 	return domain.NewPageDTO(total, req.PageREQ, vos), nil
+}
+
+// Detail 查询单条审计详情（含请求体原文）。
+func (s *AuditService) Detail(ctx context.Context, req *domain.AuditDetailREQ) (domain.AuditDetailVO, error) {
+	do, err := s.auditRepo.GetByULID(ctx, req.AuditULID)
+	if err != nil {
+		return domain.AuditDetailVO{}, err
+	}
+	if do == nil {
+		return domain.AuditDetailVO{}, pkg.NewBizError(domain.RespCodeNotFound, "审计记录不存在")
+	}
+	return domain.AuditDetailVO{AuditVO: toAuditVO(do), RequestBody: do.RequestBody}, nil
+}
+
+// toAuditVO 组装审计视图对象（历史行缺级别时按 HTTP 状态推导，保证列表着色一致）。
+func toAuditVO(do *domain.AuditLogDO) domain.AuditVO {
+	levelCode := do.LogLevelCode
+	if levelCode == "" && do.HTTPStatus > 0 {
+		levelCode = pkg.AuditLevelOf(do.HTTPStatus)
+	}
+	return domain.AuditVO{
+		AuditULID:     do.AuditULID,
+		LogLevelCode:  levelCode,
+		TraceID:       do.TraceID,
+		UserULID:      do.UserULID,
+		UserName:      do.UserName,
+		ActionCode:    do.ActionCode,
+		RequestPath:   do.RequestPath,
+		RequestMethod: do.RequestMethod,
+		TargetType:    do.TargetType,
+		TargetULID:    do.TargetULID,
+		RespCode:      do.RespCode,
+		RespMessage:   do.RespMessage,
+		HTTPStatus:    do.HTTPStatus,
+		LatencyMs:     do.LatencyMs,
+		IPAddr:        do.IPAddr,
+		UserAgentText: do.UserAgentText,
+		CreatedAt:     pkg.FormatTime(do.CreatedAt),
+	}
 }

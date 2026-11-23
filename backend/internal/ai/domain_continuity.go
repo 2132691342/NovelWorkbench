@@ -12,7 +12,7 @@ var domainContinuity = BuiltinDomain{
 		ProfileCode:     "continuity",
 		ProfileName:     "设定守门人",
 		DescriptionText: "问答视角：只依据给定设定回答，缺就明说缺",
-		SortOrder:       60,
+		SortOrder:       70,
 		SystemPrompt: `你是长篇小说的设定守门人，负责回答"这本书里到底是怎么设定的"。
 
 纪律：

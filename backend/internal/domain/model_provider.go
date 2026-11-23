@@ -70,6 +70,18 @@ type ModelRoleGrantDO struct {
 // TableName 指定表名。
 func (ModelRoleGrantDO) TableName() string { return "model_role_grants" }
 
+// ModelUserGrantDO 模型-用户授权持久化对象（模型 × 用户唯一）。
+// 用户直授优先于角色授权：删角色不影响用户直授，删用户则级联清理其直授。
+type ModelUserGrantDO struct {
+	BaseDO
+	GrantULID string `json:"grant_ulid" gorm:"column:grant_ulid;primaryKey;size:40"` // 授权 ULID（MUG_ 前缀）
+	ModelULID string `json:"model_ulid" gorm:"column:model_ulid;size:40;index"`      // 模型 ULID
+	UserULID  string `json:"user_ulid" gorm:"column:user_ulid;size:40;index"`        // 用户 ULID
+}
+
+// TableName 指定表名。
+func (ModelUserGrantDO) TableName() string { return "model_user_grants" }
+
 // ModelProviderREQ 供应商创建/更新请求（provider_ulid 为空表示创建）。
 type ModelProviderREQ struct {
 	ProviderULID string `json:"provider_ulid" form:"provider_ulid" binding:"omitempty,max=40"`                // 供应商 ULID，空为创建
@@ -106,6 +118,7 @@ type ModelCatalogREQ struct {
 	SortOrder          int      `json:"sort_order" form:"sort_order"`                                      // 排序号
 	RemarkText         string   `json:"remark_text" form:"remark_text" binding:"omitempty,max=256"`        // 备注
 	RoleULIDList       []string `json:"role_ulid_list" binding:"omitempty,max=32"`                         // 保存时整体覆盖的角色授权
+	UserULIDList       []string `json:"user_ulid_list" binding:"omitempty,max=200"`                        // 保存时整体覆盖的用户直授
 }
 
 // ModelCatalogListREQ 模型目录查询请求（provider_ulid 为空查全部）。
@@ -123,10 +136,11 @@ type ModelCatalogTestREQ struct {
 	ModelULID string `json:"model_ulid" form:"model_ulid" binding:"required,max=40"` // 模型 ULID
 }
 
-// ModelGrantREQ 模型角色授权请求（整体覆盖该模型的角色列表）。
+// ModelGrantREQ 模型授权请求（整体覆盖该模型的角色与用户直授）。
 type ModelGrantREQ struct {
 	ModelULID    string   `json:"model_ulid" form:"model_ulid" binding:"required,max=40"` // 模型 ULID
-	RoleULIDList []string `json:"role_ulid_list" binding:"omitempty,max=32"`              // 角色 ULID 列表（空=取消全部分配）
+	RoleULIDList []string `json:"role_ulid_list" binding:"omitempty,max=32"`              // 角色 ULID 列表（空=取消角色分配）
+	UserULIDList []string `json:"user_ulid_list" binding:"omitempty,max=200"`             // 用户 ULID 列表（空=取消用户直授）
 }
 
 // ModelProviderVO 供应商视图对象（密钥仅回显掩码）。
@@ -167,6 +181,8 @@ type ModelCatalogVO struct {
 	RemarkText         string   `json:"remark_text"`           // 备注
 	RoleULIDList       []string `json:"role_ulid_list"`        // 已授权角色
 	RoleNameList       []string `json:"role_name_list"`        // 已授权角色名称
+	UserULIDList       []string `json:"user_ulid_list"`        // 用户直授 ULID
+	UserLabelList      []string `json:"user_label_list"`       // 用户直授展示（登录名，供前端标签）
 	LastTestStatusCode string   `json:"last_test_status_code"` // 最近测试状态
 	LastTestMessage    string   `json:"last_test_message"`     // 最近测试结论
 	LastTestAt         string   `json:"last_test_at"`          // 最近测试时间（RFC3339）

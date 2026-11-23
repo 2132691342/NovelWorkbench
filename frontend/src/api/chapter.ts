@@ -49,3 +49,34 @@ export function restoreChapterSnapshot(
 ): Promise<NWChapterDetailVo> {
   return post<NWChapterDetailVo>('/chapter/snapshot/restore', req)
 }
+
+/** 章节体检结果（字段对齐后端 ChapterCheckVO） */
+export interface NWChapterCheckVo {
+  word_count: number
+  paragraph_count: number
+  dialogue_ratio: number
+  dash_count: number
+  banned_word_count: number
+  warn_word_count: number
+  emotion_word_count: number
+  bare_tag_count: number
+  hook_present: boolean
+  score_value: number
+  verdict_code: string
+  issue_list: {
+    issue_code: string
+    level_code: string
+    title_text: string
+    detail_text: string
+    hit_count: number
+    sample_text: string
+  }[]
+}
+
+/** 章节体检：正文优先，留空取库内正文 */
+export function checkChapter(params: {
+  chapter_ulid?: string
+  content_text?: string
+}): Promise<NWChapterCheckVo> {
+  return post<NWChapterCheckVo>('/chapter/check', params)
+}
