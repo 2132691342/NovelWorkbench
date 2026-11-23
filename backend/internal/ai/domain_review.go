@@ -1,6 +1,5 @@
 // 本文件定义「质检」流程域：连载责任编辑档案 + 章节质检、量化门禁两个技能。
-// 蒸馏来源：webnovel-review（六道检查与台账）、cn-novel-craft（16 维与量化门禁）、
-// final-review（终审顺序）、novel-deai-tomato-pass（发布前自检）。
+// 覆盖六道检查与台账、十六维量化门禁、终审顺序与发布前自检。
 
 package ai
 

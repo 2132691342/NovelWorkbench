@@ -1,4 +1,4 @@
-// 开书方案解析的回归：围栏与前后缀容错 → 结构完整性 → 缺字段拒绝。
+// 开书方案解析的场景回归：模型输出 → 可落库方案。
 // 解析是开书主链的入口，模型输出格式稍有偏差就会让整份方案作废或落库半成品，
 // 因此把容错与拒绝两条路径合并为一条用例。
 
@@ -20,24 +20,21 @@ func TestParseBootstrapPlanChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
-	if plan.ProjectName != "长夜行" || len(plan.VolumeList) != 1 {
+	if plan.ProjectName != "长夜行" || len(plan.VolumeList) != 1 ||
+		len(plan.VolumeList[0].ChapterList) != 1 ||
+		plan.VolumeList[0].ChapterList[0].ChapterName != "第一章 钥匙" ||
+		len(plan.CharacterList) != 1 || plan.CharacterList[0].RoleTypeCode != "protagonist" {
 		t.Fatalf("解析结果不符: %+v", plan)
-	}
-	if len(plan.VolumeList[0].ChapterList) != 1 || plan.VolumeList[0].ChapterList[0].ChapterName != "第一章 钥匙" {
-		t.Fatalf("章节解析不符: %+v", plan.VolumeList[0].ChapterList)
-	}
-	if len(plan.CharacterList) != 1 || plan.CharacterList[0].RoleTypeCode != "protagonist" {
-		t.Fatalf("角色解析不符: %+v", plan.CharacterList)
 	}
 
 	// 步骤2：拒绝。无 JSON、缺书名、缺卷章与非法 JSON 一律报错，不产出半成品方案。
-	cases := map[string]string{
+	badCases := map[string]string{
 		"无 JSON":  "抱歉，我无法完成。",
 		"缺书名":     `{"project_name":"","volume_list":[{"volume_name":"第一卷","chapter_list":[]}]}`,
 		"缺卷章结构":   `{"project_name":"长夜行","volume_list":[]}`,
 		"非法 JSON": `{"project_name":"长夜行","volume_list":[}`,
 	}
-	for name, bad := range cases {
+	for name, bad := range badCases {
 		if _, err := ParseBootstrapPlan(bad); err == nil {
 			t.Fatalf("%s：期望解析失败，实际成功", name)
 		}

@@ -16,6 +16,7 @@
 原则：
 
 - **一个用例讲一条链路**。多个环节串在同一 `Test*` 内，用「步骤N」注释分隔；失败时看注释定位到具体环节。
+- **同域的链路放同一文件**。对话链路的四段（技能解析、上下文装配、工具触发、流式契约）都发生在同一次请求里，分散到多个文件会让定位变难，因此集中在 `chat_pipeline_test.go`。
 - **断言跨环节的因果**，不重复断言代码自身保证的约束。例：断言「项目技能覆盖全局后全局技能被标记为已覆盖」，而不是逐字段核对枚举取值表。
 - **表驱动只用于同一行为的多个输入**（如鉴权的拒绝路径）。
 - `-short` 模式不依赖外部服务：HTTP 依赖用 `httptest.NewServer`，接口用闭包替身。
@@ -44,22 +45,22 @@ go test -short -run TestChatContextChain ./internal/service/   # 定位单个链
 
 ### 2.2 用例清单
 
-后端共 8 个测试文件、13 条用例，每条用例对应一条完整链路。
+后端共 7 个测试文件、13 条用例，每条用例对应一条完整链路。
 
 | 文件 | 用例 | 覆盖链路 |
 | --- | --- | --- |
 | `backend/internal/pkg/security_chain_test.go` | `TestAccessControlChain` | 请求 ID 透传 → 鉴权注入用户 → 权限判定 → 审计落库 → 响应包络；拒绝路径覆盖无令牌 / 令牌已吊销 / 账号禁用（401）与权限不足（403） |
 | `backend/internal/pkg/security_chain_test.go` | `TestSecretSealChain` | 密钥封存 → 解封还原 → 密文不可读 → 篡改与材料变更被拒（认证标签校验） |
-| `backend/internal/ai/builtin_assets_test.go` | `TestBuiltinAssetChain` | 内置资产从定义到可播种：域形状（9 域各一档案两技能）→ 编码全局唯一 → 模板占位符全部已登记 → 指纹为 sha256 |
+| `backend/internal/ai/builtin_assets_test.go` | `TestBuiltinAssetChain` | 内置资产从定义到可播种：域形状（12 域各一档案两技能）→ 编码全局唯一 → 模板占位符全部已登记 → 指纹为 sha256 |
 | `backend/internal/ai/builtin_assets_test.go` | `TestProviderInstanceChain` | 模型实例缓存键随密钥/协议/地址/模型/参数变化；流式 HTTP 客户端不设整体超时（否则长流被拦腰切断） |
 | `backend/internal/ai/bootstrap_test.go` | `TestParseBootstrapPlanChain` | 开书方案解析：代码围栏与前后缀文字容错 → 书名/卷章/角色字段完整取出 → 无 JSON / 缺书名 / 缺卷章 / 非法 JSON 一律报错 |
 | `backend/internal/service/chat_pipeline_test.go` | `TestSkillResolutionChain` | 技能编码解析（显式优先 / 正文首 token）→ 作用域优先级 → 变量取值与必填缺失 → 模板占位符校验 → 参考资料关键词命中与 4000 字符预算 → 全局技能覆盖标记 |
 | `backend/internal/service/chat_pipeline_test.go` | `TestChatContextChain` | 技能模板渲染 → 自由对话 → @引用分优先级 → 设定注入排除私人笔记 → 显式引用摘要与档案 → 同优先级稳定顺序 → 12000 字符预算丢块 → 历史选取 → 消息序列成型 → 显式引用会话归属校验 |
-| `backend/internal/service/chat_pipeline_test.go` | `TestChatStreamContract` | SSE `thinking` → `chunk` → `done` 顺序、seq 从 1 单调递增、`done` 携带完整思考过程与空数组引用 |
+| `backend/internal/service/chat_pipeline_test.go` | `TestToolTriggerChain` | 正文 `#code` 解析（行首/行中命中，词内井号、大写与无井号不命中，剥离时保留换行）→ 编码合并去重截断 → 显式选取与缺失上报 → 关键词补位跳过已选与停用 |
+| `backend/internal/service/chat_pipeline_test.go` | `TestChatStreamContract` | SSE `thinking` → `chunk` → `done` 顺序、seq 从 1 单调递增、`done` 携带完整思考过程、空数组引用与本轮工具编码 |
 | `backend/internal/service/knowledge_chain_test.go` | `TestKnowledgeRetrievalChain` | 文本切片（重叠窗口、非法 overlap 收敛）→ 查询词抽取 → RRF 双通道融合 → 单通道排序与 TopK → 重排解析与 fail-open |
 | `backend/internal/service/knowledge_chain_test.go` | `TestManticoreSchemaMigrationChain` | Manticore 表结构识别 → 旧表重建 → 回灌只执行一次；新结构启动不重建 |
 | `backend/internal/service/menu_chain_test.go` | `TestMenuAndPermissionChain` | 可下发过滤（隐藏页保留标记）→ 菜单树装配与隐藏标记透传 → 权限目录汇总 → 重复权限码去重 → 动作与菜单权限说明区分 |
-| `backend/internal/service/tool_trigger_test.go` | `TestToolTriggerChain` | 正文 `#code` 解析（行首/行中命中，词内井号、大写与无井号不命中，剥离时保留换行）→ 编码合并去重截断 → 显式选取与缺失上报 → 关键词补位跳过已选与停用 |
 | `backend/internal/ai/check/chapter_check_test.go` | `TestChapterCheckChain` | 空正文判阻断 → 零容忍词计数与分级 → 缺钩子警示 → 干净正文不误判 → 同一输入结论确定性 |
 
 ### 2.3 覆盖取向
@@ -110,7 +111,7 @@ pnpm test # vitest run
 | AI 开书 | `POST /api/v1/project/bootstrap/plan` 返回方案（卷章 / 角色 / 设定齐全）→ `POST /project/bootstrap/apply` 后 `GET /project/tree/:id` 与 `POST /outline/list` 能查到对应卷章与大纲节点 |
 | 检索 | 上传文档 → 索引任务完成（`indexed`）→ 关键词检索返回命中片段与追踪信息 |
 | 审计闭环 | 任意写接口调用后 `POST /admin/audit/list` 能查到该记录，`GET /admin/audit/detail/:id` 返回脱敏请求体与响应码 |
-| 工具 | `GET /tool/list` 返回 6 个内置工具；`POST /tool/invoke`（`chapter_check`）对含零容忍词的正文返回 `verdict_code=block` |
+| 工具 | `GET /tool/list` 返回 6 个内置工具（`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`）；`POST /tool/invoke`（`chapter_check`）对含零容忍词的正文返回 `verdict_code=block` |
 | 章节体检 | `POST /chapter/check` 对同一正文给出稳定分数与问题清单 |
 | 前端 | 浏览器逐页访问，检查渲染、空态、加载态与流式输出；写作台点「体检」应出现评分与问题清单 |
 

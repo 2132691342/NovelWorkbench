@@ -1,6 +1,5 @@
 // 本文件定义「去 AI 味」流程域：去 AI 味修订档案 + 去 AI 味、活人感改写两个技能。
-// 蒸馏来源：de-ai-novel（AI 味定义与识别层）、cn-novel-craft（34 模式与 4 大死亡气味、
-// 量化门禁）、deai-rewriter（句级改法）、human-writing（真实人声七种）。
+// 覆盖 AI 味的定义与识别层、写作模式清单、句级改法与真实人声改写。
 
 package ai
 

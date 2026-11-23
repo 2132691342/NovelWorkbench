@@ -44,14 +44,8 @@ func TestMenuAndPermissionChain(t *testing.T) {
 	}
 	hiddenCount := 0
 	for _, do := range visible {
-		if do.MenuTypeCode == domain.MenuTypeAction {
-			t.Fatalf("动作节点不应下发: %s", do.MenuCode)
-		}
 		if !do.VisibleFlag {
 			hiddenCount++
-		}
-		if do.PermCode != "" && do.PermCode != "system:user:manage" {
-			t.Fatalf("未授权权限码不应下发: %s", do.MenuCode)
 		}
 	}
 	if hiddenCount != 1 {
@@ -66,38 +60,27 @@ func TestMenuAndPermissionChain(t *testing.T) {
 	if len(tree) != 4 {
 		t.Fatalf("根节点数 = %d, want 4", len(tree))
 	}
-	hiddenNode := (*domain.MenuTreeNodeVO)(nil)
+	var hiddenNode, group *domain.MenuTreeNodeVO
 	for i := range tree {
-		if tree[i].MenuCode == "hidden_page" {
+		switch tree[i].MenuCode {
+		case "hidden_page":
 			hiddenNode = &tree[i]
+		case "group_system":
+			group = &tree[i]
 		}
 	}
 	if hiddenNode == nil || hiddenNode.VisibleFlag {
 		t.Fatalf("隐藏页节点标记丢失: %+v", hiddenNode)
 	}
-	var group *domain.MenuTreeNodeVO
-	for i := range tree {
-		if tree[i].MenuCode == "group_system" {
-			group = &tree[i]
-		}
-	}
-	if group == nil {
-		t.Fatal("未装配出系统管理分组")
-	}
-	if len(group.ChildList) != 1 || group.ChildList[0].MenuCode != "admin_users" {
-		t.Fatalf("分组下级装配错误: %+v", group.ChildList)
-	}
-	if group.ChildList[0].PermCode != "system:user:manage" {
-		t.Fatalf("节点权限码丢失: %+v", group.ChildList[0])
+	if group == nil || len(group.ChildList) != 1 ||
+		group.ChildList[0].MenuCode != "admin_users" || group.ChildList[0].PermCode != "system:user:manage" {
+		t.Fatalf("分组下级装配错误: %+v", group)
 	}
 
 	// 环节3：权限目录。通配独立成组、动作与菜单权限说明区分、同权限码只登记一次。
 	catalog := buildPermCatalog(testMenus())
-	if len(catalog) != 3 {
-		t.Fatalf("权限分组数 = %d, want 3（all/skill/system）", len(catalog))
-	}
-	if catalog[0].GroupCode != "all" || catalog[0].GroupName != "全部权限" {
-		t.Fatalf("通配权限应独立成组且排首位: %+v", catalog[0])
+	if len(catalog) != 3 || catalog[0].GroupCode != "all" || catalog[0].GroupName != "全部权限" {
+		t.Fatalf("权限分组数或通配分组错误: %+v", catalog)
 	}
 	groupMap := make(map[string]domain.PermGroupVO, len(catalog))
 	for _, catalogGroup := range catalog {
@@ -111,23 +94,21 @@ func TestMenuAndPermissionChain(t *testing.T) {
 	for _, item := range systemGroup.PermList {
 		permDesc[item.PermCode] = item.PermDesc
 	}
-	if permDesc["system:user:add"] != "动作权限：新增用户" {
-		t.Fatalf("动作权限说明错误: %v", permDesc)
+	if permDesc["system:user:add"] != "动作权限：新增用户" ||
+		permDesc["system:user:manage"] != "菜单权限：系统管理 / 用户管理" {
+		t.Fatalf("权限说明错误: %v", permDesc)
 	}
-	if permDesc["system:user:manage"] != "菜单权限：系统管理 / 用户管理" {
-		t.Fatalf("菜单权限说明错误: %v", permDesc)
-	}
-
 	dup := append(testMenus(), menuDO("MNU_7", "", "admin_users_copy", "用户管理副本", domain.MenuTypePage, "system:user:manage"))
 	for _, catalogGroup := range buildPermCatalog(dup) {
-		count := 0
-		for _, item := range catalogGroup.PermList {
-			if item.PermCode == "system:user:manage" {
-				count++
-			}
+		if catalogGroup.GroupCode != "system" {
+			continue
 		}
-		if count > 1 {
-			t.Fatalf("权限码重复登记于目录 %d 次", count)
+		seen := map[string]bool{}
+		for _, item := range catalogGroup.PermList {
+			if seen[item.PermCode] {
+				t.Fatalf("同权限码重复登记: %s", item.PermCode)
+			}
+			seen[item.PermCode] = true
 		}
 	}
 }

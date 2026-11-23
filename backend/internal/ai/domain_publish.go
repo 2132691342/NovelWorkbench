@@ -1,6 +1,5 @@
 // 本文件定义「平台运营」流程域：平台运营档案 + 标题封面、上架文案两个技能。
-// 蒸馏来源：fanqie-publish（上架材料）、tomato-viral-novel / qimao-viral-novel（标题与简介套路）、
-// seeding-content（平台外导流文案）。
+// 覆盖上架材料清单、标题与简介套路、平台外导流文案。
 
 package ai
 

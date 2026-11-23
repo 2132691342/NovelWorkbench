@@ -1,6 +1,5 @@
 // 本文件定义「短篇」流程域：短篇作者档案 + 短篇起稿、结尾余震两个技能。
-// 蒸馏来源：short-story-writer（形态路由与开篇工程）、fanqie-bestseller（情绪需求金字塔）、
-// conflict-max-web-fiction（代价升级）。
+// 覆盖形态路由与开篇工程、读者情绪需求层级、代价升级。
 
 package ai
 

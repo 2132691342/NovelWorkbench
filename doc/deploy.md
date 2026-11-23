@@ -6,7 +6,7 @@
 
 应用只由两个容器组成，中间件不在应用镜像内，部署时二选一：本地用 `infra` profile 拉起，或云主机直连既有实例。
 
-```mermaid
+``mermaid
 flowchart LR
   U["Browser"] -->|"宿主 14399"| FE["nw-frontend (nginx:80)"]
   FE -->|"/api/ 反代"| BE["nw-backend :8080"]
@@ -20,7 +20,7 @@ flowchart LR
   W --> PG
   W --> MI
   W --> MC
-```
+``
 
 | 容器 | 镜像 | 监听 | 宿主端口 | 职责 |
 | --- | --- | --- | --- | --- |
@@ -140,50 +140,17 @@ flowchart LR
 
 每个 `NW_<大写路径>` 对应 `config.go` 中一个字段，`.` 替换为 `_`。
 
-| 结构体 | 字段 | 环境变量 | 默认值 | 说明 |
-| --- | --- | --- | --- | --- |
-| `ServerConfig` | `host` | `NW_SERVER_HOST` | `0.0.0.0` | 监听地址 |
-| `ServerConfig` | `port` | `NW_SERVER_PORT` | `8080` | 监听端口 |
-| `ServerConfig` | `mode` | `NW_SERVER_MODE` | `debug` | gin 模式 `debug`/`release`/`test` |
-| `ServerConfig` | `read_timeout_sec` | `NW_SERVER_READ_TIMEOUT_SEC` | `30` | 读超时（秒） |
-| `ServerConfig` | `write_timeout_sec` | `NW_SERVER_WRITE_TIMEOUT_SEC` | `0` | 写超时（秒），0 为不限（SSE） |
-| `JWTConfig` | `secret` | `NW_JWT_SECRET` | 无（必填） | 签名密钥兼封存材料 |
-| `JWTConfig` | `expire_hours` | `NW_JWT_EXPIRE_HOURS` | `168` | 令牌有效期（小时） |
-| `PostgresConfig` | `host` | `NW_POSTGRES_HOST` | 无（必填） | 数据库主机 |
-| `PostgresConfig` | `port` | `NW_POSTGRES_PORT` | `5432` | 端口 |
-| `PostgresConfig` | `user` | `NW_POSTGRES_USER` | `postgres` | 账号 |
-| `PostgresConfig` | `password` | `NW_POSTGRES_PASSWORD` | 空 | 口令 |
-| `PostgresConfig` | `dbname` | `NW_POSTGRES_DBNAME` | `postgres` | 库名（必填） |
-| `PostgresConfig` | `sslmode` | `NW_POSTGRES_SSLMODE` | `disable` | SSL 模式 |
-| `PostgresConfig` | `max_open_conns` | `NW_POSTGRES_MAX_OPEN_CONNS` | `20` | 最大打开连接 |
-| `PostgresConfig` | `max_idle_conns` | `NW_POSTGRES_MAX_IDLE_CONNS` | `5` | 最大空闲连接 |
-| `PostgresConfig` | `conn_max_lifetime_min` | `NW_POSTGRES_CONN_MAX_LIFETIME_MIN` | `30` | 连接最长存活（分钟） |
-| `RedisConfig` | `addr` | `NW_REDIS_ADDR` | 无（为空则退出） | `host:port` |
-| `RedisConfig` | `password` | `NW_REDIS_PASSWORD` | 空 | 口令 |
-| `RedisConfig` | `db` | `NW_REDIS_DB` | `0` | 库号 |
-| `RabbitMQConfig` | `url` | `NW_RABBITMQ_URL` | 空 | AMQP 连接串 |
-| `RabbitMQConfig` | `queue_doc_index` | `NW_RABBITMQ_QUEUE_DOC_INDEX` | `nw_doc_index` | 索引队列名 |
-| `MinIOConfig` | `endpoint` | `NW_MINIO_ENDPOINT` | 空 | `host:port` |
-| `MinIOConfig` | `access_key` | `NW_MINIO_ACCESS_KEY` | 空 | AccessKey |
-| `MinIOConfig` | `secret_key` | `NW_MINIO_SECRET_KEY` | 空 | SecretKey |
-| `MinIOConfig` | `bucket` | `NW_MINIO_BUCKET` | `novelworkbench` | 桶名 |
-| `MinIOConfig` | `use_ssl` | `NW_MINIO_USE_SSL` | `false` | 是否 SSL |
-| `ManticoreConfig` | `base_url` | `NW_MANTICORE_BASE_URL` | 空 | HTTP SQL API 地址 |
-| `ManticoreConfig` | `table_chunks` | `NW_MANTICORE_TABLE_CHUNKS` | `nw_chunks` | 切片全文表名 |
-| `AIConfig` | `protocol_code` | `NW_AI_PROTOCOL_CODE` | `openai` | `openai` / `anthropic` |
-| `AIConfig` | `base_url` | `NW_AI_BASE_URL` | 空 | OpenAI 兼容含 `/v1`；Anthropic 填根地址 |
-| `AIConfig` | `api_key` | `NW_AI_API_KEY` | 空 | 网关密钥 |
-| `AIConfig` | `chat_model` | `NW_AI_CHAT_MODEL` | 空 | 对话模型名 |
-| `AIConfig` | `temperature` | `NW_AI_TEMPERATURE` | `0.7` | 采样温度 |
-| `AIConfig` | `max_tokens` | `NW_AI_MAX_TOKENS` | `2048` | 单次输出上限 |
-| `AIConfig` | `timeout_sec` | `NW_AI_TIMEOUT_SEC` | `120` | 调用超时（秒），≤0 时 `main` 兜底 60 |
-| `AIConfig` | `history_count` | `NW_AI_HISTORY_COUNT` | `5` | 历史消息注入条数 |
-| `AppConfig` | `upload_max_mb` | `NW_APP_UPLOAD_MAX_MB` | `20` | 上传大小上限（MB） |
-| `AppConfig` | `chunk_size` | `NW_APP_CHUNK_SIZE` | `800` | 切片字符数 |
-| `AppConfig` | `chunk_overlap` | `NW_APP_CHUNK_OVERLAP` | `120` | 切片重叠字符数 |
-| `AppConfig` | `rag_top_k` | `NW_APP_RAG_TOP_K` | `6` | 默认召回条数 |
-| `AppConfig` | `admin_password` | `NW_APP_ADMIN_PASSWORD` | `Admin@123456` | 引导管理员密码，仅用户表为空时生效 |
-| `AppConfig` | `build_version` | `NW_APP_BUILD_VERSION` | `dev` | 运行状态页展示的构建版本 |
+| 结构体 | 字段 | 环境变量（默认值，说明） |
+| --- | --- | --- |
+| `ServerConfig` | host, port, mode, read_timeout_sec, write_timeout_sec | `NW_SERVER_HOST`（`0.0.0.0`，监听地址）<br>`NW_SERVER_PORT`（`8080`，监听端口）<br>`NW_SERVER_MODE`（`debug`，gin 模式 `debug`/`release`/`test`）<br>`NW_SERVER_READ_TIMEOUT_SEC`（`30`，读超时（秒））<br>`NW_SERVER_WRITE_TIMEOUT_SEC`（`0`，写超时（秒），0 为不限（SSE）） |
+| `JWTConfig` | secret, expire_hours | `NW_JWT_SECRET`（无（必填），签名密钥兼封存材料）<br>`NW_JWT_EXPIRE_HOURS`（`168`，令牌有效期（小时）） |
+| `PostgresConfig` | host, port, user, password, dbname, sslmode, max_open_conns, max_idle_conns, conn_max_lifetime_min | `NW_POSTGRES_HOST`（无（必填），数据库主机）<br>`NW_POSTGRES_PORT`（`5432`，端口）<br>`NW_POSTGRES_USER`（`postgres`，账号）<br>`NW_POSTGRES_PASSWORD`（空，口令）<br>`NW_POSTGRES_DBNAME`（`postgres`，库名（必填））<br>`NW_POSTGRES_SSLMODE`（`disable`，SSL 模式）<br>`NW_POSTGRES_MAX_OPEN_CONNS`（`20`，最大打开连接）<br>`NW_POSTGRES_MAX_IDLE_CONNS`（`5`，最大空闲连接）<br>`NW_POSTGRES_CONN_MAX_LIFETIME_MIN`（`30`，连接最长存活（分钟）） |
+| `RedisConfig` | addr, password, db | `NW_REDIS_ADDR`（无（为空则退出），`host:port`）<br>`NW_REDIS_PASSWORD`（空，口令）<br>`NW_REDIS_DB`（`0`，库号） |
+| `RabbitMQConfig` | url, queue_doc_index | `NW_RABBITMQ_URL`（空，AMQP 连接串）<br>`NW_RABBITMQ_QUEUE_DOC_INDEX`（`nw_doc_index`，索引队列名） |
+| `MinIOConfig` | endpoint, access_key, secret_key, bucket, use_ssl | `NW_MINIO_ENDPOINT`（空，`host:port`）<br>`NW_MINIO_ACCESS_KEY`（空，AccessKey）<br>`NW_MINIO_SECRET_KEY`（空，SecretKey）<br>`NW_MINIO_BUCKET`（`novelworkbench`，桶名）<br>`NW_MINIO_USE_SSL`（`false`，是否 SSL） |
+| `ManticoreConfig` | base_url, table_chunks | `NW_MANTICORE_BASE_URL`（空，HTTP SQL API 地址）<br>`NW_MANTICORE_TABLE_CHUNKS`（`nw_chunks`，切片全文表名） |
+| `AIConfig` | protocol_code, base_url, api_key, chat_model, temperature, max_tokens, timeout_sec, history_count | `NW_AI_PROTOCOL_CODE`（`openai`，`openai` / `anthropic`）<br>`NW_AI_BASE_URL`（空，OpenAI 兼容含 `/v1`；Anthropic 填根地址）<br>`NW_AI_API_KEY`（空，网关密钥）<br>`NW_AI_CHAT_MODEL`（空，对话模型名）<br>`NW_AI_TEMPERATURE`（`0.7`，采样温度）<br>`NW_AI_MAX_TOKENS`（`2048`，单次输出上限）<br>`NW_AI_TIMEOUT_SEC`（`120`，调用超时（秒），≤0 时 `main` 兜底 60）<br>`NW_AI_HISTORY_COUNT`（`5`，历史消息注入条数） |
+| `AppConfig` | upload_max_mb, chunk_size, chunk_overlap, rag_top_k, admin_password, build_version | `NW_APP_UPLOAD_MAX_MB`（`20`，上传大小上限（MB））<br>`NW_APP_CHUNK_SIZE`（`800`，切片字符数）<br>`NW_APP_CHUNK_OVERLAP`（`120`，切片重叠字符数）<br>`NW_APP_RAG_TOP_K`（`6`，默认召回条数）<br>`NW_APP_ADMIN_PASSWORD`（`Admin@123456`，引导管理员密码，仅用户表为空时生效）<br>`NW_APP_BUILD_VERSION`（`dev`，运行状态页展示的构建版本） |
 
 `ai.*` 组只在 `model_providers` 表为空时写入一条「默认模型网关」记录（`providerService.SeedDefault`），播种后由页面维护，配置不再参与。
 
@@ -245,7 +212,7 @@ flowchart LR
 
 前置条件：Docker + Compose 插件。
 
-```bash
+``bash
 cp .env.example .env            # 填入密钥与地址，.env 不入库
 docker compose up -d --build                          # 仅应用容器
 docker compose --profile infra up -d --build          # 额外拉起五个中间件
@@ -254,7 +221,7 @@ docker compose exec backend wget -qO- http://127.0.0.1:8080/health
 docker compose exec backend wget -qO- http://127.0.0.1:8080/ready
 docker compose logs -f backend
 docker compose down             # 加 -v 会删除 infra 数据卷
-```
+``
 
 `infra` profile 的中间件容器与应用容器读同一份 `.env`：
 
@@ -286,7 +253,7 @@ docker compose down             # 加 -v 会删除 infra 数据卷
 
 ### 8.2 开发机准备产物
 
-```bash
+``bash
 cd backend
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
   -tags "netgo osusergo" -ldflags="-s -w" \
@@ -294,19 +261,19 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 
 cd ../frontend
 corepack enable && pnpm install --frozen-lockfile && pnpm build
-```
+``
 
 上传后路径需与脚本期望一致：`backend/build/nw-server-linux-amd64`、`frontend/dist/index.html`、`frontend/nginx.conf.template`、`backend/configs/config.yaml`。
 
 ### 8.3 `deploy.sh` 流程
 
-```bash
+``bash
 cd /opt/novelworkbench/deploy/podman
 cp .env.example .env     # 填密钥；按 podman network ls 设置 NW_INFRA_NETWORK
 bash deploy.sh
-```
+``
 
-```mermaid
+``mermaid
 flowchart TD
   A["预检产物与 .env"] -->|"缺项"| X["die 退出非 0"]
   A --> B["导出 .env 为环境变量"]
@@ -318,7 +285,7 @@ flowchart TD
   F --> G["轮询 /health /ready /healthz"]
   G -->|"通过"| H["打印 podman ps 并退出 0"]
   G -->|"30 次超时"| X
-```
+``
 
 | 步骤 | 行为 | 失败处理 |
 | --- | --- | --- |
@@ -326,18 +293,15 @@ flowchart TD
 | 2 导出环境 | `set -a; . ./.env; set +a`，`NW_*` 全部进入环境 | — |
 | 3 组装上下文 | 清空 `deploy/podman/build/`，拷入 `nw-server`（加可执行位）、`config.yaml`、宿主机 `/etc/ssl/certs/ca-certificates.crt`、`dist/`、`nginx.conf.template` | 缺 CA bundle 即退出 |
 | 4 构建镜像 | `podman build -f Dockerfile.backend --build-arg BASE_IMAGE=${BASE_PREFIX}/alpine:3.20`，前端同理用 `nginx:1.27-alpine` | `set -e` 中止 |
-| 5 清理 DNAT | `drop_stale_dnat` 删除指向 `127.0.0.1` 的空规则；`cleanup_port_dnat` 删除 `NW_PUBLIC_PORT` 与 `8080` 的 `CNI-DN-*` 跳转 | 无 `iptables` 命令时跳过 |
+| 5 清理 DNAT | `cleanup_port_dnat` 删除指向 `127.0.0.1` 的空规则与该端口名下的 `CNI-DN-*` 跳转链 | 无 `iptables` 命令时跳过 |
 | 6 重建容器 | `podman-compose up -d --force-recreate`，输出重定向到 `COMPOSE_LOG` | 打印日志尾部 40 行后 `die` |
 | 7 健康自检 | 最多 30 次、间隔 2 秒，检查 `podman exec nw-backend ... /health`、`/ready`、`curl .../healthz` | 超时打印 `podman ps` 与后端日志尾部（过滤 `password` 行）后退出非 0 |
 
-两处设计取舍：
-
-- 输出重定向：`podman-compose` 会把含明文口令的 `podman run` 命令打到 stdout，日志只落服务器本地文件。
-- `--force-recreate`：`podman-compose` 1.x 不会因镜像 ID 变化自动重建容器，必须显式指定。
+两处设计取舍：输出重定向是因为 `podman-compose` 会把含明文口令的 `podman run` 命令打到 stdout，日志只落服务器本地文件；`--force-recreate` 是因为 `podman-compose` 1.x 不会因镜像 ID 变化自动重建容器。
 
 ### 8.4 DNAT 与 rootless Podman
 
-rootless podman 在容器重建后可能残留旧容器的 `CNI-HOSTPORT-DNAT` 规则，导致宿主端口指向已失效的容器 IP。`deploy.sh` 在重建前后各清理一次：`drop_stale_dnat` 循环删除指向 `127.0.0.1` 的空跳转，`cleanup_port_dnat <port>` 按 `--dports` 找出 `CNI-DN-*` 链并逐条删除 `CNI-HOSTPORT-DNAT` 中的跳转，容器启动时 podman 只为新容器写入唯一规则。
+rootless podman 在容器重建后可能残留旧容器的 `CNI-HOSTPORT-DNAT` 规则，导致宿主端口指向已失效的容器 IP。`deploy.sh` 在重建前后各清理一次：`cleanup_port_dnat <port>` 先循环删除指向 `127.0.0.1` 的空跳转（它不按端口划分，任何一次重建都会残留），再按 `--dports` 找出该端口的 `CNI-DN-*` 链并逐条删除 `CNI-HOSTPORT-DNAT` 中的跳转；容器启动时 podman 只为新容器写入唯一规则。
 
 由于后端不映射宿主端口，探活一律用 `podman exec` 进容器访问 `127.0.0.1:8080`，不受 DNAT 影响。
 
@@ -376,9 +340,9 @@ CI 关键设置：
 
 GHCR 要求镜像仓库名全小写，GitHub 仓库名允许大写。`release.yml` 的 `Normalize image prefix` 步骤：
 
-```bash
+``bash
 echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-```
+``
 
 `${GITHUB_REPOSITORY,,}` 为 bash 小写展开，例如 `2132691342/NovelWorkbench` → `ghcr.io/2132691342/novelworkbench`。两个构建步骤共用该输出：
 
@@ -403,10 +367,10 @@ echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
 ### 9.4 发布与回滚
 
-```bash
+``bash
 git tag v1.0.0 && git push origin v1.0.0     # 触发 Release，产出 GHCR 镜像
 docker compose pull && docker compose up -d  # 使用 GHCR 镜像的主机滚动更新
-```
+``
 
 Podman 主机不拉 GHCR，由 `deploy.sh` 从预构建产物本地构建。回滚方式：切回上一版本镜像 tag 后重建容器（`podman-compose up -d --force-recreate` 或 `docker compose up -d`）；`AutoMigrate` 只做增量建表，回滚旧二进制前需确认新增表不被旧代码依赖。
 
@@ -432,7 +396,7 @@ Podman 主机不拉 GHCR，由 `deploy.sh` 从预构建产物本地构建。回�
 
 值班命令（后端不映射宿主端口，探活一律进容器；中间件容器名按实际栈调整——`infra` profile 为 `nw-postgres` / `nw-redis` / `nw-rabbitmq`，云主机既有栈为宿主上的既有名称）：
 
-```bash
+``bash
 podman ps --format '{{.Names}} | {{.Status}} | {{.Ports}}'
 curl -fsS http://127.0.0.1:14399/healthz
 podman exec nw-backend wget -qO- http://127.0.0.1:8080/health
@@ -442,7 +406,7 @@ podman exec nw-rabbitmq rabbitmqctl list_queues name messages consumers
 podman exec nw-redis redis-cli -a "$NW_REDIS_PASSWORD" ping
 podman exec nw-postgres psql -U postgres -c 'select count(*) from users;'
 curl -sS 'http://127.0.0.1:9308/sql?mode=raw&query=SHOW+TABLES'
-```
+``
 
 ### 10.3 常见故障
 
@@ -467,10 +431,10 @@ curl -sS 'http://127.0.0.1:9308/sql?mode=raw&query=SHOW+TABLES'
 | Manticore | 无需备份 | — | 索引可由 PostgreSQL 切片重建（`ensureManticoreSchema` + `rebuildManticoreIndex`） |
 | `.env` | 密码管理器 / 加密备份 | 变更时 | 含全部凭据与封存材料来源 |
 
-```bash
+``bash
 podman exec nw-postgres pg_dump -U postgres -Fc postgres > nw-$(date +%F).dump
 mc mirror --overwrite local/novelworkbench backup/novelworkbench
-```
+``
 
 恢复顺序：停止后端 → `pg_restore` 恢复数据库 → `mc mirror` 恢复桶 → 启动后端（`AutoMigrate` 补齐表结构）→ 任务中心重试失败任务 → 登录验证项目、章节、知识库与通知。
 

@@ -52,6 +52,36 @@ flowchart LR
 
 部署形态：前端 nginx 容器 + 后端 Go 容器；中间件可复用宿主机既有实例，也可通过 `docker-compose.yml --profile infra` 本地拉起。后端 `CGO_ENABLED=0` 静态编译，不引入 cgo。
 
+### 2.1 模块地图
+
+按业务域划分的模块清单，每个模块的职责、实现路径与设计权衡见 [modules.md](modules.md)。
+
+| # | 模块 | 主要表 | 主要入口 |
+| --- | --- | --- | --- |
+| 1 | 认证与会话 | `users` | `api/auth_api.go`、`service/auth_service.go` |
+| 2 | 用户与角色权限 | `users`、`roles`、`user_roles` | `service/user_admin_service.go`、`service/role_service.go` |
+| 3 | 菜单与导航 | `menus` | `service/menu_service.go` |
+| 4 | 审计与登录日志 | `audit_logs`、`login_logs` | `pkg/access_middleware.go`、`service/audit_service.go` |
+| 5 | 应用配置 | `app_settings` | `service/setting_service.go` |
+| 6 | 站内通知 | `notifications` | `service/notification_service.go` |
+| 7 | 任务中心 | `jobs` | `service/job_service.go`、`service/knowledge_worker.go` |
+| 8 | 项目 / 卷 / 章节 | `projects`、`volumes`、`chapters`、`chapter_snapshots`、`word_count_stats` | `service/project_service.go`、`service/volume_service.go`、`service/chapter_service.go` |
+| 8.1 | AI 开书 | 同模块 8（+ `outline_nodes`） | `service/bootstrap_service.go`、`ai/bootstrap.go` |
+| 9 | 角色卡与关系图 | `characters`、`character_relations` | `service/character_service.go` |
+| 10 | 世界观设定与创作笔记 | `lore_settings` | `service/lore_service.go` |
+| 11 | 大纲树与场景卡 | `outline_nodes`、`detailed_scenes` | `service/outline_service.go` |
+| 12 | 连续性 | `temporal_facts`、`foreshadow_hooks`、`chapter_summaries` | `service/continuity_service.go` |
+| 13 | 知识库 | `knowledge_documents`、`knowledge_chunks` + MinIO + Manticore | `service/knowledge_service.go`、`service/knowledge_worker.go` |
+| 14 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`、`service/chat_context.go`、`service/chat_stream.go` |
+| 15 | 技能资产 | `skills`、`skill_references` | `service/skill_service.go`、`service/skill_reference_service.go` |
+| 16 | 提示词档案 | `prompt_profiles` | `service/prompt_profile_service.go` |
+| 16.1 | 工具资产 | `tools` | `service/tool_service.go`、`ai/builtin_tools.go`、`ai/check/chapter_check.go` |
+| 17 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants` | `service/model_provider_service.go`、`service/model_access_service.go` |
+| 18 | 数据总览 | `word_count_stats`、`projects` | `service/stats_service.go` |
+| 19 | 用量分析 | `model_usage_stats` | `service/model_usage_service.go` |
+| 20 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
+| 21 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/store`、`frontend/src/views/Workspace` |
+
 ## 3. 技术选型
 
 | 层 | 选型 | 职责 |
@@ -83,11 +113,11 @@ backend/
 ├── cmd/server        装配启动、迁移播种、路由、优雅关闭
 ├── configs/          配置模板（凭据留空，环境变量注入）
 └── internal/
-    ├── api           HTTP 处理器与路由注册（26 个文件）
-    ├── service       业务规则、事务边界、上下文装配（38 个文件）
-    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，26 个文件）
-    ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（23 个文件）
-    ├── ai            模型网关、提示词装配、内置技能、用量契约（16 个文件）
+    ├── api           HTTP 处理器与路由注册（27 个文件）
+    ├── service       业务规则、事务边界、上下文装配（37 个文件）
+    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，27 个文件）
+    ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（24 个文件）
+    ├── ai            模型网关、提示词装配、内置技能、用量契约（18 个文件）
     ├── infra         配置加载、连接构造、启动校验
     └── pkg           ULID、包络、错误、JWT、中间件、密钥封存、文本工具
 ```

@@ -36,7 +36,7 @@ func TestKnowledgeRetrievalChain(t *testing.T) {
 	}
 	for i := range want {
 		if chunks[i] != want[i] {
-			t.Fatalf("chunks[%d] = %q, want %q", i, chunks[i], want[i])
+			t.Fatalf("切片[%d] = %q, want %q", i, chunks[i], want[i])
 		}
 	}
 	if chunks := chunkText(strings.Repeat("x", 10), 4, 99); len(chunks) < 3 {
@@ -59,12 +59,10 @@ func TestKnowledgeRetrievalChain(t *testing.T) {
 		[]domain.KnowledgeChunkVO{searchHit("T2"), searchHit("T3")},
 		2,
 	)
-	if len(results) != 2 || results[0].ChunkULID != "T2" {
-		t.Fatalf("跨通道命中应排首位: %+v", results)
-	}
 	wantScore := 1.0/62.0 + 1.0/61.0
-	if math.Abs(results[0].ScoreValue-wantScore) > 1e-12 || results[0].SourceMode != domain.SearchModeHybrid {
-		t.Fatalf("T2 得分/来源错误: %v %q", results[0].ScoreValue, results[0].SourceMode)
+	if len(results) != 2 || results[0].ChunkULID != "T2" ||
+		math.Abs(results[0].ScoreValue-wantScore) > 1e-12 || results[0].SourceMode != domain.SearchModeHybrid {
+		t.Fatalf("跨通道命中应排首位且标 hybrid: %+v", results[0])
 	}
 	if results[1].ChunkULID != "T1" || results[1].SourceMode != "term" {
 		t.Fatalf("results[1] = %+v, want T1/term", results[1])
@@ -87,7 +85,7 @@ func TestKnowledgeRetrievalChain(t *testing.T) {
 	}
 	for _, bad := range []string{`{"ids":["C1","C1"]}`, `{"ids":["C9"]}`, "not json", "```json {\"ids\":[]} ```"} {
 		if _, err := ai.ParseRerankIDs(bad, allowed); err == nil {
-			t.Fatalf("重排解析 %q 应失败降级", bad)
+			t.Fatalf("非法重排结果应报错: %q", bad)
 		}
 	}
 }

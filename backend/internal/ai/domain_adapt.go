@@ -1,6 +1,5 @@
 // 本文件定义「视听改编」流程域：改编编剧档案 + 剧本拆场、有声旁白两个技能。
-// 蒸馏来源：novel-to-screenplay（场景化改写）、script-to-storyboard（镜头与场次）、
-// manju-storyboard（漫剧分镜节奏）、novel-to-short-drama（短剧钩子密度）。
+// 覆盖小说到剧本的场景化改写、镜头与场次拆分、漫剧分镜节奏与短剧钩子密度。
 
 package ai
 

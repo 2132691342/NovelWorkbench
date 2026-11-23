@@ -31,7 +31,7 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | `ai.ProviderSpec` | 同上 | 单次调用所需供应商快照；`APIKey` 明文只存在于内存 |
 | `ai.UsageRecorder` | `backend/internal/ai/usage.go` | 用量上报接口，由 `service.ModelUsageService` 实现 |
 | `ai.AssembleContext` / `ai.RenderPrompt` / `ai.SystemPrompt` / `ai.TemplatePlaceholders` | `backend/internal/ai/prompt.go` | 上下文装配、模板渲染与校验、系统提示词 |
-| `ai.BuiltinSkills` / `ai.BuiltinPromptProfiles` | `backend/internal/ai/builtin_assets.go` + `domain_<域>.go` | 9 个流程域的档案与 18 个技能定义、下线集合与内容指纹，与持久化结构解耦 |
+| `ai.BuiltinSkills` / `ai.BuiltinPromptProfiles` | `backend/internal/ai/builtin_assets.go` + `domain_<域>.go` | 12 个流程域的档案与 24 个技能定义、下线集合与内容指纹，与持久化结构解耦 |
 
 `ProviderSpec` 字段：`ProviderULID`、`ProviderName`、`ProtocolCode`、`BaseURL`、`APIKey`、`ChatModelName`、`Temperature`、`MaxTokens`、`Timeout`。密钥由 `ModelProviderService.specOf` 解密后传入，`ai` 包不接触存储。
 
@@ -210,9 +210,9 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `skills` | `skill_ulid`(`SKL_`)、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`、`description_text`、`prompt_template`、`variable_spec_json`、`enabled_flag`、`builtin_flag`、`sort_order` | 作用域 `global` / `project`；同编码项目技能覆盖全局 |
 | `skill_references` | `ref_ulid`(`SKR_`)、`skill_ulid`、`ref_name`、`ref_text`、`keyword_list`、`sort_order` | 关键词为空表示总是注入 |
 
-### 5.2 内置技能（18 个 / 9 个流程域）
+### 5.2 内置技能（24 个 / 12 个流程域）
 
-由 `ai.BuiltinSkills()` 汇总 9 个流程域（`backend/internal/ai/domain_<域>.go`，一个域一个文件），
+由 `ai.BuiltinSkills()` 汇总 12 个流程域（`backend/internal/ai/domain_<域>.go`，一个域一个文件），
 `SkillService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种并做指纹升级。
 完整矩阵见 [skills.md](skills.md)，此处只列编码与用途：
 
@@ -236,6 +236,12 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `platform` | 平台适配 | outline | operation | 按平台形态给切章、标题简介、标签与发布清单 |
 | `pitch` | 立项评估 | outline | pitch | 十二维打分 + 否决项 + 最弱两维补法 |
 | `deconstruct` | 拆书 | review | pitch | 一句话核心 / 开篇账 / 节奏 / 钩子链 / 可复用做法 |
+| `screenplay` | 剧本拆场 | revise | adapt | 小说场景化改写：动作化对白、场面调度与镜头提示 |
+| `voiceover` | 有声旁白 | revise | adapt | 旁白口语化与停顿设计，兼顾听觉信息密度 |
+| `title` | 标题封面 | outline | publish | 标题候选打分、封面一句话与关键词标签 |
+| `blurb` | 上架文案 | outline | publish | 简介、卖点句与平台外导流文案 |
+| `shortdraft` | 短篇起稿 | write | short | 短篇形态路由与开篇工程，按篇幅选结构 |
+| `ending` | 结尾余震 | revise | short | 结尾余震设计与代价回收，收束不平淡 |
 
 技能判据均可核对：卖点必须能填满「一个什么人，因为什么事，必须做到什么，否则失去什么」；世界观只认「规则 / 边界 / 代价」三栏；质检每条判定必须引原句，给不出原句的判定删掉；去 AI 味只看可机检指标（句长分布、套话密度、情绪直给次数），不做主观评价。
 

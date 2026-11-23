@@ -1,6 +1,5 @@
 // 本文件定义「立项」流程域：选题策划档案 + 立项评估、拆书两个技能。
-// 蒸馏来源：novel-outline（卖点判据）、fanqie-bestseller（情绪需求金字塔）、
-// tomato-web-novel-master（赛道与黄金三章指标）、novel-deconstruction（溯源拆书）。
+// 覆盖卖点判据、读者情绪需求层级、赛道与开篇指标、溯源拆书。
 
 package ai
 

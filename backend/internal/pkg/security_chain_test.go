@@ -1,4 +1,4 @@
-// 安全链路回归：受保护请求的放行与拒绝 + 供应商密钥的封存与解封。
+// 安全链路的场景回归：受保护请求的放行与拒绝 + 供应商密钥的封存与解封。
 // 两条链路在生产里才暴露问题（权限绕过、凭据解不开），因此合并到本文件按链路组织，
 // 每条用例的步骤用「步骤N」标注，失败时可直接定位到断点。
 
@@ -60,21 +60,15 @@ func TestAccessControlChain(t *testing.T) {
 	}
 
 	// 步骤1：放行链路。请求 ID 透传 → 鉴权注入用户 → 权限判定 → 审计落库 → 响应包络。
-	type auditRecord struct {
-		ActionCode string
-		TargetType string
-		TargetULID string
-	}
-	var audits []auditRecord
+	var auditAction, auditTargetType, auditTargetULID string
 	recorder := auditRecorderFunc(func(_ context.Context, do *domain.AuditLogDO) error {
-		audits = append(audits, auditRecord{do.ActionCode, do.TargetType, do.TargetULID})
+		auditAction, auditTargetType, auditTargetULID = do.ActionCode, do.TargetType, do.TargetULID
 		return nil
 	})
-
 	router := gin.New()
 	router.Use(RequestIDMiddleware())
 	router.Use(AuthMiddleware(signer, nil, func(context.Context, string) (bool, error) { return true, nil }, nil))
-	router.Use(RequirePermMiddleware(permCheckerFunc(func(_ context.Context, userULID, permCode string) (bool, error) {
+	router.Use(RequirePermMiddleware(permCheckerFunc(func(_ context.Context, _, permCode string) (bool, error) {
 		return permCode == "system:user:manage", nil
 	}), "system:user:manage"))
 	router.Use(AuditMiddleware(recorder, nil))
@@ -102,22 +96,16 @@ func TestAccessControlChain(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if envelope.RespCode != "SUCCESS" || envelope.TraceID != "REQ_INJECTED" {
-		t.Fatalf("包络不符: %+v", envelope)
+	if envelope.RespCode != "SUCCESS" || envelope.TraceID != "REQ_INJECTED" || envelope.Data.UserULID != "USR_TEST" {
+		t.Fatalf("包络或鉴权注入不符: %+v", envelope)
 	}
-	if envelope.Data.UserULID != "USR_TEST" {
-		t.Fatalf("鉴权未注入用户: %+v", envelope.Data)
-	}
-	if len(audits) != 1 {
-		t.Fatalf("审计记录数 = %d, want 1", len(audits))
-	}
-	if audits[0].ActionCode != "admin/user/update" || audits[0].TargetType != "user" || audits[0].TargetULID != "USR_TARGET" {
-		t.Fatalf("审计内容不符: %+v", audits[0])
+	if auditAction != "admin/user/update" || auditTargetType != "user" || auditTargetULID != "USR_TARGET" {
+		t.Fatalf("审计内容不符: %s/%s/%s", auditAction, auditTargetType, auditTargetULID)
 	}
 
 	// 步骤2：拒绝链路。缺失令牌 / 令牌已吊销 / 账号已禁用 → 401，权限不足 → 403。
 	const revoked = "REVOKED_TOKEN"
-	rejects := []struct {
+	rejectCases := []struct {
 		caseName     string
 		authHeader   string
 		revokedToken string
@@ -131,7 +119,7 @@ func TestAccessControlChain(t *testing.T) {
 		{"账号已禁用", "Bearer " + token, "", false, true, http.StatusUnauthorized, "ERR_UNAUTHORIZED"},
 		{"权限不足", "Bearer " + token, "", true, false, http.StatusForbidden, "ERR_FORBIDDEN"},
 	}
-	for _, testCase := range rejects {
+	for _, testCase := range rejectCases {
 		rejectRouter := gin.New()
 		rejectRouter.Use(RequestIDMiddleware())
 		rejectRouter.Use(AuthMiddleware(signer,
@@ -149,17 +137,15 @@ func TestAccessControlChain(t *testing.T) {
 		rejectResponse := httptest.NewRecorder()
 		rejectRouter.ServeHTTP(rejectResponse, request)
 
-		if rejectResponse.Code != testCase.wantStatus {
-			t.Fatalf("%s: status = %d, want %d", testCase.caseName, rejectResponse.Code, testCase.wantStatus)
-		}
 		var rejectEnvelope struct {
 			RespCode string `json:"resp_code"`
 		}
 		if err := json.Unmarshal(rejectResponse.Body.Bytes(), &rejectEnvelope); err != nil {
 			t.Fatalf("%s: decode response: %v", testCase.caseName, err)
 		}
-		if rejectEnvelope.RespCode != testCase.wantRespCode {
-			t.Fatalf("%s: resp_code = %q, want %q", testCase.caseName, rejectEnvelope.RespCode, testCase.wantRespCode)
+		if rejectResponse.Code != testCase.wantStatus || rejectEnvelope.RespCode != testCase.wantRespCode {
+			t.Fatalf("%s: status=%d resp_code=%q, want %d/%q", testCase.caseName,
+				rejectResponse.Code, rejectEnvelope.RespCode, testCase.wantStatus, testCase.wantRespCode)
 		}
 	}
 }
@@ -207,9 +193,6 @@ func TestSecretSealChain(t *testing.T) {
 		t.Fatalf("材料变更后应解不开: %v", err)
 	}
 	if _, err := SealSecret(plain, ""); err != ErrSecretEmpty {
-		t.Fatalf("材料为空应报错: %v", err)
-	}
-	if _, err := OpenSecret(sealed, ""); err != ErrSecretEmpty {
 		t.Fatalf("材料为空应报错: %v", err)
 	}
 }

@@ -27,7 +27,7 @@
 ## 技术栈
 
 - 后端：Go 1.24 + Gin 1.11 + GORM(pgx) 1.31 + Viper 1.21 + Zap 1.28 + eino 0.9（OpenAI 兼容 / Anthropic 双协议）+ Redis + RabbitMQ + MinIO + Manticore，`CGO_ENABLED=0` 静态编译
-- 前端：基于 **vue-element-plus-admin** 骨架改造：Vue 3.5 + TypeScript + Vite + Element Plus 2.14 + Pinia + Vue Router + Axios + UnoCSS + ECharts + AntV X6 + CodeMirror 6 + marked + docx-preview + vue-pdf-embed + Vue I18n
+- 前端：Vue 3.5 + TypeScript + Vite + Element Plus 2.14 + Pinia + Vue Router + Axios + UnoCSS + ECharts + AntV X6 + CodeMirror 6 + marked + docx-preview + vue-pdf-embed + Vue I18n，pnpm workspace 单仓（根应用 + 4 个内部包）
 - 测试：Go `testing`（12 条链路级用例）+ Vitest（流式链路），详见 [doc/test.md](doc/test.md)
 - 部署：Docker Compose / Podman Compose，GitHub Actions CI/CD，静态二进制 + nginx SPA
 

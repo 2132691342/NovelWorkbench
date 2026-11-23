@@ -1,6 +1,5 @@
 // 本文件定义「上架运营」流程域：连载平台主编档案 + 开篇体检、平台适配两个技能。
-// 蒸馏来源：tomato-web-novel-master（黄金三章硬指标与算法阶段）、fanqie-bestseller（情绪需求金字塔）、
-// web-novel-writer（平台形态与节奏适配）、fanqie-publish（字数门槛与发布检查）。
+// 覆盖开篇硬指标与推荐阶段、读者情绪需求层级、平台形态与节奏适配、发布检查。
 
 package ai
 

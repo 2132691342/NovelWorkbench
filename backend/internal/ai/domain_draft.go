@@ -1,6 +1,5 @@
 // 本文件定义「起草」流程域：长篇连载作者档案 + 续写正文、冲突加码两个技能。
-// 蒸馏来源：conflict-max-web-fiction（冲突核与代价升级）、cn-novel-craft（MRU 与节奏公式）、
-// my-novel-writer（章节 spec 与前后状态）。
+// 覆盖冲突核与代价升级、场景 MRU 与节奏公式、章节规格与前后状态衔接。
 
 package ai
 

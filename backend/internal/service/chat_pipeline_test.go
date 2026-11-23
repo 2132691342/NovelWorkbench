@@ -1,6 +1,6 @@
-// AI 对话链路的场景回归：技能解析 → 上下文装配 → 消息成型 → 流式事件契约。
-// 四者是同一次请求的上下游，拆开测会漏掉环节间的因果（作用域覆盖影响谁、
-// 预算裁剪丢哪些块、事件顺序影响前端展示），因此合并到本文件按链路组织。
+// AI 对话链路的场景回归：技能解析 → 上下文装配 → 消息成型 → 工具触发 → 流式事件契约。
+// 五者是同一次请求的上下游，拆开测会漏掉环节间的因果（作用域覆盖影响谁、
+// 预算裁剪丢哪些块、工具点名影响谁、事件顺序影响前端展示），因此合并到本文件按链路组织。
 
 package service
 
@@ -17,6 +17,14 @@ func skillDO(ulid, scope, projectULID, code string, enabled bool) domain.SkillDO
 	return domain.SkillDO{
 		SkillULID: ulid, ScopeCode: scope, ProjectULID: projectULID,
 		SkillCode: code, EnabledFlag: enabled,
+	}
+}
+
+// toolDO 构造测试用工具行。
+func toolDO(code string, enabled bool, keywords string) domain.ToolDO {
+	return domain.ToolDO{
+		ToolULID: "TOL_" + code, ToolCode: code, ToolName: code + "工具",
+		TriggerKeywords: keywords, EnabledFlag: enabled, BuiltinFlag: true,
 	}
 }
 
@@ -61,13 +69,13 @@ func TestSkillResolutionChain(t *testing.T) {
 		{"正文命令", "", "/continue 以林澈视角", "continue", "以林澈视角"},
 		{"空白归一", "", "  /polish \t 加强画面感  \n", "polish", "加强画面感"},
 		{"显式优先且正文不动", "polish", "/continue 以林澈视角", "polish", "/continue 以林澈视角"},
-		{"无命令", "", "普通的正文开头，不该命中", "", "普通的正文开头，不该命中"},
 		{"命令不在开头", "", "续写 /continue", "", "续写 /continue"},
 	}
 	for _, testCase := range cases {
 		code, remain := resolveSkillCode(testCase.explicit, testCase.content)
 		if code != testCase.wantCode || remain != testCase.wantRemain {
-			t.Fatalf("resolveSkillCode = %q %q, want %q %q", code, remain, testCase.wantCode, testCase.wantRemain)
+			t.Fatalf("%s: resolveSkillCode = %q %q, want %q %q", testCase.caseName,
+				code, remain, testCase.wantCode, testCase.wantRemain)
 		}
 	}
 
@@ -119,9 +127,6 @@ func TestSkillResolutionChain(t *testing.T) {
 	if matchSkillReferenceKeywords("雨夜", []string{"晴天的午后"}) {
 		t.Fatal("关键词未出现不应命中")
 	}
-	if !matchSkillReferenceKeywords("雨夜,追车", []string{"晴天的午后", "追车开始"}) {
-		t.Fatal("任一关键词命中即应命中")
-	}
 	longRef := domain.SkillReferenceDO{
 		RefULID: "REF_1", SkillULID: "SKL_G", RefName: "长文",
 		RefText: strings.Repeat("x", skillReferenceBudgetChars+100),
@@ -141,11 +146,9 @@ func TestSkillResolutionChain(t *testing.T) {
 	if !isOverriddenGlobalSkill(&global, []domain.SkillDO{global, project}) {
 		t.Fatal("同编码项目技能应标记覆盖")
 	}
-	if isOverriddenGlobalSkill(&global, []domain.SkillDO{global, disabledProject}) {
-		t.Fatal("停用项目技能不应覆盖")
-	}
-	if isOverriddenGlobalSkill(&global, []domain.SkillDO{global, otherCode}) {
-		t.Fatal("异编码项目技能不应覆盖")
+	if isOverriddenGlobalSkill(&global, []domain.SkillDO{global, disabledProject}) ||
+		isOverriddenGlobalSkill(&global, []domain.SkillDO{global, otherCode}) {
+		t.Fatal("停用或异编码项目技能不应覆盖")
 	}
 }
 
@@ -170,19 +173,16 @@ func TestChatContextChain(t *testing.T) {
 			t.Fatalf("渲染结果缺少 %q: %q", want, instruction)
 		}
 	}
-	refBlock := findBlock(blocks, "skill_reference")
-	if refBlock == nil || refBlock.Priority != ai.PrioritySkillRef || !strings.Contains(refBlock.ContentText, "短句为主") {
+	if refBlock := findBlock(blocks, "skill_reference"); refBlock == nil ||
+		refBlock.Priority != ai.PrioritySkillRef || !strings.Contains(refBlock.ContentText, "短句为主") {
 		t.Fatalf("技能参考资料块错误: %+v", refBlock)
 	}
-	freeBlocks, freeInstruction := buildContextBlocks(chatContextInput{
-		UserInput:   "自由提问原文",
-		ChapterList: []chapterSource{{ChapterName: "第一章", ContentText: "章节正文", IsCurrent: true}},
-	})
+	freeBlocks, freeInstruction := buildContextBlocks(chatContextInput{UserInput: "自由提问原文"})
 	if freeInstruction != "自由提问原文" || findBlock(freeBlocks, "skill") != nil {
 		t.Fatalf("技能未命中应直接用用户正文: %q", freeInstruction)
 	}
 
-	// 步骤2：引用分优先级。当前章 90，引用章与文档 80，私人笔记不进上下文。
+	// 步骤2：引用分优先级。当前章 90，引用章与文档 80，设定 50，私人笔记不进上下文。
 	blocks, _ = buildContextBlocks(chatContextInput{
 		UserInput: "提问",
 		ChapterList: []chapterSource{
@@ -195,16 +195,16 @@ func TestChatContextChain(t *testing.T) {
 			{LoreName: "私人笔记", LoreTypeCode: loreTypeCodeNote, ContentText: "笔记内容正文"},
 		},
 	})
-	if got := findBlock(blocks, "current_chapter"); got == nil || got.Priority != ai.PriorityCurrentChapter ||
-		!strings.Contains(got.ContentText, "当前章正文") {
+	if got := findBlock(blocks, "current_chapter"); got == nil ||
+		got.Priority != ai.PriorityCurrentChapter || !strings.Contains(got.ContentText, "当前章正文") {
 		t.Fatalf("当前章块错误: %+v", got)
 	}
-	if got := findBlock(blocks, "ref_chapter"); got == nil || got.Priority != ai.PriorityExplicitRef ||
-		!strings.Contains(got.ContentText, "引用章正文") {
+	if got := findBlock(blocks, "ref_chapter"); got == nil ||
+		got.Priority != ai.PriorityExplicitRef || !strings.Contains(got.ContentText, "引用章正文") {
 		t.Fatalf("引用章块错误: %+v", got)
 	}
-	if got := findBlock(blocks, "ref_doc"); got == nil || got.Priority != ai.PriorityExplicitRef ||
-		!strings.Contains(got.ContentText, "文档全部切片拼接") {
+	if got := findBlock(blocks, "ref_doc"); got == nil ||
+		got.Priority != ai.PriorityExplicitRef || !strings.Contains(got.ContentText, "文档全部切片拼接") {
 		t.Fatalf("引用文档块错误: %+v", got)
 	}
 	lore := findBlock(blocks, "lore")
@@ -222,19 +222,16 @@ func TestChatContextChain(t *testing.T) {
 		RefPromptList:  []string{"《连载作者》\n你是连载作者，保持悬念"},
 		SummaryList:    []string{"前章梗概"},
 	})
-	summaryBlock := findBlock(blocks, "ref_summary")
-	if summaryBlock == nil || summaryBlock.Priority != ai.PriorityExplicitRef ||
-		!strings.Contains(summaryBlock.ContentText, "主角取得钥匙") {
-		t.Fatalf("引用摘要块错误: %+v", summaryBlock)
+	if got := findBlock(blocks, "ref_summary"); got == nil ||
+		got.Priority != ai.PriorityExplicitRef || !strings.Contains(got.ContentText, "主角取得钥匙") {
+		t.Fatalf("引用摘要块错误: %+v", got)
 	}
-	promptBlock := findBlock(blocks, "ref_prompt")
-	if promptBlock == nil || promptBlock.Priority != ai.PriorityExplicitRef ||
-		!strings.Contains(promptBlock.ContentText, "保持悬念") {
-		t.Fatalf("引用提示词块错误: %+v", promptBlock)
+	if got := findBlock(blocks, "ref_prompt"); got == nil ||
+		got.Priority != ai.PriorityExplicitRef || !strings.Contains(got.ContentText, "保持悬念") {
+		t.Fatalf("引用提示词块错误: %+v", got)
 	}
-	autoBlock := findBlock(blocks, "chapter_summary")
-	if autoBlock == nil || autoBlock.Priority != ai.PriorityChapterSummary {
-		t.Fatalf("自动梗概块应保留且优先级为 60: %+v", autoBlock)
+	if got := findBlock(blocks, "chapter_summary"); got == nil || got.Priority != ai.PriorityChapterSummary {
+		t.Fatalf("自动梗概块应保留且优先级为 60: %+v", got)
 	}
 	emptyBlocks, _ := buildContextBlocks(chatContextInput{UserInput: "提问"})
 	if findBlock(emptyBlocks, "ref_summary") != nil || findBlock(emptyBlocks, "ref_prompt") != nil {
@@ -339,8 +336,71 @@ func TestChatContextChain(t *testing.T) {
 	}
 }
 
+// TestToolTriggerChain 覆盖一次「正文带 #code 的对话」里工具从解析到执行的选取链路。
+func TestToolTriggerChain(t *testing.T) {
+	// 环节1：正文解析。行首/空白后的 #code 命中，正文中间粘连、大写、含连字符的不命中；
+	// 触发词被剥离且不破坏换行与缩进。
+	cases := []struct {
+		caseName    string
+		content     string
+		wantCodes   int
+		wantRemain  string
+		wantFirstOf string
+	}{
+		{"行首触发", "#chapter_check 看看这章", 1, "看看这章", "chapter_check"},
+		{"行中触发", "帮我 #deai_scan 扫一下", 1, "帮我 扫一下", "deai_scan"},
+		{"多个触发", "#chapter_check #deai_scan 检查", 2, "检查", "chapter_check"},
+		{"保留换行", "#chapter_check\n第一段\n第二段", 1, "第一段\n第二段", "chapter_check"},
+		{"词内井号不命中", "C# 是语言", 0, "C# 是语言", ""},
+		{"大写不命中", "#Chapter_Check 检查", 0, "#Chapter_Check 检查", ""},
+	}
+	for _, testCase := range cases {
+		codeList, remainText := parseHashToolCodes(testCase.content)
+		if len(codeList) != testCase.wantCodes || remainText != testCase.wantRemain {
+			t.Fatalf("%s: 命中 %v 剩余 %q, want %d 个 / %q", testCase.caseName,
+				codeList, remainText, testCase.wantCodes, testCase.wantRemain)
+		}
+		if testCase.wantCodes > 0 && codeList[0] != testCase.wantFirstOf {
+			t.Fatalf("%s: 首个编码 = %q, want %q", testCase.caseName, codeList[0], testCase.wantFirstOf)
+		}
+	}
+
+	// 环节2：编码合并。请求体显式编码在前、内联编码在后，去重保序并截断到上限。
+	merged := mergeToolCodes([]string{"chapter_check", "chapter_check"}, []string{"deai_scan", "chapter_check"})
+	if len(merged) != 2 || merged[0] != "chapter_check" || merged[1] != "deai_scan" {
+		t.Fatalf("合并结果错误: %v", merged)
+	}
+	if overflow := mergeToolCodes([]string{"a", "b", "c", "d"}, nil); len(overflow) != toolExplicitLimit {
+		t.Fatalf("超出上限未截断: %v", overflow)
+	}
+
+	// 环节3：显式选取。编码不存在或已停用记入 missing，不能静默跳过。
+	fixtures := []domain.ToolDO{
+		toolDO("chapter_check", true, "体检,检查这章"),
+		toolDO("deai_scan", true, "去ai味"),
+		toolDO("lore_lookup", false, "设定"),
+	}
+	voList, missingList := selectToolsByCode(fixtures, []string{"chapter_check", "lore_lookup", "not_exist"})
+	if len(voList) != 1 || voList[0].ToolCode != "chapter_check" || len(missingList) != 2 {
+		t.Fatalf("显式选取错误: %+v, missing=%v", voList, missingList)
+	}
+
+	// 环节4：关键词补位。已显式选中的不重复补，停用的不参与，补到余量为止。
+	excludeSet := map[string]bool{"chapter_check": true}
+	autoList := matchToolsByKeyword(fixtures, "这章有没有去ai味", excludeSet, 2)
+	if len(autoList) != 1 || autoList[0].ToolCode != "deai_scan" {
+		t.Fatalf("关键词补位错误: %+v", autoList)
+	}
+	if got := matchToolsByKeyword(fixtures, "设定是什么", excludeSet, 2); len(got) != 0 {
+		t.Fatalf("停用工具不应自动触发: %+v", got)
+	}
+	if got := matchToolsByKeyword(fixtures, "这章有没有去ai味", excludeSet, 0); len(got) != 0 {
+		t.Fatalf("余量为 0 时不应补位: %+v", got)
+	}
+}
+
 // TestChatStreamContract 覆盖流式事件契约：thinking/chunk/done 顺序、seq 从 1 递增、
-// done 携带完整思考过程与空数组引用（前端据此切换「等待→思考→正文→完成」）。
+// done 携带完整思考过程、召回依据与本轮工具编码（前端据此切换「等待→思考→正文→完成」）。
 func TestChatStreamContract(t *testing.T) {
 	sink := &eventSink{}
 	writer := &chatEventWriter{

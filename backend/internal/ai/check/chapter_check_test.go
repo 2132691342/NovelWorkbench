@@ -1,5 +1,5 @@
-// 章节体检链路的回归：同一正文的门禁结论必须稳定，且问题分级与综合分可复现。
-// 这条用例覆盖「词面指标 → 分级 → 结论」三步，任何一步漂移都会让写作台与对话期工具给出不一致的判断。
+// 章节体检的场景回归：词面指标 → 问题分级 → 综合分与结论。
+// 写作台与对话期工具共用同一套门禁，任何一步漂移都会让两处给出不一致的判断。
 
 package check
 
@@ -10,47 +10,35 @@ import (
 
 // TestChapterCheckChain 覆盖体检的完整判定链。
 func TestChapterCheckChain(t *testing.T) {
-	// 步骤1：空正文直接判不可发，且只有一个阻断问题。
-	emptyReport := Analyze("   ")
-	if emptyReport.VerdictCode != VerdictBlock || len(emptyReport.IssueList) != 1 {
+	// 步骤1：空正文直接判不可发。
+	if report := Analyze("   "); report.VerdictCode != VerdictBlock || len(report.IssueList) != 1 {
 		t.Fatalf("空正文应判 block 且只有一条问题，实际 verdict=%s issues=%d",
-			emptyReport.VerdictCode, len(emptyReport.IssueList))
+			report.VerdictCode, len(report.IssueList))
 	}
 
-	// 步骤2：命中零容忍词 + 缺钩子 + 字数不足 → 不可发，且命中次数与示例可核对。
+	// 步骤2：命中零容忍词且缺钩子的正文判不可发，问题按级别分级登记，综合分扣分。
 	dirty := "他深吸一口气，不禁握紧了拳头。命运的齿轮开始转动，他内心深处仿佛有火在烧。"
 	dirtyReport := Analyze(dirty)
-	if dirtyReport.VerdictCode != VerdictBlock {
-		t.Fatalf("含零容忍词应判 block，实际 %s", dirtyReport.VerdictCode)
-	}
-	if dirtyReport.BannedWordCount != 3 {
-		t.Fatalf("零容忍词命中数 = %d，want 3", dirtyReport.BannedWordCount)
+	if dirtyReport.VerdictCode != VerdictBlock || dirtyReport.BannedWordCount != 3 {
+		t.Fatalf("含零容忍词应判 block，命中数 = %d", dirtyReport.BannedWordCount)
 	}
 	if dirtyReport.HookPresent {
 		t.Fatal("该正文没有章末钩子")
 	}
-	if !hasIssue(dirtyReport, "banned_word", "block") {
-		t.Fatal("缺少 banned_word 阻断项")
-	}
-	if !hasIssue(dirtyReport, "hook_missing", "warn") {
-		t.Fatal("缺少 hook_missing 警示项")
+	if !hasIssue(dirtyReport, "banned_word", "block") || !hasIssue(dirtyReport, "hook_missing", "warn") {
+		t.Fatalf("问题分级登记错误: %+v", dirtyReport.IssueList)
 	}
 	if dirtyReport.ScoreValue >= 100 {
 		t.Fatalf("有问题时综合分必须扣分，实际 %d", dirtyReport.ScoreValue)
 	}
 
-	// 步骤3：干净正文（有钩子、无套路词、字数足够）判可发或至多建议级。
+	// 步骤3：干净正文（有钩子、无套路词）不判不可发，末句悬念问句识别为有钩子。
 	clean := strings.Repeat("雨停之后他推开邮站的门，铜锈味顺着台阶往上爬。", 60) +
 		"\n\n他摸到信封右下角那道裂口时，手指停住了——这道裂口是谁划的？"
 	cleanReport := Analyze(clean)
-	if cleanReport.BannedWordCount != 0 {
-		t.Fatalf("干净正文不应命中零容忍词，实际 %d", cleanReport.BannedWordCount)
-	}
-	if cleanReport.VerdictCode == VerdictBlock {
-		t.Fatalf("干净正文不应判 block，问题：%+v", cleanReport.IssueList)
-	}
-	if !cleanReport.HookPresent {
-		t.Fatal("末句是悬念问句，应识别为有钩子")
+	if cleanReport.BannedWordCount != 0 || cleanReport.VerdictCode == VerdictBlock || !cleanReport.HookPresent {
+		t.Fatalf("干净正文判定错误: verdict=%s banned=%d hook=%v",
+			cleanReport.VerdictCode, cleanReport.BannedWordCount, cleanReport.HookPresent)
 	}
 
 	// 步骤4：确定性。同一输入两次体检必须得到完全相同的分数与结论。

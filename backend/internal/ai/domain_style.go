@@ -1,6 +1,5 @@
 // 本文件定义「打磨」流程域：文字打磨师档案 + 润色文字、对白打磨两个技能。
-// 蒸馏来源：novel-polish（职责边界与分流）、fiction-polish-distill（术语锁定与仿写）、
-// human-writing（口语与真实人声）、cn-novel-craft（比喻三原则）。
+// 覆盖职责边界与分流、术语锁定与仿写、口语与真实人声、比喻使用原则。
 
 package ai
 

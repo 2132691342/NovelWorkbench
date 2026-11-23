@@ -1,6 +1,5 @@
 // 本文件定义「架构」流程域：故事架构师档案 + 搭建大纲、世界观规则卡两个技能。
-// 蒸馏来源：novel-outline（六层结构与判据）、serial-novel-architect（连载可持续性）、
-// cn-novel-craft（Save the Cat 节拍与卷规划）。
+// 覆盖六层结构与判据、连载可持续性、节拍表与卷级规划。
 
 package ai
 

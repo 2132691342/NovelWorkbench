@@ -2,9 +2,7 @@
 
 本文说明 NovelWorkbench 前端（`frontend/`）的工程结构、设计系统、状态与数据流、路由与权限、页面实现与构建发布。
 
-工程骨架直接取自 **vue-element-plus-admin**（`apps/admin` + `packages/*`）：布局外壳、`Menu` 的 ElMenu 渲染、
-TagsView、Breadcrumb、ContentWrap、CountTo、LocaleDropdown、ContextMenu、Backtop 都保留上游实现，
-只替换品牌令牌与业务页面。因此升级上游组件时可以整文件覆盖，不必逐个重写。
+工程骨架采用「根应用 + 内部包」的 pnpm workspace 单仓：布局外壳、`Menu` 的 ElMenu 渲染、TagsView、Breadcrumb、ContentWrap、CountTo、LocaleDropdown、ContextMenu、Backtop 等通用件集中在 `src/components/` 与 `packages/`，只承载与业务无关的通用能力；业务页面全部留在 `src/views/`。`packages/styles` 是品牌令牌的唯一改造点，其余组件保持 Element Plus 默认行为。
 
 ## 1. 工程结构与构建
 
@@ -201,8 +199,7 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 
 ### 4.4 后端驱动导航与四种布局
 
-`components/Menu/index.vue` 用 Element Plus `ElMenu` / `ElSubMenu` / `ElMenuItem`（模板来自 vue-element-plus-admin）：
-折叠、二级展开、弹层与键盘可达性都沿用组件库行为；`mode="horizontal"` 用于顶栏，`mode="vertical"` 用于侧栏/二级栏。
+`components/Menu/index.vue` 用 Element Plus `ElMenu` / `ElSubMenu` / `ElMenuItem`：折叠、二级展开、弹层与键盘可达性都沿用组件库行为；`mode="horizontal"` 用于顶栏，`mode="vertical"` 用于侧栏/二级栏。
 `meta.icon` 存 `mdi:*` 名称，由 `layout/menuIcons.ts` 把后端短编码（`book`、`tree`…）映射成图标表键。
 
 `layout/Layout.vue` 支持四种布局（`useAppStore().layout`，顶栏「切换布局」即时生效并持久化）：

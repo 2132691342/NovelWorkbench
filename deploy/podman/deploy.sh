@@ -31,19 +31,17 @@ set -a
 set +a
 
 # ---- rootless podman 重建容器后遗留的陈旧 DNAT 规则会导致宿主端口不可达，先行清理 ----
-drop_stale_dnat() {
-  command -v iptables >/dev/null 2>&1 || return 0
-  while iptables -t nat -C CNI-HOSTPORT-DNAT -d 127.0.0.1/32 -j DNAT --to-destination 127.0.0.1 2>/dev/null; do
-    iptables -t nat -D CNI-HOSTPORT-DNAT -d 127.0.0.1/32 -j DNAT --to-destination 127.0.0.1 2>/dev/null || break
-  done
-}
-
-# cleanup_port_dnat 删除某宿主端口的全部 CNI DNAT 跳转规则（容器重建前调用）；
+# cleanup_port_dnat 删除指定宿主端口的全部 CNI DNAT 跳转规则（容器重建前调用）；
 # 容器启动时 podman 会为新容器重新写入唯一规则，避免旧容器 IP 抢占端口。
 cleanup_port_dnat() {
   local port="$1"
   command -v iptables >/dev/null 2>&1 || return 0
   local chain_list chain line_no
+  # 先删掉指向 127.0.0.1 的兜底规则，它不按端口划分，任何一次重建都会残留。
+  while iptables -t nat -C CNI-HOSTPORT-DNAT -d 127.0.0.1/32 -j DNAT --to-destination 127.0.0.1 2>/dev/null; do
+    iptables -t nat -D CNI-HOSTPORT-DNAT -d 127.0.0.1/32 -j DNAT --to-destination 127.0.0.1 2>/dev/null || break
+  done
+  # 再删掉该端口名下的跳转链。
   chain_list="$(iptables -t nat -S CNI-HOSTPORT-DNAT 2>/dev/null | grep -- "--dports ${port} " \
     | sed -n 's/.*-j \(CNI-DN-[^ ]*\).*/\1/p' | sort -u || true)"
   for chain in $chain_list; do
@@ -79,7 +77,6 @@ podman build -f "$SCRIPT_DIR/Dockerfile.frontend" \
   -t "$FRONTEND_IMAGE" "$BUILD_DIR/frontend"
 
 # ---- 重建容器 ----
-drop_stale_dnat
 cleanup_port_dnat "${NW_PUBLIC_PORT:-14399}"
 cleanup_port_dnat 8080
 export NW_BACKEND_IMAGE="$BACKEND_IMAGE" NW_FRONTEND_IMAGE="$FRONTEND_IMAGE"
@@ -91,7 +88,7 @@ if ! podman-compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --force-recreate >
   tail -40 "$COMPOSE_LOG"
   die "podman-compose up 失败"
 fi
-drop_stale_dnat
+cleanup_port_dnat "${NW_PUBLIC_PORT:-14399}"
 
 # ---- 健康自检：/health（存活）+ /ready（依赖就绪）+ 首页 ----
 PUBLIC_PORT="${NW_PUBLIC_PORT:-14399}"
