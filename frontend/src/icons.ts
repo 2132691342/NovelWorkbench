@@ -9,6 +9,7 @@ import arrowLeft from '@iconify-icons/mdi/arrow-left'
 import bellOutline from '@iconify-icons/mdi/bell-outline'
 import book from '@iconify-icons/mdi/book'
 import bookOpenPageVariantOutline from '@iconify-icons/mdi/book-open-page-variant-outline'
+import bookMultipleOutline from '@iconify-icons/mdi/book-multiple-outline'
 import bookOpenVariant from '@iconify-icons/mdi/book-open-variant'
 import chartBoxOutline from '@iconify-icons/mdi/chart-box-outline'
 import check from '@iconify-icons/mdi/check'
@@ -69,6 +70,7 @@ export const icons = {
   'mdi:bell-outline': bellOutline,
   'mdi:book': book,
   'mdi:book-open-page-variant-outline': bookOpenPageVariantOutline,
+  'mdi:book-multiple-outline': bookMultipleOutline,
   'mdi:book-open-variant': bookOpenVariant,
   'mdi:chart-box-outline': chartBoxOutline,
   'mdi:check': check,

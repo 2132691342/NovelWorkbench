@@ -158,8 +158,7 @@
             <span class="ml-4px">写作台</span>
           </ElButton>
           <ElButton size="small" plain @click="enterProject('outline', row)">大纲</ElButton>
-          <ElButton size="small" plain @click="enterProject('character', row)">角色</ElButton>
-          <ElButton size="small" plain @click="enterProject('knowledge', row)">知识库</ElButton>
+          <ElButton size="small" plain @click="enterProject('material', row)">素材</ElButton>
           <div class="project-card__spacer" />
           <ElButton size="small" text @click="formDialog?.open(row)">编辑</ElButton>
           <ElButton size="small" text type="danger" @click="remove(row)">删除</ElButton>

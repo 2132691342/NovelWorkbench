@@ -343,7 +343,10 @@ func TestChatContextChain(t *testing.T) {
 // done 携带完整思考过程与空数组引用（前端据此切换「等待→思考→正文→完成」）。
 func TestChatStreamContract(t *testing.T) {
 	sink := &eventSink{}
-	writer := &chatEventWriter{writer: sink, sessionULID: "SES_1", messageULID: "MSG_1"}
+	writer := &chatEventWriter{
+		writer: sink, sessionULID: "SES_1", messageULID: "MSG_1",
+		toolCodeList: []string{"chapter_check"},
+	}
 	if err := writer.emit(domain.StreamEventThinking, "先想一步", "", nil); err != nil {
 		t.Fatalf("thinking emit: %v", err)
 	}
@@ -362,6 +365,10 @@ func TestChatStreamContract(t *testing.T) {
 	done := sink.eventList[2]
 	if done.EventType != domain.StreamEventDone || done.ReasoningText != "先想一步" || done.ReferenceList == nil {
 		t.Fatalf("done 应携带思考过程与空数组引用: %+v", done)
+	}
+	// 工具编码随 done 下发：前端据此标记本轮真正跑过的工具（关键词自动触发的也算）。
+	if len(done.ToolCodeList) != 1 || done.ToolCodeList[0] != "chapter_check" {
+		t.Fatalf("done 应携带本轮工具编码: %+v", done.ToolCodeList)
 	}
 	for i := range sink.eventList {
 		if sink.eventList[i].Seq != int64(i+1) {

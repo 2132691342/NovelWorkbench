@@ -13,6 +13,7 @@ const ICON_CODE_MAP: Record<string, string> = {
   globe: 'mdi:earth',
   database: 'mdi:database-outline',
   note: 'mdi:notebook-outline',
+  library: 'mdi:book-multiple-outline',
   layers: 'mdi:layers-outline',
   model: 'mdi:robot-outline',
   wand: 'mdi:magic-staff',

@@ -37,6 +37,7 @@ export interface NavMenuNode {
   component_path?: string
   icon_code: string
   perm_code: string
+  visible_flag?: boolean
   child_list: NavMenuNode[]
 }
 
@@ -65,7 +66,7 @@ export const toRouteRecord = (node: NavMenuNode, parentPath = ''): AppRouteRecor
       icon: resolveMenuIcon(node.icon_code),
       permCode: node.perm_code,
       projectScope: node.scope_code === 'project',
-      hidden: isGroup ? childList.length === 0 : false
+      hidden: isGroup ? childList.length === 0 : node.visible_flag === false
     }
   }
   if (isGroup) {

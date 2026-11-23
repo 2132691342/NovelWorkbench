@@ -11,6 +11,7 @@
   import { getModelCapability, type NWModelCapabilityVo, type NWModelOptionVo } from '@/api/model'
   import { listPromptProfiles } from '@/api/prompt'
   import { listSkills } from '@/api/skill'
+  import { listTools, type NWToolVo } from '@/api/tool'
   import type {
     NWChapterBriefVo,
     NWChatSendReqVo,
@@ -47,6 +48,7 @@
   const attachChapter = ref(true)
   const historyLoading = ref(false)
   const skillList = ref<NWSkillVo[]>([])
+  const toolList = ref<NWToolVo[]>([])
   const profileList = ref<NWPromptProfileVo[]>([])
   const messagesHost = ref<HTMLDivElement | null>(null)
 
@@ -81,6 +83,14 @@
     }
   }
 
+  const loadTools = async () => {
+    try {
+      toolList.value = await listTools({ enabled_only: true })
+    } catch {
+      toolList.value = []
+    }
+  }
+
   const loadProfiles = async () => {
     try {
       profileList.value = await listPromptProfiles({
@@ -103,6 +113,7 @@
         content_text: message.content_text,
         reasoning_text: message.reasoning_text ?? '',
         skill_code: message.skill_code,
+        tool_code_list: message.tool_code_list ?? [],
         created_at: message.created_at,
         reference_list: [],
         error_message: '',
@@ -164,6 +175,7 @@
       history_count: payload.history_count
     }
     if (payload.skill_code) request.skill_code = payload.skill_code
+    if (payload.tool_code_list.length > 0) request.tool_code_list = payload.tool_code_list
     if (payload.prompt_profile_ulid) request.prompt_profile_ulid = payload.prompt_profile_ulid
     if (selectedModelUlid.value) request.model_ulid = selectedModelUlid.value
 
@@ -245,6 +257,7 @@
         content_text: payload.content_text,
         reasoning_text: '',
         skill_code: payload.skill_code,
+        tool_code_list: [...payload.tool_code_list],
         created_at: createdAtText,
         reference_list: [],
         error_message: '',
@@ -258,6 +271,7 @@
         content_text: '',
         reasoning_text: '',
         skill_code: '',
+        tool_code_list: [...payload.tool_code_list],
         created_at: createdAtText,
         reference_list: [],
         error_message: '',
@@ -289,6 +303,7 @@
       messageList.value = []
       void loadSessions()
       void loadSkills()
+      void loadTools()
       void loadProfiles()
     },
     { immediate: true }
@@ -375,6 +390,7 @@
       :chapter-list="chapterList"
       :message-list="messageList"
       :skill-list="skillList"
+      :tool-list="toolList"
       :profile-list="profileList"
       :streaming="streamingFlag"
       :can-send="canSend"

@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -34,10 +35,11 @@ type ChatStreamWriter interface {
 
 // chatEventWriter 流式事件封装：seq 从 1 单调递增，统一封装事件体。
 type chatEventWriter struct {
-	writer      ChatStreamWriter // SSE 输出实现
-	sessionULID string           // 会话 ULID
-	messageULID string           // 助手消息 ULID
-	seq         int64            // 事件序号（单调递增）
+	writer       ChatStreamWriter // SSE 输出实现
+	sessionULID  string           // 会话 ULID
+	messageULID  string           // 助手消息 ULID
+	toolCodeList []string         // 本轮执行的工具编码（done 事件下发）
+	seq          int64            // 事件序号（单调递增）
 }
 
 // emit 输出一条流式事件（reference_list 缺省为空数组）。
@@ -52,6 +54,10 @@ func (e *chatEventWriter) emitWithReasoning(eventType, contentText, reasoningTex
 	if referenceList == nil {
 		referenceList = []domain.KnowledgeChunkVO{}
 	}
+	toolCodeList := e.toolCodeList
+	if toolCodeList == nil {
+		toolCodeList = []string{}
+	}
 	return e.writer.Event(domain.ChatStreamEventDTO{
 		Seq:           e.seq,
 		EventType:     eventType,
@@ -60,6 +66,7 @@ func (e *chatEventWriter) emitWithReasoning(eventType, contentText, reasoningTex
 		ContentText:   contentText,
 		ReasoningText: reasoningText,
 		ReferenceList: referenceList,
+		ToolCodeList:  toolCodeList,
 		ErrorMessage:  errorMessage,
 	})
 }
@@ -179,6 +186,10 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		return err
 	}
 	skillCode, skillTemplate, userInput := skill.SkillCode, skill.PromptTemplate, skill.RemainderText
+	// 正文里的 #code 触发词在进入上下文前剥离，避免模型把命令当正文读
+	if _, strippedText := parseHashToolCodes(userInput); strippedText != userInput {
+		userInput = strippedText
+	}
 	session, err := s.resolveSession(ctx, userULID, req)
 	if err != nil {
 		return err
@@ -201,7 +212,11 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	contextInput.SkillRefList = skill.RefTextList
 	contextInput.UserInput = userInput
 	contextInput.HistoryList = historyList
-	contextInput.ToolResultList = s.runAutoTools(ctx, userULID, req, userInput, contextInput)
+	toolResultList, toolCodeList, err := s.runTools(ctx, userULID, req, contextInput)
+	if err != nil {
+		return err
+	}
+	contextInput.ToolResultList = toolResultList
 	blocks, instructionText := buildContextBlocks(contextInput)
 	assembledText, droppedKeys := ai.AssembleContext(blocks, ai.ContextBudgetChars)
 	if len(droppedKeys) > 0 {
@@ -213,11 +228,12 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		RoleCode:       domain.ChatRoleUser,
 		ContentText:    req.ContentText,
 		SkillCode:      skillCode,
-		RefDocJSON:     encodeULIDList(req.RefDocULIDList),
-		RefChapterJSON: encodeULIDList(req.RefChapterULIDList),
-		RefMessageJSON: encodeULIDList(req.RefMessageULIDList),
-		RefSummaryJSON: encodeULIDList(req.RefSummaryULIDList),
-		RefPromptJSON:  encodeULIDList(req.RefPromptULIDList),
+		ToolCodeJSON:   encodeStringList(toolCodeList),
+		RefDocJSON:     encodeStringList(req.RefDocULIDList),
+		RefChapterJSON: encodeStringList(req.RefChapterULIDList),
+		RefMessageJSON: encodeStringList(req.RefMessageULIDList),
+		RefSummaryJSON: encodeStringList(req.RefSummaryULIDList),
+		RefPromptJSON:  encodeStringList(req.RefPromptULIDList),
 		TokenUsedCount: estimateTokenCount(utf8.RuneCountInString(req.ContentText), 0),
 	}
 	if err := s.chatRepo.CreateMessage(ctx, userMessage); err != nil {
@@ -235,9 +251,10 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		return err // 供应商不可用：流未开始，api 层输出 JSON 包络
 	}
 	events := &chatEventWriter{
-		writer:      writer,
-		sessionULID: session.SessionULID,
-		messageULID: pkg.NewULID(domain.IDPrefixMessage),
+		writer:       writer,
+		sessionULID:  session.SessionULID,
+		messageULID:  pkg.NewULID(domain.IDPrefixMessage),
+		toolCodeList: toolCodeList,
 	}
 	replyText, reasoningText, completed := s.streamChat(ctx, events, messages, providerSpec, countMessagesRunes(messages))
 	if !completed {
@@ -250,11 +267,12 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		ContentText:    replyText,
 		ReasoningText:  reasoningText,
 		SkillCode:      skillCode,
-		RefDocJSON:     encodeULIDList(req.RefDocULIDList),
-		RefChapterJSON: encodeULIDList(req.RefChapterULIDList),
-		RefMessageJSON: encodeULIDList(req.RefMessageULIDList),
-		RefSummaryJSON: encodeULIDList(req.RefSummaryULIDList),
-		RefPromptJSON:  encodeULIDList(req.RefPromptULIDList),
+		ToolCodeJSON:   encodeStringList(toolCodeList),
+		RefDocJSON:     encodeStringList(req.RefDocULIDList),
+		RefChapterJSON: encodeStringList(req.RefChapterULIDList),
+		RefMessageJSON: encodeStringList(req.RefMessageULIDList),
+		RefSummaryJSON: encodeStringList(req.RefSummaryULIDList),
+		RefPromptJSON:  encodeStringList(req.RefPromptULIDList),
 		TokenUsedCount: estimateTokenCount(countMessagesRunes(messages), utf8.RuneCountInString(replyText)),
 	}
 	// assistant 消息与今日 AI 字数统计同事务，保证两者一致落库
@@ -349,40 +367,58 @@ func (s *ChatService) mustOwnSession(ctx context.Context, userULID, sessionULID 
 	return session, nil
 }
 
-// runAutoTools 按正文关键词自动触发工具并把结果转为上下文块（失败只告警，不阻断对话）。
-func (s *ChatService) runAutoTools(ctx context.Context, userULID string, req *domain.ChatSendREQ,
-	userInput string, contextInput chatContextInput) []string {
+// runTools 执行本轮工具并把结果转为上下文块。
+// 显式触发的工具若编码不存在、已停用或执行失败，直接返回错误：用户主动点名却静默不执行
+// 会让人误以为已经跑过；关键词自动触发的失败只告警，不阻断对话。
+func (s *ChatService) runTools(ctx context.Context, userULID string, req *domain.ChatSendREQ,
+	contextInput chatContextInput) ([]string, []string, error) {
 	if s.toolService == nil {
-		return nil
+		return nil, nil, nil
 	}
-	matchedList, err := s.toolService.ResolveAutoTools(ctx, req.ContentText)
+	matchedList, missingList, err := s.toolService.ResolveTools(ctx, req.ToolCodeList, req.ContentText)
 	if err != nil {
-		pkg.SLogger().Warnw("工具关键词匹配失败", "error", err)
-		return nil
+		return nil, nil, pkg.WrapBizError(domain.RespCodeStorageError, "工具列表读取失败", err)
+	}
+	if len(missingList) > 0 {
+		return nil, nil, pkg.NewBizError(domain.RespCodeInvalidParam,
+			"工具不存在或已停用: "+strings.Join(missingList, ", "))
 	}
 	if len(matchedList) == 0 {
-		return nil
+		return nil, nil, nil
 	}
-	contentText := userInput
+	parsedList, _ := parseHashToolCodes(req.ContentText)
+	explicitSet := make(map[string]bool, len(req.ToolCodeList)+len(parsedList))
+	for _, code := range mergeToolCodes(req.ToolCodeList, parsedList) {
+		explicitSet[code] = true
+	}
+	// 待检正文只取附带章节：把用户那句「帮我体检这章」当正文会让体检结论毫无意义。
+	// 没有章节上下文时留空，由工具给出「请提供正文或指定章节」的明确提示。
+	contentText := ""
 	if len(contextInput.ChapterList) > 0 {
 		contentText = contextInput.ChapterList[0].ContentText
 	}
 	paramValue := map[string]string{"content_text": contentText, "query_text": req.ContentText}
 	resultList := make([]string, 0, len(matchedList))
+	codeList := make([]string, 0, len(matchedList))
 	for i := range matchedList {
+		toolCode := matchedList[i].ToolCode
 		dto, invokeErr := s.toolService.Invoke(ctx, userULID, &domain.ToolInvokeREQ{
 			ProjectULID: req.ProjectULID,
-			ToolCode:    matchedList[i].ToolCode,
+			ToolCode:    toolCode,
 			ContentText: contentText,
 			ParamValue:  paramValue,
 		})
 		if invokeErr != nil {
-			pkg.SLogger().Warnw("工具执行失败", "tool_code", matchedList[i].ToolCode, "error", invokeErr)
+			if explicitSet[toolCode] {
+				return nil, nil, pkg.WrapBizError(domain.RespCodeBizFailed, "工具 "+toolCode+" 执行失败", invokeErr)
+			}
+			pkg.SLogger().Warnw("工具执行失败", "tool_code", toolCode, "error", invokeErr)
 			continue
 		}
 		resultList = append(resultList, dto.ResultText)
+		codeList = append(codeList, toolCode)
 	}
-	return resultList
+	return resultList, codeList, nil
 }
 
 // resolveHistoryLimit 历史注入条数：请求值 > 应用配置 chat_history_count > 全局配置。

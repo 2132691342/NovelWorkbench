@@ -58,6 +58,13 @@
       <header class="chat-message__head">
         <span class="chat-message__role">{{ isUser ? '我' : 'AI' }}</span>
         <span v-if="message.skill_code" class="chat-message__skill">/{{ message.skill_code }}</span>
+        <span
+          v-for="toolCode in message.tool_code_list"
+          :key="`tool-${toolCode}`"
+          class="chat-message__tool"
+          title="服务端工具已执行，结果已注入上下文"
+          >#{{ toolCode }}</span
+        >
         <span v-if="message.created_at" class="chat-message__time">
           {{ new Date(message.created_at).toLocaleTimeString() }}
         </span>
@@ -178,6 +185,15 @@
       font-size: 10px;
       color: var(--el-color-primary);
       background: var(--nw-primary-soft);
+      border-radius: 999px;
+    }
+
+    &__tool {
+      padding: 0 6px;
+      font-size: 10px;
+      color: var(--el-color-warning);
+      cursor: help;
+      background: var(--el-color-warning-light-9);
       border-radius: 999px;
     }
 

@@ -196,9 +196,12 @@
 <style lang="less" scoped>
   .notes {
     display: flex;
+    flex: 1;
     height: calc(
-      100vh - var(--top-tool-height) - var(--tags-view-height) - 2 * var(--app-content-padding)
+      100vh - var(--top-tool-height) - var(--tags-view-height) - 2 * var(--app-content-padding) -
+        var(--material-tabs-offset, 0px)
     );
+    min-height: 420px;
     overflow: hidden;
     background: var(--nw-surface);
     border: 1px solid var(--nw-border);

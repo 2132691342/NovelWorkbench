@@ -1,7 +1,8 @@
-<!-- 对话输入区：斜杠命令、@ 引用与上下文开关。 -->
+<!-- 对话输入区：斜杠命令唤起技能、井号唤起工具、@ 引用与上下文开关。 -->
 <script setup lang="ts">
   import { computed, ref, watch } from 'vue'
   import type { NWPromptProfileVo, NWSkillVo } from '@/api/contracts'
+  import type { NWToolVo } from '@/api/tool'
   import type { ChatRefItem, ChatRefTabCode, ChatSendPayload } from './types'
   import { useChatRefs } from './useChatRefs'
   import type { NWChapterBriefVo } from '@/api/contracts'
@@ -12,6 +13,7 @@
     chapterList: NWChapterBriefVo[]
     messageList: ChatDisplayMessage[]
     skillList: NWSkillVo[]
+    toolList: NWToolVo[]
     profileList: NWPromptProfileVo[]
     streaming: boolean
     canSend: boolean
@@ -22,14 +24,18 @@
     stop: []
   }>()
 
+  /** 行内命令触发符：/ 选技能，# 选工具（两者都是单选列表，共用一个弹层） */
+  type CommandKind = 'slash' | 'hash'
+
   const inputText = ref('')
   const skillCode = ref('')
+  const toolCodeList = ref<string[]>([])
   const historyCount = ref(0)
   const promptProfileUlid = ref('')
   const inputRef = ref<HTMLTextAreaElement | null>(null)
-  const slashVisible = ref(false)
-  const slashFilter = ref('')
-  const slashActiveIndex = ref(0)
+  const commandKind = ref<CommandKind | ''>('')
+  const commandFilter = ref('')
+  const commandActiveIndex = ref(0)
 
   const {
     refDocList,
@@ -58,13 +64,45 @@
     profileList: () => props.profileList
   })
 
-  const filteredSkillList = computed(() => {
-    const filterText = slashFilter.value.toLowerCase()
-    return props.skillList.filter(
-      (skill) =>
-        skill.skill_code.toLowerCase().includes(filterText) ||
-        skill.skill_name.toLowerCase().includes(filterText)
-    )
+  /** 命令弹层的候选项（技能或工具，统一成同一形状供模板渲染） */
+  interface CommandOption {
+    code: string
+    title: string
+    desc: string
+    active: boolean
+  }
+
+  const commandOptionList = computed<CommandOption[]>(() => {
+    const filterText = commandFilter.value.toLowerCase()
+    if (commandKind.value === 'slash') {
+      return props.skillList
+        .filter(
+          (skill) =>
+            skill.skill_code.toLowerCase().includes(filterText) ||
+            skill.skill_name.toLowerCase().includes(filterText)
+        )
+        .map((skill) => ({
+          code: skill.skill_code,
+          title: skill.skill_name,
+          desc: skill.description_text,
+          active: skillCode.value === skill.skill_code
+        }))
+    }
+    if (commandKind.value === 'hash') {
+      return props.toolList
+        .filter(
+          (tool) =>
+            tool.tool_code.toLowerCase().includes(filterText) ||
+            tool.tool_name.toLowerCase().includes(filterText)
+        )
+        .map((tool) => ({
+          code: tool.tool_code,
+          title: tool.tool_name,
+          desc: tool.description_text,
+          active: toolCodeList.value.includes(tool.tool_code)
+        }))
+    }
+    return []
   })
 
   const chipList = computed(() => [
@@ -84,9 +122,10 @@
   ]
 
   const SLASH_TOKEN_REGEXP = /(^|\s)\/([^\s]*)$/
+  const HASH_TOKEN_REGEXP = /(^|\s)#([^\s]*)$/
   const AT_TOKEN_REGEXP = /(^|\s)@([^\s]*)$/
 
-  /** 删除光标前的 /xxx 或 @xxx 触发词 */
+  /** 删除光标前的 /xxx、#xxx 或 @xxx 触发词 */
   const removeTriggerToken = (tokenRegexp: RegExp) => {
     const cursorPos = inputRef.value?.selectionStart ?? inputText.value.length
     const beforeCursor = inputText.value.slice(0, cursorPos)
@@ -98,9 +137,18 @@
     const beforeCursor = inputText.value.slice(0, cursorPos)
 
     const slashMatch = SLASH_TOKEN_REGEXP.exec(beforeCursor)
-    slashFilter.value = slashMatch ? slashMatch[2] : ''
-    slashVisible.value = Boolean(slashMatch)
-    slashActiveIndex.value = 0
+    const hashMatch = HASH_TOKEN_REGEXP.exec(beforeCursor)
+    if (slashMatch) {
+      commandKind.value = 'slash'
+      commandFilter.value = slashMatch[2]
+    } else if (hashMatch) {
+      commandKind.value = 'hash'
+      commandFilter.value = hashMatch[2]
+    } else {
+      commandKind.value = ''
+      commandFilter.value = ''
+    }
+    commandActiveIndex.value = 0
 
     const atMatch = AT_TOKEN_REGEXP.exec(beforeCursor)
     if (atMatch) {
@@ -110,11 +158,19 @@
     }
   }
 
-  const selectSkill = (skill: NWSkillVo) => {
-    skillCode.value = skill.skill_code
-    removeTriggerToken(SLASH_TOKEN_REGEXP)
-    slashVisible.value = false
+  const selectCommand = (option: CommandOption) => {
+    if (commandKind.value === 'slash') {
+      skillCode.value = option.code
+    } else if (!toolCodeList.value.includes(option.code)) {
+      toolCodeList.value.push(option.code)
+    }
+    removeTriggerToken(commandKind.value === 'slash' ? SLASH_TOKEN_REGEXP : HASH_TOKEN_REGEXP)
+    commandKind.value = ''
     inputRef.value?.focus()
+  }
+
+  const removeToolCode = (toolCode: string) => {
+    toolCodeList.value = toolCodeList.value.filter((code) => code !== toolCode)
   }
 
   const selectRef = (item: ChatRefItem) => {
@@ -128,38 +184,40 @@
     emit('send', {
       content_text: inputText.value.trim(),
       skill_code: skillCode.value,
+      tool_code_list: [...toolCodeList.value],
       ...toRefPayload(),
       history_count: historyCount.value,
       prompt_profile_ulid: promptProfileUlid.value
     })
     inputText.value = ''
     skillCode.value = ''
-    slashVisible.value = false
+    toolCodeList.value = []
+    commandKind.value = ''
     clearRefs()
     closePicker()
   }
 
   const handleKeydown = (event: KeyboardEvent) => {
-    if (slashVisible.value && filteredSkillList.value.length > 0) {
-      const optionCount = filteredSkillList.value.length
+    if (commandKind.value && commandOptionList.value.length > 0) {
+      const optionCount = commandOptionList.value.length
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        slashActiveIndex.value = (slashActiveIndex.value + 1) % optionCount
+        commandActiveIndex.value = (commandActiveIndex.value + 1) % optionCount
         return
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault()
-        slashActiveIndex.value = (slashActiveIndex.value - 1 + optionCount) % optionCount
+        commandActiveIndex.value = (commandActiveIndex.value - 1 + optionCount) % optionCount
         return
       }
       if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault()
-        selectSkill(filteredSkillList.value[slashActiveIndex.value])
+        selectCommand(commandOptionList.value[commandActiveIndex.value])
         return
       }
     }
     if (event.key === 'Escape') {
-      slashVisible.value = false
+      commandKind.value = ''
       closePicker()
       return
     }
@@ -168,8 +226,12 @@
       submit()
       return
     }
-    if (event.key === 'Backspace' && inputText.value.length === 0 && skillCode.value) {
-      skillCode.value = ''
+    if (event.key === 'Backspace' && inputText.value.length === 0) {
+      if (skillCode.value) {
+        skillCode.value = ''
+      } else if (toolCodeList.value.length > 0) {
+        toolCodeList.value.pop()
+      }
     }
   }
 
@@ -187,6 +249,7 @@
     () => props.projectUlid,
     () => {
       promptProfileUlid.value = ''
+      toolCodeList.value = []
     }
   )
 
@@ -202,8 +265,18 @@
 
 <template>
   <div class="composer">
-    <div v-if="skillCode || chipList.length > 0" class="composer__chips">
+    <div v-if="skillCode || toolCodeList.length > 0 || chipList.length > 0" class="composer__chips">
       <ElTag v-if="skillCode" closable size="small" @close="skillCode = ''">/{{ skillCode }}</ElTag>
+      <ElTag
+        v-for="toolCode in toolCodeList"
+        :key="`tool-${toolCode}`"
+        closable
+        size="small"
+        type="warning"
+        @close="removeToolCode(toolCode)"
+      >
+        #{{ toolCode }}
+      </ElTag>
       <ElTag
         v-for="chip in chipList"
         :key="`${chip.tab}-${chip.ref_ulid}`"
@@ -217,20 +290,28 @@
     </div>
 
     <div class="composer__input-wrap">
-      <div v-if="slashVisible" class="composer__popup">
+      <div v-if="commandKind" class="composer__popup">
+        <p class="composer__popup-title">
+          {{ commandKind === 'slash' ? '技能' : '工具（服务端确定性执行，不消耗模型）' }}
+        </p>
         <button
-          v-for="(skill, index) in filteredSkillList"
-          :key="skill.skill_ulid"
+          v-for="(option, index) in commandOptionList"
+          :key="option.code"
           type="button"
-          :class="['composer__item', { 'is-active': index === slashActiveIndex }]"
-          @mouseenter="slashActiveIndex = index"
-          @click="selectSkill(skill)"
+          :class="[
+            'composer__item',
+            { 'is-active': index === commandActiveIndex, 'is-picked': option.active }
+          ]"
+          @mouseenter="commandActiveIndex = index"
+          @click="selectCommand(option)"
         >
-          <strong>/{{ skill.skill_code }}</strong>
-          <span>{{ skill.skill_name }}</span>
-          <small>{{ skill.description_text }}</small>
+          <strong>{{ commandKind === 'slash' ? '/' : '#' }}{{ option.code }}</strong>
+          <span>{{ option.title }}</span>
+          <small>{{ option.desc }}</small>
         </button>
-        <p v-if="filteredSkillList.length === 0" class="composer__empty">没有匹配的技能</p>
+        <p v-if="commandOptionList.length === 0" class="composer__empty">
+          {{ commandKind === 'slash' ? '没有匹配的技能' : '没有匹配的工具' }}
+        </p>
       </div>
 
       <div v-if="refPickerVisible" class="composer__popup">
@@ -264,7 +345,7 @@
         class="composer__textarea"
         rows="3"
         :disabled="streaming"
-        placeholder="写下你的要求；/ 唤起技能，@ 引用素材"
+        placeholder="写下你的要求；/ 唤起技能，# 唤起工具，@ 引用素材"
         @input="handleInput"
         @keydown="handleKeydown"
       />
@@ -355,6 +436,13 @@
       box-shadow: 0 14px 36px rgb(15 23 42 / 14%);
     }
 
+    &__popup-title {
+      padding: 4px 8px 6px;
+      font-size: 11px;
+      color: var(--el-text-color-placeholder);
+      border-bottom: 1px solid var(--nw-border-soft);
+    }
+
     &__item {
       display: flex;
       flex-direction: column;
@@ -388,6 +476,10 @@
       &:hover,
       &.is-active {
         background: var(--nw-primary-soft);
+      }
+
+      &.is-picked strong {
+        color: var(--el-color-primary);
       }
     }
 

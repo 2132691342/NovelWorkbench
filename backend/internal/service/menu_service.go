@@ -22,6 +22,7 @@ type menuSeed struct {
 	IconCode      string // 图标编码
 	PermCode      string // 权限码
 	SortOrder     int    // 排序号
+	HiddenFlag    bool   // 是否默认隐藏（被合并入口取代的旧页面，仍保留路由与权限码）
 }
 
 // menuSeedList 内置菜单清单（导航与权限登记的唯一来源）。
@@ -32,10 +33,11 @@ var menuSeedList = []menuSeed{
 	{MenuCode: "workspace", ParentCode: "group_project", MenuName: "写作台", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/workspace/:project_ulid", ComponentPath: "views/Workspace/index", IconCode: "edit", SortOrder: 10},
 	{MenuCode: "outline", ParentCode: "group_project", MenuName: "创作规划", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/outline/:project_ulid", ComponentPath: "views/Outline/index", IconCode: "tree", SortOrder: 20},
 	{MenuCode: "continuity", ParentCode: "group_project", MenuName: "连续性看板", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/continuity/:project_ulid", ComponentPath: "views/Continuity/index", IconCode: "shield", SortOrder: 30},
-	{MenuCode: "character", ParentCode: "group_project", MenuName: "角色管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/character/:project_ulid", ComponentPath: "views/Character/index", IconCode: "user", SortOrder: 40},
-	{MenuCode: "lore", ParentCode: "group_project", MenuName: "世界观设定", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/lore/:project_ulid", ComponentPath: "views/Lore/index", IconCode: "globe", SortOrder: 50},
-	{MenuCode: "knowledge", ParentCode: "group_project", MenuName: "知识库", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/knowledge/:project_ulid", ComponentPath: "views/Knowledge/index", IconCode: "database", SortOrder: 60},
-	{MenuCode: "notes", ParentCode: "group_project", MenuName: "素材笔记", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/notes/:project_ulid", ComponentPath: "views/Notes/index", IconCode: "note", SortOrder: 70},
+	{MenuCode: "material", ParentCode: "group_project", MenuName: "素材库", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/material/:project_ulid", ComponentPath: "views/Material/index", IconCode: "library", SortOrder: 40},
+	{MenuCode: "character", ParentCode: "group_project", MenuName: "角色管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/character/:project_ulid", ComponentPath: "views/Character/index", IconCode: "user", SortOrder: 41, HiddenFlag: true},
+	{MenuCode: "lore", ParentCode: "group_project", MenuName: "世界观设定", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/lore/:project_ulid", ComponentPath: "views/Lore/index", IconCode: "globe", SortOrder: 42, HiddenFlag: true},
+	{MenuCode: "knowledge", ParentCode: "group_project", MenuName: "知识库", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/knowledge/:project_ulid", ComponentPath: "views/Knowledge/index", IconCode: "database", SortOrder: 43, HiddenFlag: true},
+	{MenuCode: "notes", ParentCode: "group_project", MenuName: "素材笔记", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/notes/:project_ulid", ComponentPath: "views/Notes/index", IconCode: "note", SortOrder: 44, HiddenFlag: true},
 
 	{MenuCode: "group_platform", MenuName: "AI 资产", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "layers", SortOrder: 30},
 	{MenuCode: "models", ParentCode: "group_platform", MenuName: "模型供应商", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/models", ComponentPath: "views/Models/index", IconCode: "model", PermCode: domain.PermModelManage, SortOrder: 10},
@@ -105,7 +107,7 @@ func (s *MenuService) SeedDefaults(ctx context.Context) error {
 			ComponentPath: item.ComponentPath,
 			IconCode:      item.IconCode,
 			PermCode:      item.PermCode,
-			VisibleFlag:   true,
+			VisibleFlag:   !item.HiddenFlag,
 			EnabledFlag:   true,
 			SortOrder:     item.SortOrder,
 		}
@@ -147,6 +149,11 @@ func (s *MenuService) syncSeed(ctx context.Context, existing *domain.MenuDO, ite
 	if existing.SortOrder != item.SortOrder {
 		fields["sort_order"] = item.SortOrder
 	}
+	// 入口已被合并的内置页强制隐藏：这是产品决策而非作者偏好，必须随代码生效；
+	// 其余菜单仍尊重作者在管理端调整的展示开关。
+	if item.HiddenFlag && existing.VisibleFlag {
+		fields["visible_flag"] = false
+	}
 	if len(fields) == 0 {
 		return nil
 	}
@@ -171,13 +178,14 @@ func (s *MenuService) Nav(ctx context.Context, userULID string) (domain.MenuNavD
 	return domain.MenuNavDTO{MenuTreeList: tree, PermCodeList: hitPerms}, nil
 }
 
-// filterVisibleMenus 过滤出导航可见菜单（纯函数）：
-// 动作节点与隐藏节点不进树；带权限码的菜单需命中用户权限，通配权限码（*）放行全部。
+// filterVisibleMenus 过滤出可下发菜单（纯函数）：
+// 动作节点不下发；隐藏节点保留（visible_flag=false）以便前端注册路由，深链与旧链接仍可用；
+// 带权限码的菜单需命中用户权限，通配权限码（*）放行全部。
 func filterVisibleMenus(dos []domain.MenuDO, permCodes []string) []domain.MenuDO {
 	allowAll := containsString(permCodes, domain.PermAdminAll)
 	visible := make([]domain.MenuDO, 0, len(dos))
 	for i := range dos {
-		if dos[i].MenuTypeCode == domain.MenuTypeAction || !dos[i].VisibleFlag {
+		if dos[i].MenuTypeCode == domain.MenuTypeAction {
 			continue
 		}
 		if dos[i].PermCode != "" && !allowAll && !containsString(permCodes, dos[i].PermCode) {
@@ -204,6 +212,7 @@ func buildMenuTree(dos []domain.MenuDO, parentULID string) []domain.MenuTreeNode
 			ComponentPath: dos[i].ComponentPath,
 			IconCode:      dos[i].IconCode,
 			PermCode:      dos[i].PermCode,
+			VisibleFlag:   dos[i].VisibleFlag,
 			ChildList:     buildMenuTree(dos, dos[i].MenuULID),
 		}
 		nodes = append(nodes, node)

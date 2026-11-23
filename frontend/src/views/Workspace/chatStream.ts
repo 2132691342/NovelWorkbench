@@ -26,6 +26,8 @@ export function applyStreamEvent(
     message.content_text = event.content_text
     message.reasoning_text = event.reasoning_text || message.reasoning_text
     message.reference_list = event.reference_list ?? []
+    // 服务端下发的工具编码是权威值：关键词自动触发的工具不在本地载荷里
+    if (event.tool_code_list?.length) message.tool_code_list = event.tool_code_list
     return true
   }
   if (event.event_type === 'error') {

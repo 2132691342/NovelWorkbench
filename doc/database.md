@@ -448,6 +448,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `content_text` | `text` | | 消息正文 |
 | `reasoning_text` | `text` | | 思考过程（推理模型返回，非推理模型为空串） |
 | `skill_code` | `varchar(32)` | | 命中的斜杠命令编码，空为自由对话 |
+| `tool_code_json` | `text` | | 本轮执行的工具编码 JSON 数组（显式 `#code` 与关键词触发） |
 | `ref_doc_json` | `text` | | `@` 引用文档 ULID JSON 数组 |
 | `ref_chapter_json` | `text` | | `@` 引用章节 ULID JSON 数组 |
 | `ref_summary_json` | `text` | | `@` 引用章节摘要 ULID JSON 数组 |

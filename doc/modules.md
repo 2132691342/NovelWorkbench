@@ -556,8 +556,13 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - `Invoke`：按编码取工具 → 校验启用 → `execute` 分发。`chapter_check` / `deai_scan` 复用 `ai/check.Analyze`；
   `chapter_digest` 抽取每段首句；`character_scan` 统计角色卡姓名（含别名）在本章的命中；`foreshadow_scan` 用双字片段粗匹配伏笔相关词；
   `lore_lookup` 按关键词查设定并剥掉富文本标签。结果统一截断到 4000 字符。
-- `ResolveAutoTools`：正文命中 `trigger_keywords` 的启用工具，按排序号最多取 2 个；`ChatService.runAutoTools` 在上下文装配前调用，
-  失败只 `Warnw` 不阻断对话。
+- `ResolveTools`：解析本轮工具。显式编码来自请求体 `tool_code_list` 与正文内联 `#code`，合并后去重保序、上限 3 个；
+  编码不存在或已停用时返回 `missingList`，由 `ChatService` 直接报错（用户点名却不执行比报错更糟）。
+  余量再按 `trigger_keywords` 自动补位（单轮总数上限 3 个），已显式选中的不重复触发。
+- `service/tool_command.go`：`parseHashToolCodes` 只认行首或空白后的 `#code`（`C#` 之类不误判），剥离触发词时保留其余换行与缩进；
+  `selectToolsByCode` / `matchToolsByKeyword` 是纯函数，可脱离仓储单测。
+- `ChatService.runTools`：在上下文装配前调用，失败只 `Warnw` 不阻断对话；返回的工具编码写入消息的 `tool_code_json`，
+  前端据此在消息头展示 `#编码` 徽标，历史回看同样保留。
 - `api/tool_api.go`：`/tool/list`、`/tool/invoke` 对登录用户开放，`/tool/save`、`/tool/delete` 收口到 `tool:manage`。
 
 ### 16A.3 边界

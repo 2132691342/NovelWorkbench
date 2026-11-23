@@ -44,7 +44,7 @@ go test -short -run TestChatContextChain ./internal/service/   # 定位单个链
 
 ### 2.2 用例清单
 
-后端共 7 个测试文件、12 条用例，每条用例对应一条完整链路。
+后端共 8 个测试文件、13 条用例，每条用例对应一条完整链路。
 
 | 文件 | 用例 | 覆盖链路 |
 | --- | --- | --- |
@@ -58,7 +58,8 @@ go test -short -run TestChatContextChain ./internal/service/   # 定位单个链
 | `backend/internal/service/chat_pipeline_test.go` | `TestChatStreamContract` | SSE `thinking` → `chunk` → `done` 顺序、seq 从 1 单调递增、`done` 携带完整思考过程与空数组引用 |
 | `backend/internal/service/knowledge_chain_test.go` | `TestKnowledgeRetrievalChain` | 文本切片（重叠窗口、非法 overlap 收敛）→ 查询词抽取 → RRF 双通道融合 → 单通道排序与 TopK → 重排解析与 fail-open |
 | `backend/internal/service/knowledge_chain_test.go` | `TestManticoreSchemaMigrationChain` | Manticore 表结构识别 → 旧表重建 → 回灌只执行一次；新结构启动不重建 |
-| `backend/internal/service/menu_chain_test.go` | `TestMenuAndPermissionChain` | 导航可见性过滤 → 菜单树装配 → 权限目录汇总 → 重复权限码去重 → 动作与菜单权限说明区分 |
+| `backend/internal/service/menu_chain_test.go` | `TestMenuAndPermissionChain` | 可下发过滤（隐藏页保留标记）→ 菜单树装配与隐藏标记透传 → 权限目录汇总 → 重复权限码去重 → 动作与菜单权限说明区分 |
+| `backend/internal/service/tool_trigger_test.go` | `TestToolTriggerChain` | 正文 `#code` 解析（行首/行中命中，词内井号、大写与无井号不命中，剥离时保留换行）→ 编码合并去重截断 → 显式选取与缺失上报 → 关键词补位跳过已选与停用 |
 | `backend/internal/ai/check/chapter_check_test.go` | `TestChapterCheckChain` | 空正文判阻断 → 零容忍词计数与分级 → 缺钩子警示 → 干净正文不误判 → 同一输入结论确定性 |
 
 ### 2.3 覆盖取向

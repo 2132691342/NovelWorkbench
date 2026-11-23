@@ -14,6 +14,7 @@ function blankMessage(): ChatDisplayMessage {
     content_text: '',
     reasoning_text: '',
     skill_code: '',
+    tool_code_list: [],
     created_at: '',
     reference_list: [],
     error_message: '',
@@ -33,6 +34,7 @@ function streamEvent(overrides: Partial<NWChatStreamEventVo>): NWChatStreamEvent
     content_text: '',
     reasoning_text: '',
     reference_list: [],
+    tool_code_list: [],
     error_message: '',
     ...overrides,
   }
@@ -111,6 +113,25 @@ describe('流式对话链路', () => {
     expect(message.reasoning_text).toBe('完整思考')
     expect(message.reference_list).toHaveLength(1)
     expect(message.reference_list[0].chunk_ulid).toBe('CHK_1')
+
+    // done 携带的服务端工具编码覆盖本地载荷：关键词自动触发的工具只有服务端知道。
+    const toolMessage = blankMessage()
+    toolMessage.tool_code_list = ['deai_scan']
+    applyStreamEvent(
+      toolMessage,
+      streamEvent({
+        event_type: 'done',
+        content_text: '正文',
+        tool_code_list: ['deai_scan', 'chapter_check'],
+      }),
+      '发送失败',
+    )
+    expect(toolMessage.tool_code_list).toEqual(['deai_scan', 'chapter_check'])
+    // 服务端未给工具时保留本地值，不清空。
+    const keepMessage = blankMessage()
+    keepMessage.tool_code_list = ['deai_scan']
+    applyStreamEvent(keepMessage, streamEvent({ event_type: 'done', content_text: '正文' }), '发送失败')
+    expect(keepMessage.tool_code_list).toEqual(['deai_scan'])
 
     // done 未带思考时保留已累加的思考，不清空。
     const second = blankMessage()

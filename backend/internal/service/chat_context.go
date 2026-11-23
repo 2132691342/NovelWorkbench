@@ -447,28 +447,28 @@ func (s *ChatService) loadDocFullText(ctx context.Context, docULID string) (stri
 	return strings.Join(parts, "\n"), nil
 }
 
-// encodeULIDList 将 ULID 列表编码为 JSON 数组字符串（空列表为 []）。
-func encodeULIDList(ulids []string) string {
-	if ulids == nil {
-		ulids = []string{}
+// encodeStringList 将字符串列表编码为 JSON 数组字符串（空列表为 []）。
+func encodeStringList(values []string) string {
+	if values == nil {
+		values = []string{}
 	}
-	data, err := json.Marshal(ulids)
+	data, err := json.Marshal(values)
 	if err != nil {
 		return "[]"
 	}
 	return string(data)
 }
 
-// decodeULIDList 解码 JSON 数组字符串为 ULID 列表（非法文本返回空列表）。
-func decodeULIDList(jsonText string) []string {
-	ulids := []string{}
+// decodeStringList 解码 JSON 数组字符串为字符串列表（非法文本返回空列表）。
+func decodeStringList(jsonText string) []string {
+	values := []string{}
 	if jsonText == "" {
-		return ulids
+		return values
 	}
-	if err := json.Unmarshal([]byte(jsonText), &ulids); err != nil {
+	if err := json.Unmarshal([]byte(jsonText), &values); err != nil {
 		return []string{}
 	}
-	return ulids
+	return values
 }
 
 // toChatMessageVO 组装消息视图对象（ref_*_json 解码为 ULID 列表）。
@@ -480,11 +480,12 @@ func toChatMessageVO(do *domain.ChatMessageDO) domain.ChatMessageVO {
 		ContentText:        do.ContentText,
 		ReasoningText:      do.ReasoningText,
 		SkillCode:          do.SkillCode,
-		RefDocULIDList:     decodeULIDList(do.RefDocJSON),
-		RefChapterULIDList: decodeULIDList(do.RefChapterJSON),
-		RefMessageULIDList: decodeULIDList(do.RefMessageJSON),
-		RefSummaryULIDList: decodeULIDList(do.RefSummaryJSON),
-		RefPromptULIDList:  decodeULIDList(do.RefPromptJSON),
+		ToolCodeList:       decodeStringList(do.ToolCodeJSON),
+		RefDocULIDList:     decodeStringList(do.RefDocJSON),
+		RefChapterULIDList: decodeStringList(do.RefChapterJSON),
+		RefMessageULIDList: decodeStringList(do.RefMessageJSON),
+		RefSummaryULIDList: decodeStringList(do.RefSummaryJSON),
+		RefPromptULIDList:  decodeStringList(do.RefPromptJSON),
 		TokenUsedCount:     do.TokenUsedCount,
 		CreatedAt:          pkg.FormatTime(do.CreatedAt),
 	}

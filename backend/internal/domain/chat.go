@@ -23,6 +23,7 @@ type ChatMessageDO struct {
 	ContentText    string `json:"content_text" gorm:"type:text"`                              // 消息正文
 	ReasoningText  string `json:"reasoning_text" gorm:"type:text"`                            // 思考过程（推理模型返回，可为空）
 	SkillCode      string `json:"skill_code" gorm:"size:32"`                                  // 命中的斜杠命令编码（空为自由对话）
+	ToolCodeJSON   string `json:"tool_code_json" gorm:"type:text"`                            // 本轮执行的工具编码列表（JSON 数组）
 	RefDocJSON     string `json:"ref_doc_json" gorm:"type:text"`                              // @引用文档 ULID 列表（JSON 数组）
 	RefChapterJSON string `json:"ref_chapter_json" gorm:"type:text"`                          // @引用章节 ULID 列表（JSON 数组）
 	RefMessageJSON string `json:"ref_message_json" gorm:"type:text"`                          // 显式引用的历史消息 ULID 列表（JSON 数组）
@@ -41,6 +42,7 @@ type ChatSendREQ struct {
 	ContentText        string            `json:"content_text" binding:"required,max=8000"`       // 消息正文
 	SkillCode          string            `json:"skill_code" binding:"omitempty,max=32"`          // 技能编码
 	SkillVariableMap   map[string]string `json:"skill_variable_map"`                             // 技能变量取值
+	ToolCodeList       []string          `json:"tool_code_list"`                                 // 显式指定工具（正文 #code 亦可用）
 	RefDocULIDList     []string          `json:"ref_doc_ulid_list"`                              // @引用文档
 	RefChapterULIDList []string          `json:"ref_chapter_ulid_list"`                          // @引用章节
 	RefMessageULIDList []string          `json:"ref_message_ulid_list"`                          // 显式引用的历史消息
@@ -74,6 +76,7 @@ type ChatMessageVO struct {
 	ContentText        string   `json:"content_text"`          // 正文
 	ReasoningText      string   `json:"reasoning_text"`        // 思考过程（推理模型返回，可为空）
 	SkillCode          string   `json:"skill_code"`            // 命中斜杠命令
+	ToolCodeList       []string `json:"tool_code_list"`        // 本轮执行的工具编码
 	RefDocULIDList     []string `json:"ref_doc_ulid_list"`     // 引用文档
 	RefChapterULIDList []string `json:"ref_chapter_ulid_list"` // 引用章节
 	RefMessageULIDList []string `json:"ref_message_ulid_list"` // 引用历史消息
@@ -92,6 +95,7 @@ type ChatStreamEventDTO struct {
 	ContentText   string             `json:"content_text"`   // 增量文本（chunk/done）或增量思考（thinking）
 	ReasoningText string             `json:"reasoning_text"` // 完整思考过程（done 时给出，可为空）
 	ReferenceList []KnowledgeChunkVO `json:"reference_list"` // RAG 召回依据（done 时给出）
+	ToolCodeList  []string           `json:"tool_code_list"` // 本轮实际执行的工具编码（done 时给出）
 	ErrorMessage  string             `json:"error_message"`  // 错误信息（error 时给出）
 }
 

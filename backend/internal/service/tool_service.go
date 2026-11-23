@@ -224,29 +224,24 @@ func (s *ToolService) Invoke(ctx context.Context, userULID string, req *domain.T
 	return dto, nil
 }
 
-// ResolveAutoTools 按正文关键词匹配启用中的工具（对话期自动触发，最多 2 个）。
-func (s *ToolService) ResolveAutoTools(ctx context.Context, contentText string) ([]domain.ToolVO, error) {
-	if strings.TrimSpace(contentText) == "" {
-		return []domain.ToolVO{}, nil
-	}
-	dos, err := s.toolRepo.List(ctx, &domain.ToolListREQ{EnabledOnly: true})
+// ResolveTools 解析本轮要执行的工具：显式编码（请求体 + 正文 #code）优先，关键词自动触发补位。
+// 显式编码不存在或已停用返回 missingList，由调用方决定报错还是忽略。
+func (s *ToolService) ResolveTools(ctx context.Context, explicitCodeList []string,
+	contentText string) ([]domain.ToolVO, []string, error) {
+	dos, err := s.toolRepo.List(ctx, &domain.ToolListREQ{EnabledOnly: false})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	matched := make([]domain.ToolVO, 0, 2)
-	for i := range dos {
-		keywords := ai.ToolKeywordsOf(dos[i].TriggerKeywords)
-		for _, keyword := range keywords {
-			if strings.Contains(contentText, keyword) {
-				matched = append(matched, toToolVO(&dos[i]))
-				break
-			}
-		}
-		if len(matched) >= 2 {
-			break
-		}
+	parsedList, _ := parseHashToolCodes(contentText)
+	codeList := mergeToolCodes(explicitCodeList, parsedList)
+	explicitList, missingList := selectToolsByCode(dos, codeList)
+	excludeSet := make(map[string]bool, len(explicitList))
+	for i := range explicitList {
+		excludeSet[explicitList[i].ToolCode] = true
 	}
-	return matched, nil
+	remainLimit := toolTotalLimit - len(explicitList)
+	autoList := matchToolsByKeyword(dos, contentText, excludeSet, remainLimit)
+	return append(explicitList, autoList...), missingList, nil
 }
 
 // execute 分发到具体工具实现。

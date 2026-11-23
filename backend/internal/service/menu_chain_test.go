@@ -36,27 +36,44 @@ func testMenus() []domain.MenuDO {
 
 // TestMenuAndPermissionChain 覆盖一次导航装配请求的完整链路。
 func TestMenuAndPermissionChain(t *testing.T) {
-	// 环节1：可见性过滤。动作节点、隐藏节点与未授权权限码都不进导航树；通配权限放行全部。
+	// 环节1：可下发过滤。动作节点与未授权权限码不下发；隐藏页保留（visible_flag=false），
+	// 让前端仍能注册路由，旧链接与深链不因入口合并而失效。
 	visible := filterVisibleMenus(testMenus(), []string{"system:user:manage"})
-	if len(visible) != 3 {
-		t.Fatalf("可见菜单数 = %d, want 3", len(visible))
+	if len(visible) != 4 {
+		t.Fatalf("可下发菜单数 = %d, want 4", len(visible))
 	}
+	hiddenCount := 0
 	for _, do := range visible {
-		if do.MenuTypeCode == domain.MenuTypeAction || !do.VisibleFlag {
-			t.Fatalf("动作/隐藏节点不应进树: %s", do.MenuCode)
+		if do.MenuTypeCode == domain.MenuTypeAction {
+			t.Fatalf("动作节点不应下发: %s", do.MenuCode)
+		}
+		if !do.VisibleFlag {
+			hiddenCount++
 		}
 		if do.PermCode != "" && do.PermCode != "system:user:manage" {
-			t.Fatalf("未授权权限码不应进树: %s", do.MenuCode)
+			t.Fatalf("未授权权限码不应下发: %s", do.MenuCode)
 		}
 	}
-	if got := filterVisibleMenus(testMenus(), []string{domain.PermAdminAll}); len(got) != 4 {
-		t.Fatalf("通配权限下可见菜单数 = %d, want 4", len(got))
+	if hiddenCount != 1 {
+		t.Fatalf("隐藏页应保留且带隐藏标记, got %d", hiddenCount)
+	}
+	if got := filterVisibleMenus(testMenus(), []string{domain.PermAdminAll}); len(got) != 5 {
+		t.Fatalf("通配权限下可下发菜单数 = %d, want 5", len(got))
 	}
 
-	// 环节2：菜单树装配。父子按 ULID 关联，动作节点不进树，权限码随节点保留。
+	// 环节2：菜单树装配。父子按 ULID 关联，动作节点不进树，权限码与隐藏标记随节点保留。
 	tree := buildMenuTree(filterVisibleMenus(testMenus(), []string{domain.PermAdminAll}), "")
-	if len(tree) != 3 {
-		t.Fatalf("根节点数 = %d, want 3", len(tree))
+	if len(tree) != 4 {
+		t.Fatalf("根节点数 = %d, want 4", len(tree))
+	}
+	hiddenNode := (*domain.MenuTreeNodeVO)(nil)
+	for i := range tree {
+		if tree[i].MenuCode == "hidden_page" {
+			hiddenNode = &tree[i]
+		}
+	}
+	if hiddenNode == nil || hiddenNode.VisibleFlag {
+		t.Fatalf("隐藏页节点标记丢失: %+v", hiddenNode)
 	}
 	var group *domain.MenuTreeNodeVO
 	for i := range tree {

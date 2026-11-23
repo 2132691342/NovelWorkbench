@@ -352,7 +352,7 @@ flowchart LR
 | GET | `/menu/permission/catalog` | `system:perm:read` | 无 | `[]PermGroupVO` | `MenuAPI.PermCatalog` |
 
 - 菜单表同时是权限码登记处：`page` 行承载页面权限码，`action` 行只登记动作权限码、不进导航。
-- `MenuNavDTO`：`menu_tree_list`（`MenuTreeNodeVO` 递归 `child_list`）+ `perm_code_list`。只返回启用、可见、非 `action` 且当前用户有权限（或持有 `*`）的节点。
+- `MenuNavDTO`：`menu_tree_list`（`MenuTreeNodeVO` 递归 `child_list`）+ `perm_code_list`。只返回启用、非 `action` 且当前用户有权限（或持有 `*`）的节点；节点带 `visible_flag`，为 `false` 的页面不进侧边栏但仍注册路由（供入口合并后的旧链接与深链继续访问）。
 - `MenuREQ`：`menu_ulid`、`parent_ulid`、`menu_code`（2–64，唯一）、`menu_name`、`menu_type_code`（`group` / `page` / `action`）、`scope_code`（`global` / `project`）、`route_path`、`icon_code`、`perm_code`、`visible_flag`、`enabled_flag`、`sort_order`、`remark_text`。
 - 约束：`group` 不可配路由（`ERR_INVALID_PARAM`）；菜单编码唯一（重复 `ERR_CONFLICT`）；权限码全局唯一，同码只能被一行登记（重复 `ERR_CONFLICT`）；上级必须存在且不能是自己或自己的下级（`ERR_INVALID_PARAM`）；存在下级时不可删除（`ERR_CONFLICT`，提示先删下级）。
 - `PermGroupVO`：`group_code`、`group_name`、`perm_list`（`PermItemVO`：`perm_code`、`perm_name`、`perm_desc`、`menu_code`、`menu_name`、`builtin_flag`）。
@@ -401,6 +401,7 @@ flowchart LR
 | `content_text` | string | 消息正文，必填，≤8000 |
 | `skill_code` | string | 技能编码（≤32），空为自由对话 |
 | `skill_variable_map` | object | 技能变量取值 `{变量名: 值}` |
+| `tool_code_list` | []string | 显式指定本轮工具（正文内联 `#code` 等效），上限 3；编码不存在或已停用返回 `ERR_INVALID_PARAM` |
 | `ref_doc_ulid_list` | []string | @引用的知识库文档 |
 | `ref_chapter_ulid_list` | []string | @引用的章节 |
 | `ref_message_ulid_list` | []string | 显式引用的历史消息 |
@@ -410,7 +411,7 @@ flowchart LR
 
 - `ChatHistoryREQ`：`session_ulid`（必填）+ 分页字段；结果按 `created_at` 升序。
 - `ChatSessionCreateREQ`：`project_ulid`、`session_name`（空则取首条消息前 20 字）。`ChatSessionVO`：`session_ulid`、`project_ulid`、`session_name`、`message_count`、`updated_at`。
-- `ChatMessageVO`：`message_ulid`、`session_ulid`、`role_code`（`user` / `assistant` / `system`）、`content_text`、`skill_code`、`ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_summary_ulid_list`、`ref_prompt_ulid_list`、`ref_message_ulid_list`、`token_used_count`、`created_at`。
+- `ChatMessageVO`：`message_ulid`、`session_ulid`、`role_code`（`user` / `assistant` / `system`）、`content_text`、`reasoning_text`、`skill_code`、`tool_code_list`（本轮执行的工具编码）、`ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_summary_ulid_list`、`ref_prompt_ulid_list`、`ref_message_ulid_list`、`token_used_count`、`created_at`。
 - 所选模型未授权给当前账号返回 `ERR_FORBIDDEN`；账号无任何可用模型返回 `ERR_AI_PROVIDER`。
 
 ### 7.15 创作规划（6）

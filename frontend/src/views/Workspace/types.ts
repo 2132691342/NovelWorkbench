@@ -9,6 +9,8 @@ export interface ChatDisplayMessage {
   /** 推理模型返回的思考过程，生成期间逐字追加 */
   reasoning_text: string
   skill_code: string
+  /** 本轮执行的工具编码（显式 #code 与关键词自动触发） */
+  tool_code_list: string[]
   created_at: string
   reference_list: NWKnowledgeChunkVo[]
   error_message: string
@@ -23,6 +25,7 @@ export interface ChatDisplayMessage {
 export interface ChatSendPayload {
   content_text: string
   skill_code: string
+  tool_code_list: string[]
   ref_doc_ulid_list: string[]
   ref_chapter_ulid_list: string[]
   ref_summary_ulid_list: string[]

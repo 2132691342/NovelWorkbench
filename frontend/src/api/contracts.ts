@@ -300,9 +300,12 @@ export interface NWChatMessageVo {
   content_text: string
   reasoning_text: string
   skill_code: string
+  tool_code_list: string[]
   ref_doc_ulid_list: string[]
   ref_chapter_ulid_list: string[]
   ref_message_ulid_list: string[]
+  ref_summary_ulid_list: string[]
+  ref_prompt_ulid_list: string[]
   token_used_count: number
   created_at: string
 }
@@ -316,6 +319,7 @@ export interface NWChatStreamEventVo {
   content_text: string
   reasoning_text: string
   reference_list: NWKnowledgeChunkVo[]
+  tool_code_list: string[]
   error_message: string
 }
 
@@ -393,6 +397,7 @@ export interface NWChatSendReqVo {
   project_ulid: string
   content_text: string
   skill_code?: string
+  tool_code_list?: string[]
   ref_doc_ulid_list?: string[]
   ref_chapter_ulid_list?: string[]
   ref_summary_ulid_list?: string[]

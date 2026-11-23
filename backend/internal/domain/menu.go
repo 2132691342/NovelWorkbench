@@ -98,6 +98,7 @@ type MenuTreeNodeVO struct {
 	ComponentPath string           `json:"component_path"` // 组件路径
 	IconCode      string           `json:"icon_code"`      // 图标编码
 	PermCode      string           `json:"perm_code"`      // 权限码（空为登录可见）
+	VisibleFlag   bool             `json:"visible_flag"`   // 是否进导航（false 仅注册路由，深链仍可访问）
 	ChildList     []MenuTreeNodeVO `json:"child_list"`     // 子节点
 }
 
