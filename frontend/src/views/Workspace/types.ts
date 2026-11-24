@@ -10,7 +10,7 @@ export interface ChatDisplayMessage {
   reasoning_text: string
   /** 命中的斜杠命令提示词编码（空为自由对话） */
   prompt_code: string
-  /** 本轮执行的工具编码（显式 #code 与关键词自动触发） */
+  /** 本轮执行的工具编码（模型自主调用或作者显式 #code） */
   tool_code_list: string[]
   created_at: string
   reference_list: NWKnowledgeChunkVo[]
@@ -27,11 +27,12 @@ export interface ChatSendPayload {
   content_text: string
   prompt_code: string
   tool_code_list: string[]
-  ref_doc_ulid_list: string[]
+  ref_character_ulid_list: string[]
+  ref_lore_ulid_list: string[]
   ref_chapter_ulid_list: string[]
   ref_summary_ulid_list: string[]
-  ref_prompt_ulid_list: string[]
-  ref_message_ulid_list: string[]
+  ref_doc_ulid_list: string[]
+  ref_session_ulid_list: string[]
   history_count: number
   system_prompt_code: string
 }
@@ -45,17 +46,24 @@ export interface ChatRefItem {
   ref_tab_code: ChatRefTabCode
 }
 
-/** @ 引用选择器的页签编码（all 为跨来源聚合检索） */
-export type ChatRefTabCode = 'all' | 'doc' | 'chapter' | 'summary' | 'prompt' | 'message'
+/** @ 引用选择器的页签编码：素材库五类 + 历史会话（all 为跨来源聚合检索） */
+export type ChatRefTabCode =
+  | 'all'
+  | 'character'
+  | 'lore'
+  | 'chapter'
+  | 'summary'
+  | 'doc'
+  | 'session'
 
-/** 命令弹层候选项：本地动作、指令提示词与工具归一成同一形状 */
+/** 命令弹层候选项：本地动作与指令提示词归一成同一形状 */
 export interface ChatCommandOption {
   code: string
   title: string
   desc: string
   active: boolean
-  /** 来源：action=本地动作（不耗模型）；prompt=指令提示词（系统级注入）；tool=服务端工具 */
-  source_code: 'action' | 'prompt' | 'tool'
+  /** 来源：action=本地动作（不耗模型）；prompt=指令提示词（系统级注入） */
+  source_code: 'action' | 'prompt'
   /** 图标（mdi 名），本地动作才有 */
   icon: string
 }

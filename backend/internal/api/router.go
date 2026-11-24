@@ -325,6 +325,7 @@ func registerChatRoutes(rg *gin.RouterGroup, handler *ChatAPI) {
 	rg.POST("/chat/session/create", handler.SessionCreate)
 	rg.POST("/chat/session/list", handler.SessionList)
 	rg.POST("/chat/session/delete", handler.SessionDelete)
+	rg.POST("/chat/session/compact", handler.SessionCompact)
 }
 
 // registerOutlineRoutes 注册创作规划路由（大纲树与场景卡）。

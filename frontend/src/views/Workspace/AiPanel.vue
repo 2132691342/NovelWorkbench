@@ -3,6 +3,7 @@
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import {
+    compactChatSession,
     createChatSession,
     deleteChatSession,
     getChatHistory,
@@ -10,7 +11,7 @@
   } from '@/api/chat'
   import { getModelCapability, type NWModelCapabilityVo, type NWModelOptionVo } from '@/api/model'
   import { listPrompts } from '@/api/prompt'
-  import { listTools, type NWToolVo } from '@/api/tool'
+
   import type {
     NWChapterBriefVo,
     NWChatSendReqVo,
@@ -49,7 +50,7 @@
   const attachChapter = ref(true)
   const historyLoading = ref(false)
   const commandPromptList = ref<NWPromptVo[]>([])
-  const toolList = ref<NWToolVo[]>([])
+
   const systemPromptList = ref<NWPromptVo[]>([])
   const messagesHost = ref<HTMLDivElement | null>(null)
 
@@ -86,14 +87,6 @@
     } catch {
       commandPromptList.value = []
       systemPromptList.value = []
-    }
-  }
-
-  const loadTools = async () => {
-    try {
-      toolList.value = await listTools({ enabled_only: true })
-    } catch {
-      toolList.value = []
     }
   }
 
@@ -170,7 +163,6 @@
       history_count: payload.history_count
     }
     if (payload.prompt_code) request.prompt_code = payload.prompt_code
-    if (payload.tool_code_list.length > 0) request.tool_code_list = payload.tool_code_list
     if (payload.system_prompt_code) request.system_prompt_code = payload.system_prompt_code
     if (selectedModelUlid.value) request.model_ulid = selectedModelUlid.value
 
@@ -182,16 +174,17 @@
     ) {
       chapterRefs.unshift(props.currentChapterUlid)
     }
+    if (payload.ref_character_ulid_list.length > 0) {
+      request.ref_character_ulid_list = payload.ref_character_ulid_list
+    }
+    if (payload.ref_lore_ulid_list.length > 0) request.ref_lore_ulid_list = payload.ref_lore_ulid_list
     if (payload.ref_doc_ulid_list.length > 0) request.ref_doc_ulid_list = payload.ref_doc_ulid_list
     if (chapterRefs.length > 0) request.ref_chapter_ulid_list = chapterRefs
     if (payload.ref_summary_ulid_list.length > 0) {
       request.ref_summary_ulid_list = payload.ref_summary_ulid_list
     }
-    if (payload.ref_prompt_ulid_list.length > 0) {
-      request.ref_prompt_ulid_list = payload.ref_prompt_ulid_list
-    }
-    if (payload.ref_message_ulid_list.length > 0) {
-      request.ref_message_ulid_list = payload.ref_message_ulid_list
+    if (payload.ref_session_ulid_list.length > 0) {
+      request.ref_session_ulid_list = payload.ref_session_ulid_list
     }
     return request
   }
@@ -252,7 +245,7 @@
         content_text: payload.content_text,
         reasoning_text: '',
         prompt_code: payload.prompt_code,
-        tool_code_list: [...payload.tool_code_list],
+        tool_code_list: [],
         created_at: createdAtText,
         reference_list: [],
         error_message: '',
@@ -266,7 +259,7 @@
         content_text: '',
         reasoning_text: '',
         prompt_code: '',
-        tool_code_list: [...payload.tool_code_list],
+        tool_code_list: [],
         created_at: createdAtText,
         reference_list: [],
         error_message: '',
@@ -300,7 +293,7 @@
     return ''
   }
 
-  /** 命令速查：把当前可用的三类触发符与提示词清单摊开给用户看 */
+  /** 命令速查：把两类触发符与提示词清单摊开给用户看 */
   const showCommandHelp = async () => {
     const actionRows = COMPOSER_ACTION_LIST.map(
       (action) => `<li><code>/${action.action_code}</code> ${action.action_name} — ${action.action_desc}</li>`
@@ -311,25 +304,41 @@
           `<li><code>/${prompt.prompt_code}</code> ${prompt.prompt_name} — ${prompt.description_text}</li>`
       )
       .join('')
-    const toolRows = toolList.value
-      .map(
-        (tool) => `<li><code>#${tool.tool_code}</code> ${tool.tool_name} — ${tool.description_text}</li>`
-      )
-      .join('')
     await ElMessageBox.alert(
       `<div class="command-help">
         <p><b>/ 本地动作</b>（立即执行，不消耗模型）</p>
         <ul>${actionRows}</ul>
         <p><b>/ 指令提示词</b>（以系统级消息注入本轮）</p>
         <ul>${promptRows || '<li>暂无启用的指令提示词</li>'}</ul>
-        <p><b># 工具</b>（服务端确定性执行，结果注入上下文）</p>
-        <ul>${toolRows || '<li>暂无启用的工具</li>'}</ul>
-        <p><b>@ 引用</b>：文档 / 章节 / 摘要 / 提示词 / 历史消息；@ 弹层内 ← → 切页签，↑ ↓ 选择，Enter 确认。</p>
-        <p>键盘：<code>Ctrl/⌘ + Enter</code> 发送，<code>Esc</code> 关闭弹层，输入框为空时 <code>Backspace</code> 逐个撤销命令徽标。</p>
+        <p><b>@ 引用</b>：角色 / 设定 / 章节 / 摘要 / 文档 / 历史会话；@ 弹层内 ← → 切页签，↑ ↓ 选择，Enter 确认。</p>
+        <p><b>工具</b>：无需手动点名，模型会在需要时自行调用服务端工具。</p>
+        <p>键盘：<code>Ctrl/⌘ + Enter</code> 发送，<code>Esc</code> 关闭弹层，输入框为空时 <code>Backspace</code> 撤销命令徽标。</p>
       </div>`,
       '命令速查',
       { dangerouslyUseHTMLString: true, confirmButtonText: '知道了' }
     ).catch(() => undefined)
+  }
+
+  /** /compact：把较早的对话折叠成摘要存到会话上，本地完成不耗模型 */
+  const compactSession = async () => {
+    if (!currentSessionUlid.value) {
+      ElMessage.warning('当前没有会话可压缩')
+      return
+    }
+    try {
+      const result = await compactChatSession(currentSessionUlid.value)
+      if (!result.compacted) {
+        ElMessage.info('历史还短，不需要压缩')
+        return
+      }
+      const droppedText = result.dropped_count > 0 ? `，另有 ${result.dropped_count} 条超出预算` : ''
+      ElMessage.success(
+        `已折叠 ${result.folded_count} 条${droppedText}，保留最近 ${result.kept_count} 条原文`
+      )
+      await loadSessions()
+    } catch {
+      ElMessage.error('压缩失败，请稍后重试')
+    }
   }
 
   /** 斜杠动作分发：面板级就地处理，写作台级交给外层 */
@@ -356,6 +365,10 @@
       void showCommandHelp()
       return
     }
+    if (actionCode === 'compact') {
+      void compactSession()
+      return
+    }
     emit('action', actionCode)
   }
 
@@ -366,7 +379,6 @@
       messageList.value = []
       void loadSessions()
       void loadPrompts()
-      void loadTools()
     },
     { immediate: true }
   )
@@ -431,7 +443,8 @@
         <p class="ai-panel__welcome-title">开始一次创作对话</p>
         <ul class="ai-panel__tips">
           <li>输入 <code>/</code> 选命令：本地动作立即执行，提示词以系统级消息注入</li>
-          <li>输入 <code>#</code> 选工具，<code>@</code> 引用文档、章节、摘要、档案或历史消息</li>
+          <li>输入 <code>@</code> 引用素材：角色、设定、章节、摘要、文档与历史会话</li>
+          <li>工具无需点名，模型会在需要时自己调用；<code>/compact</code> 压缩长历史</li>
           <li><code>Ctrl/⌘ + Enter</code> 发送，<code>/help</code> 看全部命令</li>
         </ul>
       </div>
@@ -449,10 +462,9 @@
     <ChatComposer
       ref="composerRef"
       :project-ulid="projectUlid"
+      :session-ulid="currentSessionUlid"
       :chapter-list="chapterList"
-      :message-list="messageList"
       :prompt-list="commandPromptList"
-      :tool-list="toolList"
       :system-prompt-list="systemPromptList"
       :streaming="streamingFlag"
       :can-send="canSend"

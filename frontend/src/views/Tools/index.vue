@@ -48,7 +48,6 @@
         tool_code: row.tool_code,
         tool_name: row.tool_name,
         description_text: row.description_text,
-        trigger_keywords: row.trigger_keywords,
         param_list: row.param_list,
         enabled_flag: enabled,
         sort_order: row.sort_order
@@ -136,20 +135,6 @@
       <ElTableColumn label="说明" min-width="300" show-overflow-tooltip>
         <template #default="{ row }">{{ row.description_text }}</template>
       </ElTableColumn>
-      <ElTableColumn label="触发关键词" min-width="200">
-        <template #default="{ row }">
-          <div class="tool-page__keywords">
-            <span
-              v-for="keyword in (row.trigger_keywords || '').split(',').filter(Boolean)"
-              :key="keyword"
-              class="nw-badge nw-badge--neutral"
-            >
-              {{ keyword.trim() }}
-            </span>
-            <span v-if="!row.trigger_keywords" class="nw-hint">—</span>
-          </div>
-        </template>
-      </ElTableColumn>
       <ElTableColumn label="参数" width="90" align="center">
         <template #default="{ row }">{{ row.param_list?.length ?? 0 }}</template>
       </ElTableColumn>
@@ -235,12 +220,6 @@
       align-items: center;
       font-weight: 600;
       color: var(--nw-ink);
-    }
-
-    &__keywords {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
     }
   }
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/schema"
+
 	"github.com/2132691342/NovelWorkbench/backend/internal/ai"
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 )
@@ -21,10 +23,10 @@ func promptDO(ulid, scope, projectULID, code, kind string, enabled bool) domain.
 }
 
 // toolDO 构造测试用工具行。
-func toolDO(code string, enabled bool, keywords string) domain.ToolDO {
+func toolDO(code string, enabled bool) domain.ToolDO {
 	return domain.ToolDO{
 		ToolULID: "TOL_" + code, ToolCode: code, ToolName: code + "工具",
-		TriggerKeywords: keywords, EnabledFlag: enabled, BuiltinFlag: true,
+		EnabledFlag: enabled, BuiltinFlag: true,
 	}
 }
 
@@ -150,27 +152,22 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("私人笔记不应注入: %q", lore.ContentText)
 	}
 
-	// 步骤2：显式引用摘要与提示词按 90 注入，与自动梗概（60）并存；未引用时不产生空块。
+	// 步骤2：显式引用摘要按 90 注入，与自动梗概（60）并存；未引用时不产生空块。
 	blocks = buildContextBlocks(chatContextInput{
 		UserInput:      "提问",
 		RefSummaryList: []string{"第一章：主角取得钥匙"},
-		RefPromptList:  []string{"《连载作者》\n你是连载作者，保持悬念"},
 		SummaryList:    []string{"前章梗概"},
 	})
 	if got := findBlock(blocks, "ref_summary"); got == nil ||
 		got.Priority != ai.PriorityExplicitRef || !strings.Contains(got.ContentText, "主角取得钥匙") {
 		t.Fatalf("引用摘要块错误: %+v", got)
 	}
-	if got := findBlock(blocks, "ref_prompt"); got == nil ||
-		got.Priority != ai.PriorityExplicitRef || !strings.Contains(got.ContentText, "保持悬念") {
-		t.Fatalf("引用提示词块错误: %+v", got)
-	}
 	if got := findBlock(blocks, "chapter_summary"); got == nil || got.Priority != ai.PriorityChapterSummary {
 		t.Fatalf("自动梗概块应保留且优先级为 60: %+v", got)
 	}
 	emptyBlocks := buildContextBlocks(chatContextInput{UserInput: "提问"})
-	if findBlock(emptyBlocks, "ref_summary") != nil || findBlock(emptyBlocks, "ref_prompt") != nil {
-		t.Fatal("未引用摘要/提示词时不应产生对应块")
+	if findBlock(emptyBlocks, "ref_summary") != nil || findBlock(emptyBlocks, "ref_session") != nil {
+		t.Fatal("未引用摘要/会话时不应产生对应块")
 	}
 
 	// 步骤3：预算裁剪。同优先级保持输入顺序；超预算按优先级丢块；历史不重复注入。
@@ -205,7 +202,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("历史不应注入上下文块: %q", assembled)
 	}
 
-	// 步骤4：历史选取。最近 N 条旧到新；显式引用去重并置尾；N 为 0 时只注入引用消息。
+	// 步骤4：历史选取。最近 N 条旧到新返回；N 为 0 表示不注入常规历史。
 	messages := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),
@@ -213,25 +210,18 @@ func TestChatContextChain(t *testing.T) {
 		chatMessageOf("MSG_4", domain.ChatRoleAssistant, "四"),
 		chatMessageOf("MSG_5", domain.ChatRoleUser, "五"),
 	}
-	if got := selectHistoryMessages(messages, nil, 2); len(got) != 2 ||
+	if got := selectHistoryMessages(messages, 2); len(got) != 2 ||
 		got[0].MessageULID != "MSG_4" || got[1].MessageULID != "MSG_5" {
 		t.Fatalf("最近 N 条应旧到新返回: %v", got)
 	}
-	got := selectHistoryMessages(messages, []string{"MSG_1", "MSG_4", "MSG_1"}, 2)
-	want := []string{"MSG_4", "MSG_5", "MSG_1"}
-	if len(got) != len(want) {
-		t.Fatalf("len = %d, want %d", len(got), len(want))
+	if got := selectHistoryMessages(messages, 0); len(got) != 0 {
+		t.Fatalf("N 为 0 不应注入常规历史: %v", got)
 	}
-	for i := range want {
-		if got[i].MessageULID != want[i] {
-			t.Fatalf("selected[%d] = %s, want %s", i, got[i].MessageULID, want[i])
-		}
-	}
-	if got = selectHistoryMessages(messages, []string{"MSG_2"}, 0); len(got) != 1 || got[0].MessageULID != "MSG_2" {
-		t.Fatalf("N 为 0 只应注入引用消息: %v", got)
+	if got := selectHistoryMessages(messages, 10); len(got) != len(messages) {
+		t.Fatalf("N 大于总数时应返回全部: %v", got)
 	}
 
-	// 步骤5：消息序列成型。身份（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史 role 映射 → 用户输入（用户）。
+	// 步骤5：消息序列成型。身份（系统）→ 上下文（系统）→ 历史摘要（系统）→ 指令提示词（系统）→ 历史 role 映射 → 用户输入（用户）。
 	history := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "历史问"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "历史答"),
@@ -240,12 +230,13 @@ func TestChatContextChain(t *testing.T) {
 		SystemPromptText: "你是连载作者",
 		StyleText:        "文风约束",
 		ContextText:      "装配文本",
+		DigestText:       "【历史摘要（本地压缩）】\n用户: 早先的问题",
 		CommandText:      "续写指令",
 		HistoryList:      history,
 		UserText:         "写下去",
 	})
-	if len(out) != 6 {
-		t.Fatalf("len = %d, want 6", len(out))
+	if len(out) != 7 {
+		t.Fatalf("len = %d, want 7", len(out))
 	}
 	if out[0].Role != "system" || !strings.Contains(out[0].Content, "文风约束") ||
 		!strings.Contains(out[0].Content, "你是连载作者") {
@@ -255,15 +246,19 @@ func TestChatContextChain(t *testing.T) {
 		!strings.Contains(out[1].Content, "装配文本") {
 		t.Fatalf("第二条应为系统级上下文: %+v", out[1])
 	}
-	if out[2].Role != "system" || out[2].Content != "续写指令" {
-		t.Fatalf("第三条应为系统级指令提示词: %+v", out[2])
+	// 摘要必须在指令提示词之前：它描述已发生的事实，指令描述本次要求
+	if out[2].Role != "system" || !strings.Contains(out[2].Content, "历史摘要") {
+		t.Fatalf("第三条应为系统级历史摘要: %+v", out[2])
 	}
-	if out[3].Role != "user" || out[3].Content != "历史问" ||
-		out[4].Role != "assistant" || out[4].Content != "历史答" {
-		t.Fatalf("历史 role 映射错误: %+v", out[3:5])
+	if out[3].Role != "system" || out[3].Content != "续写指令" {
+		t.Fatalf("第四条应为系统级指令提示词: %+v", out[3])
 	}
-	if out[5].Role != "user" || out[5].Content != "写下去" {
-		t.Fatalf("末条应为用户输入: %+v", out[5])
+	if out[4].Role != "user" || out[4].Content != "历史问" ||
+		out[5].Role != "assistant" || out[5].Content != "历史答" {
+		t.Fatalf("历史 role 映射错误: %+v", out[4:6])
+	}
+	if out[6].Role != "user" || out[6].Content != "写下去" {
+		t.Fatalf("末条应为用户输入: %+v", out[6])
 	}
 	if out = buildChatMessages(chatMessageInput{
 		SystemPromptText: "你是连载作者", UserText: "自由提问",
@@ -271,80 +266,140 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("无上下文与指令时应只保留身份与用户输入: %+v", out)
 	}
 
-	// 步骤6：显式引用必须属于当前会话，去重后保序。
-	sessionMessages := []domain.ChatMessageDO{
-		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
-		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),
+	// 步骤6：@ 素材来源。角色与设定走「显式引用」优先级，历史会话整段压缩后注入。
+	refBlocks := buildContextBlocks(chatContextInput{
+		UserInput: "提问",
+		RefCharacterList: []domain.CharacterDO{
+			{CharacterName: "林澈", PersonalityText: "寡言", BackgroundText: "邮差"},
+		},
+		RefLoreList: []domain.LoreDO{
+			{LoreName: "灵力体系", LoreTypeCode: "rule", ContentText: "设定正文"},
+		},
+		RefSessionList: []sessionSource{
+			{SessionName: "上一轮讨论", ContentText: "用户: 主角动机\nAI: 是赎罪"},
+		},
+	})
+	if block := findBlock(refBlocks, "ref_character"); block == nil ||
+		block.Priority != ai.PriorityExplicitRef || !strings.Contains(block.ContentText, "林澈") {
+		t.Fatalf("引用角色应进显式引用块: %+v", block)
 	}
-	validated, err := validateRefMessages(sessionMessages, []string{"MSG_2", "MSG_1", "MSG_2"})
-	if err != nil || len(validated) != 2 || validated[0] != "MSG_2" || validated[1] != "MSG_1" {
-		t.Fatalf("引用应去重保序: %v, err=%v", validated, err)
+	if block := findBlock(refBlocks, "ref_lore"); block == nil ||
+		block.Priority != ai.PriorityExplicitRef || !strings.Contains(block.ContentText, "灵力体系") {
+		t.Fatalf("引用设定应进显式引用块: %+v", block)
 	}
-	if _, err := validateRefMessages(sessionMessages, []string{"MSG_999"}); err == nil {
-		t.Fatal("会话外引用必须失败")
+	sessionBlock := findBlock(refBlocks, "ref_session")
+	if sessionBlock == nil || !strings.Contains(sessionBlock.ContentText, "上一轮讨论") ||
+		!strings.Contains(sessionBlock.ContentText, "赎罪") {
+		t.Fatalf("引用会话应带上会话名与压缩摘要: %+v", sessionBlock)
 	}
 }
 
-// TestToolTriggerChain 覆盖一次「正文带 #code 的对话」里工具从解析到执行的选取链路。
-func TestToolTriggerChain(t *testing.T) {
-	// 环节1：正文解析。行首/空白后的 #code 命中，正文中间粘连、大写、含连字符的不命中；
-	// 触发词被剥离且不破坏换行与缩进。
-	cases := []struct {
-		caseName    string
-		content     string
-		wantCodes   int
-		wantRemain  string
-		wantFirstOf string
-	}{
-		{"行首触发", "#chapter_check 看看这章", 1, "看看这章", "chapter_check"},
-		{"行中触发", "帮我 #deai_scan 扫一下", 1, "帮我 扫一下", "deai_scan"},
-		{"多个触发", "#chapter_check #deai_scan 检查", 2, "检查", "chapter_check"},
-		{"保留换行", "#chapter_check\n第一段\n第二段", 1, "第一段\n第二段", "chapter_check"},
-		{"词内井号不命中", "C# 是语言", 0, "C# 是语言", ""},
-		{"大写不命中", "#Chapter_Check 检查", 0, "#Chapter_Check 检查", ""},
+// TestToolSelectionChain 覆盖「模型自行选择工具」的链路：工具声明 → 参数解码 → 流式调用归并 → 执行分流。
+// 作者无法手动点名工具，服务端也不再按关键词猜测，一切由模型基于声明决定。
+func TestToolSelectionChain(t *testing.T) {
+	// 环节1：工具声明的 function name 用工具编码，参数按声明透出，供模型据此调用。
+	infoList := ai.ToolInfos([]ai.ToolSpec{{
+		ToolCode: "chapter_digest", ToolName: "章节摘要", DescriptionText: "抽取式生成章节摘要",
+		ParamList: []ai.ToolParam{{ParamName: "max_sentences", RequiredFlag: false, DescriptionText: "保留句数"}},
+	}})
+	if len(infoList) != 1 || infoList[0].Name != "chapter_digest" {
+		t.Fatalf("工具声明名称应为工具编码: %+v", infoList)
 	}
-	for _, testCase := range cases {
-		codeList, remainText := parseHashToolCodes(testCase.content)
-		if len(codeList) != testCase.wantCodes || remainText != testCase.wantRemain {
-			t.Fatalf("%s: 命中 %v 剩余 %q, want %d 个 / %q", testCase.caseName,
-				codeList, remainText, testCase.wantCodes, testCase.wantRemain)
+	if infoList[0].ParamsOneOf == nil {
+		t.Fatal("有参数的工具必须带上参数声明")
+	}
+
+	// 环节2：模型回传的参数是 JSON，需按字符串解出（数字与布尔也要能落到工具参数里）。
+	paramValue := ai.DecodeToolArguments(`{"content_text":"正文","max_sentences":6,"strict":true}`)
+	if paramValue["content_text"] != "正文" || paramValue["max_sentences"] != "6" || paramValue["strict"] != "true" {
+		t.Fatalf("参数解码错误: %v", paramValue)
+	}
+	if len(ai.DecodeToolArguments("not json")) != 0 {
+		t.Fatal("非法参数 JSON 应退化为空表而不是报错")
+	}
+
+	// 环节3：流式分片里的工具调用按 index 归并（名称与参数可能跨多个分片）。
+	index0, index1 := 0, 1
+	mergedCalls, err := mergeToolCallChunks([]schema.ToolCall{
+		{Index: &index0, ID: "call_1", Type: "function", Function: schema.FunctionCall{Name: "chapter_check"}},
+		{Index: &index1, ID: "call_2", Type: "function", Function: schema.FunctionCall{Name: "deai_scan"}},
+		{Index: &index0, Function: schema.FunctionCall{Arguments: `{"content_text":`}},
+		{Index: &index0, Function: schema.FunctionCall{Arguments: `"正文"}`}},
+	})
+	if err != nil || len(mergedCalls) != 2 {
+		t.Fatalf("工具调用归并失败: %v, err=%v", mergedCalls, err)
+	}
+	if mergedCalls[0].Function.Name != "chapter_check" || mergedCalls[0].Function.Arguments != `{"content_text":"正文"}` {
+		t.Fatalf("首个调用应完整合并: %+v", mergedCalls[0])
+	}
+	if mergedCalls[1].Function.Name != "deai_scan" || mergedCalls[1].Function.Arguments != "" {
+		t.Fatalf("第二个调用不应串到第一个的参数: %+v", mergedCalls[1])
+	}
+}
+
+// TestHistoryCompactChain 覆盖历史压缩链路：门槛判定 → 折叠规则 → 预算裁剪 → 与既有摘要拼接。
+// 压缩必须完全本地完成（不调用模型），且同一输入必然得到同一输出。
+func TestHistoryCompactChain(t *testing.T) {
+	// 环节1：短历史不压缩。总字符未过门槛时原样返回，避免小题大做丢细节。
+	shortList := []ai.CompactMessage{
+		{RoleCode: "user", ContentText: "短问题"},
+		{RoleCode: "assistant", ContentText: "短回答"},
+	}
+	shortResult := ai.CompactHistory(shortList, ai.DefaultCompactConfig())
+	if shortResult.Compacted || len(shortResult.KeptList) != 2 || shortResult.DigestText != "" {
+		t.Fatalf("短历史不应压缩: %+v", shortResult)
+	}
+
+	// 环节2：长历史折叠。最近 KeepRecentCount 条保留原文，更早的折成「角色: 内容」单行。
+	longText := strings.Repeat("这是一段足够长的历史正文。", 100)
+	longList := make([]ai.CompactMessage, 0, 14)
+	for i := range 12 {
+		roleCode := "user"
+		if i%2 == 1 {
+			roleCode = "assistant"
 		}
-		if testCase.wantCodes > 0 && codeList[0] != testCase.wantFirstOf {
-			t.Fatalf("%s: 首个编码 = %q, want %q", testCase.caseName, codeList[0], testCase.wantFirstOf)
-		}
+		longList = append(longList, ai.CompactMessage{RoleCode: roleCode, ContentText: longText})
+	}
+	longResult := ai.CompactHistory(longList, ai.CompactConfig{
+		KeepRecentCount: 4, PerMessageRunes: 20, BudgetChars: 4000, MinTotalChars: 100,
+	})
+	if !longResult.Compacted {
+		t.Fatal("长历史必须压缩")
+	}
+	if len(longResult.KeptList) != 4 {
+		t.Fatalf("应保留最近 4 条，实际 %d", len(longResult.KeptList))
+	}
+	if !strings.Contains(longResult.DigestText, "用户: ") || !strings.Contains(longResult.DigestText, "AI: ") {
+		t.Fatalf("摘要应带角色标签: %q", longResult.DigestText)
+	}
+	if strings.Count(longResult.DigestText, "\n") < 4 {
+		t.Fatalf("每条折叠消息应占一行: %q", longResult.DigestText)
 	}
 
-	// 环节2：编码合并。请求体显式编码在前、内联编码在后，去重保序并截断到上限。
-	merged := mergeToolCodes([]string{"chapter_check", "chapter_check"}, []string{"deai_scan", "chapter_check"})
-	if len(merged) != 2 || merged[0] != "chapter_check" || merged[1] != "deai_scan" {
-		t.Fatalf("合并结果错误: %v", merged)
+	// 环节3：预算裁剪。摘要超预算时从最旧一条开始丢弃，保留离当前更近的历史。
+	tightResult := ai.CompactHistory(longList, ai.CompactConfig{
+		KeepRecentCount: 4, PerMessageRunes: 60, BudgetChars: 120, MinTotalChars: 100,
+	})
+	if tightResult.DroppedCount == 0 {
+		t.Fatalf("预算 120 字符下必然丢弃旧摘要: %+v", tightResult)
 	}
-	if overflow := mergeToolCodes([]string{"a", "b", "c", "d"}, nil); len(overflow) != toolExplicitLimit {
-		t.Fatalf("超出上限未截断: %v", overflow)
-	}
-
-	// 环节3：显式选取。编码不存在或已停用记入 missing，不能静默跳过。
-	fixtures := []domain.ToolDO{
-		toolDO("chapter_check", true, "体检,检查这章"),
-		toolDO("deai_scan", true, "去ai味"),
-		toolDO("lore_lookup", false, "设定"),
-	}
-	voList, missingList := selectToolsByCode(fixtures, []string{"chapter_check", "lore_lookup", "not_exist"})
-	if len(voList) != 1 || voList[0].ToolCode != "chapter_check" || len(missingList) != 2 {
-		t.Fatalf("显式选取错误: %+v, missing=%v", voList, missingList)
+	if tightResult.FoldedCount+tightResult.DroppedCount != len(longList)-4 {
+		t.Fatalf("折叠数+丢弃数应等于被折叠总数: %+v", tightResult)
 	}
 
-	// 环节4：关键词补位。已显式选中的不重复补，停用的不参与，补到余量为止。
-	excludeSet := map[string]bool{"chapter_check": true}
-	autoList := matchToolsByKeyword(fixtures, "这章有没有去ai味", excludeSet, 2)
-	if len(autoList) != 1 || autoList[0].ToolCode != "deai_scan" {
-		t.Fatalf("关键词补位错误: %+v", autoList)
+	// 环节4：确定性。同一输入两次压缩结果必须逐字节相同（否则缓存与落库会漂移）。
+	if again := ai.CompactHistory(longList, ai.DefaultCompactConfig()); again.DigestText !=
+		ai.CompactHistory(longList, ai.DefaultCompactConfig()).DigestText {
+		t.Fatal("压缩结果必须确定")
 	}
-	if got := matchToolsByKeyword(fixtures, "设定是什么", excludeSet, 2); len(got) != 0 {
-		t.Fatalf("停用工具不应自动触发: %+v", got)
+
+	// 环节5：与既有摘要拼接。会话已有压缩点时新摘要接在其后，不覆盖旧结论。
+	joined := ai.JoinDigest("【历史摘要（本地压缩）】\n用户: 早期结论", "用户: 本轮新增")
+	if !strings.Contains(joined, "早期结论") || !strings.HasSuffix(joined, "本轮新增") {
+		t.Fatalf("拼接顺序错误: %q", joined)
 	}
-	if got := matchToolsByKeyword(fixtures, "这章有没有去ai味", excludeSet, 0); len(got) != 0 {
-		t.Fatalf("余量为 0 时不应补位: %+v", got)
+	if ai.JoinDigest("", "只有新的") != "只有新的" || ai.JoinDigest("只有旧的", "") != "只有旧的" {
+		t.Fatal("空串应自动忽略")
 	}
 }
 
@@ -401,7 +456,7 @@ func TestSlashNamespaceChain(t *testing.T) {
 	}
 
 	// 环节2：保留编码能被识别（大小写敏感，/Help 不是动作）。
-	for _, actionCode := range []string{"help", "clear", "history", "new", "attach", "copy", "check", "focus", "snapshot"} {
+	for _, actionCode := range []string{"help", "clear", "history", "new", "attach", "copy", "check", "focus", "snapshot", "compact"} {
 		if !domain.IsReservedActionCode(actionCode) {
 			t.Fatalf("动作编码 %s 未登记", actionCode)
 		}

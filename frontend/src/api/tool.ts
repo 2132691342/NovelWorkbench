@@ -17,7 +17,6 @@ export interface NWToolVo {
   tool_name: string
   tool_type_code: string
   description_text: string
-  trigger_keywords: string
   param_list: NWToolParamVo[]
   enabled_flag: boolean
   builtin_flag: boolean
@@ -33,7 +32,6 @@ export interface NWToolSaveReqVo {
   tool_code: string
   tool_name: string
   description_text?: string
-  trigger_keywords?: string
   param_list?: NWToolParamVo[]
   enabled_flag?: boolean
   sort_order?: number

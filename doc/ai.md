@@ -17,7 +17,6 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 
 | 不做 | 原因 |
 | --- | --- |
-| 多轮 Agent 循环 / 工具调用 | `ChatService.Send` 每次请求只发起一次模型调用，无工具注册与调度 |
 | 向量化检索 | 无 embedding 服务；检索完全基于词法通道与结构化数据 |
 | AI 产出自动写入正文 | AI 结果只落 `chat_messages`，插入章节由前端显式触发 |
 
@@ -129,8 +128,7 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | 优先级 | 常量 | BlockKey | 内容来源 |
 | --- | --- | --- | --- |
 | 100 | `PriorityCurrentChapter` | `current_chapter` | 当前编辑章节正文 |
-| 90 | `PriorityExplicitRef` | `ref_chapter` / `ref_doc` / `ref_summary` / `ref_prompt` | @引用章节 / @引用文档全文 / @引用章节摘要 / @引用提示词 |
-| 85 | `PriorityToolResult` | `tool_result` | 本轮工具执行结果 |
+| 90 | `PriorityExplicitRef` | `ref_chapter` / `ref_doc` / `ref_summary` / `ref_character` / `ref_lore` / `ref_session` | @引用章节 / 文档全文 / 章节摘要 / 角色卡 / 设定条目 / 历史会话摘要 |
 | 70 | `PriorityRAG` | `rag` | 知识库召回切片 |
 | 60 | `PriorityChapterSummary` | `chapter_summary` | 相邻章节梗概 |
 | 50 | `PriorityCharacter` | `character` / `lore` | 角色卡 / 设定条目（`note` 排除） |
@@ -186,13 +184,28 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 因此 `{{context}}` 的内容会同时出现在指令提示词与独立上下文消息中，属于有意设计：
 指令提示词需要就近上下文，独立消息保证装配顺序与丢弃统计仍可解释。
 
-### 3.6 历史选取
+### 3.6 历史选取与本地压缩
 
-`selectHistoryMessages(messages, refMessageULIDs, n)`：
+`selectHistoryMessages(messages, n)`：取最近 `n` 条（旧→新），`n <= 0` 不注入常规历史。
+`n` 的解析（`resolveHistoryLimit`）：请求 `history_count` > 应用配置 `chat_history_count`（默认 5）> 全局配置 `ai.history_count`。
 
-- 主干为最近 `n` 条（旧→新），`n <= 0` 不注入常规历史。
-- 显式引用的消息不受 `n` 限制，去重后按时间旧→新追加尾部。
-- `n` 的解析（`resolveHistoryLimit`）：请求 `history_count` > 应用配置 `chat_history_count`（默认 5）> 全局配置 `ai.history_count`。
+历史不原样全量塞进去，`ai.CompactHistory` 会在超过门槛时做**本地压缩**——不调用模型，单趟 O(n)：
+
+| 参数 | 默认 | 含义 |
+| --- | --- | --- |
+| `MinTotalChars` | 6000 | 总字符低于此值不压缩（短会话压了反而丢细节） |
+| `KeepRecentCount` | 8 | 最近 8 条保留原文 |
+| `PerMessageRunes` | 60 | 更早的消息每条折成一行，保留 60 字 |
+| `BudgetChars` | 3000 | 摘要总预算，超出从最旧一条开始丢弃 |
+| `FoldAll` | false | `@会话` 引用时全量折叠，忽略 `KeepRecentCount` |
+
+折叠格式：`【历史摘要（本地压缩）】` + 每条 `{用户|AI|系统}: {首段前 60 字}`。
+摘要进入消息序列是一条 `system` 消息，位置在上下文之后、指令提示词之前——
+它描述「已经发生过什么」的事实，指令描述「这次要做什么」的约束。
+
+会话级持久压缩点（`/compact` → `POST /chat/session/compact`）把摘要写进 `chat_sessions.summary_text`，
+下次注入时 `ai.JoinDigest` 把它拼在实时压缩结果之前，旧结论不会被新一轮压掉。
+同一输入必然得到同一输出（确定性），因此可用于缓存与落库。
 
 ## 4. 消息序列
 
@@ -202,8 +215,9 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | --- | --- | --- |
 | 1 | `system` | `ai.ComposeSystemPrompt(systemPromptText, styleText)`：身份提示词 + 项目文风约束 |
 | 2 | `system` | `【上下文】\n{contextText}`，为空时整条省略 |
-| 3 | `system` | 指令提示词渲染结果，为空时整条省略 |
-| 4… | 按历史顺序 | 逐条历史，`chatRoleOf` 映射角色 |
+| 3 | `system` | 历史压缩摘要，为空时整条省略 |
+| 4 | `system` | 指令提示词渲染结果，为空时整条省略 |
+| 5… | 按历史顺序 | 逐条历史，`chatRoleOf` 映射角色 |
 | 末 | `user` | 用户输入（去命令后的正文） |
 
 关键约束：**注入内容一律是系统级消息，用户输入一律是用户级消息**。这让"约束"与"要求"在模型侧与界面侧都可区分，
@@ -211,6 +225,23 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 `chatRoleOf`：`assistant` → `Assistant`；`system` → `System`；其余（含未知值）→ `User`。
 
+### 4.1 工具往返
+
+工具声明随每轮请求下发（`ai.ToolInfos`，function name 即工具编码），模型回 `tool_calls` 时服务端执行并回填：
+
+```
+streamChat 循环（≤ chatToolRoundLimit = 4）
+  ├─ 无 tool_calls → 落库，done.tool_code_list = 本轮全部编码
+  └─ 有 tool_calls → 执行 → assistant(tool_calls) + tool(result) 追加 → 再流一轮
+```
+
+消息序列因此是「系统消息 → 历史 → 用户 → (assistant tool_calls → tool result)* → assistant 正文」。
+工具结果以原生 `tool` 消息回给模型，不再额外塞进上下文块——模型只该看到自己主动要来的事实。
+
+防打转三道机制：单轮内「同工具同参数」去重；相邻两轮调用签名相同即摘掉工具声明；
+轮数上限触发后若仍无正文则发 `error` 事件而不是静默返回空串。
+
+## 5. 提示词
 ## 5. 提示词
 
 ### 5.1 数据模型

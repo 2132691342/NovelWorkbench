@@ -236,6 +236,7 @@ flowchart LR
 | AI 对话 | POST | `/chat/session/create` | `ChatSessionCreateREQ` | `ChatSessionVO` | `ChatAPI.SessionCreate` |
 | AI 对话 | POST | `/chat/session/list` | `ChatSessionListREQ` | `[]ChatSessionVO` | `ChatAPI.SessionList` |
 | AI 对话 | POST | `/chat/session/delete` | `ChatSessionDeleteREQ` | `null` | `ChatAPI.SessionDelete` |
+| AI 对话 | POST | `/chat/session/compact` | `ChatCompactREQ`（`session_ulid`） | `ChatCompactDTO`（`folded_count`、`dropped_count`、`kept_count`、`summary_text`、`compact_at`、`compacted`） | `ChatAPI.SessionCompact` |
 | 创作规划 | POST | `/outline/node/save` | `OutlineNodeREQ` | `OutlineNodeVO` | `OutlineAPI.SaveNode` |
 | 创作规划 | POST | `/outline/node/delete` | `OutlineNodeDeleteREQ` | `null` | `OutlineAPI.DeleteNode` |
 | 创作规划 | POST | `/outline/list` | `OutlineTreeREQ` | `[]OutlineNodeVO` | `OutlineAPI.ListTree` |
@@ -325,7 +326,25 @@ flowchart LR
 `StatsOverviewVO`：`project_count`、`total_word_count`、`today_word_delta`、`ai_word_total`、`trend_list`（近 30 天 `WordStatVO`：`stat_date`、`word_delta`、`ai_word_delta`）。
 
 **AI 对话**
-`ChatSendREQ`：`session_ulid`（空则自动建会话）、`project_ulid`（必填）、`content_text`（必填，≤8000）、`prompt_code`（显式指令提示词，正文首 token 的 `/code` 亦可）、`tool_code_list`（显式工具，正文 `#code` 亦可，上限 3）、`ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_message_ulid_list`、`ref_summary_ulid_list`、`ref_prompt_ulid_list`、`history_count`（0–50，0 用应用配置）、`model_ulid`、`system_prompt_code`（身份提示词编码，空用全局默认）。`ChatHistoryREQ`：`session_ulid`（必填）+ 分页字段；结果按 `created_at` 升序；`ChatSessionCreateREQ`：`project_ulid`、`session_name`（空则取首条消息前 20 字）。`ChatSessionVO`：`session_ulid`、`project_ulid`、`session_name`、`message_count`、`updated_at`；`ChatMessageVO`：`message_ulid`、`session_ulid`、`role_code`（`user` / `assistant` / `system`）、`content_text`、`reasoning_text`、`prompt_code`、`tool_code_list`（本轮执行的工具编码）、`ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_summary_ulid_list`、`ref_prompt_ulid_list`、`ref_message_ulid_list`、`token_used_count`、`created_at`；所选模型未授权给当前账号返回 `ERR_FORBIDDEN`；账号无任何可用模型返回 `ERR_AI_PROVIDER`。
+`ChatSendREQ`：`session_ulid`（空则自动建会话）、`project_ulid`（必填）、`content_text`（必填，≤8000）、`prompt_code`（显式指令提示词，正文首 token 的 `/code` 亦可）、`ref_character_ulid_list`、`ref_lore_ulid_list`、`ref_chapter_ulid_list`、`ref_summary_ulid_list`、`ref_doc_ulid_list`、`ref_session_ulid_list`、`history_count`（0–50，0 应用配置）、`model_ulid`、`system_prompt_code`（身份提示词编码，空用全局默认）。
+
+`ref_*_ulid_list` 只对应 `@` 的两类来源，没有单条消息引用也没有提示词引用：
+
+| 字段 | 来源 | 装配方式 |
+| --- | --- | --- |
+| `ref_character_ulid_list` | 素材库 · 角色 | 显式引用块（优先级 90） |
+| `ref_lore_ulid_list` | 素材库 · 设定 | 显式引用块；`note`（创作笔记）被拒 |
+| `ref_chapter_ulid_list` | 素材库 · 章节 | 首项为当前章（100），其余 90 |
+| `ref_summary_ulid_list` | 素材库 · 章节摘要 | 显式引用块 |
+| `ref_doc_ulid_list` | 素材库 · 文档 | 全文按切片拼接后进块 |
+| `ref_session_ulid_list` | 历史会话 | 整段本地压缩成摘要后进块；当前会话自身被拒 |
+
+工具**不在**请求体里点名：`tool_code_list` 字段已移除，服务端随请求下发启用工具声明，由模型自行决定调用。
+响应 `done` 事件的 `tool_code_list` 是模型本轮**实际调用**的编码，仅供展示与回看。
+
+`ChatHistoryREQ`：`session_ulid`（必填）+ 分页字段；结果按 `created_at` 升序。
+`ChatSessionCreateREQ`：`project_ulid`、`session_name`（空则取首条消息前 20 字）。
+`ChatCompactREQ`：`session_ulid`（必填）；压缩本地完成不调用模型，历史总字符不足 6000 时 `compacted=false`。
 
 **创作规划**
 `OutlineNodeREQ`：`outline_ulid`（空为新建）、`project_ulid`、`parent_outline_ulid`（根节点留空）、`node_type_code`（`volume` / `arc` / `storyBlock` / `chapter`）、`title_text`、`summary_text`、`node_status_code`（`draft` / `planning` / `ready` / `done`）、`sort_order`（0 表示追加到末尾）；`OutlineNodeVO.children` 递归承载子树，按 `sort_order` 升序；`DetailedSceneREQ`：`scene_ulid`、`project_ulid`、`outline_ulid`（必填）、`character_ulid_list`、`location_text`、`conflict_text`、`pace_code`（`slow` / `medium` / `fast` / `climax`）、`estimated_words`、`entry_state_text`、`goal_text`、`key_choice_text`、`outcome_text`、`exit_state_text`、`sort_order`；`DetailedSceneListREQ.outline_ulid` 留空表示项目下全部场景。

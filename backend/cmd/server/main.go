@@ -205,9 +205,9 @@ func main() {
 	}
 	knowledgeService := service.NewKnowledgeService(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
 		settingRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
-	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, knowledgeRepo,
-		continuityRepo, settingRepo, promptService, knowledgeService, toolService, providerService, aiClient, db,
-		service.ChatConfig{HistoryCount: cfg.AI.HistoryCount})
+	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, loreRepo,
+		knowledgeRepo, continuityRepo, settingRepo, promptService, knowledgeService, toolService,
+		providerService, aiClient, db, service.ChatConfig{HistoryCount: cfg.AI.HistoryCount})
 
 	// 内置资产与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
 	if err := toolService.SeedDefaults(ctx); err != nil {

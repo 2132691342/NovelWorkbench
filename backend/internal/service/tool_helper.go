@@ -20,7 +20,6 @@ func toToolVO(do *domain.ToolDO) domain.ToolVO {
 		ToolName:        do.ToolName,
 		ToolTypeCode:    do.ToolTypeCode,
 		DescriptionText: do.DescriptionText,
-		TriggerKeywords: do.TriggerKeywords,
 		ParamList:       unmarshalToolParams(do.ParamSchemaJSON),
 		EnabledFlag:     do.EnabledFlag,
 		BuiltinFlag:     do.BuiltinFlag,
@@ -63,6 +62,19 @@ func toToolParamList(paramList []ai.ToolParam) []domain.ToolParamDO {
 			ParamName: param.ParamName, ParamLabel: param.ParamLabel,
 			RequiredFlag: param.RequiredFlag, DefaultValue: param.DefaultValue,
 			DescriptionText: param.DescriptionText,
+		})
+	}
+	return result
+}
+
+// toAIToolParams 领域参数声明转 ai 工具声明结构（下发给模型用）。
+func toAIToolParams(paramList []domain.ToolParamDO) []ai.ToolParam {
+	result := make([]ai.ToolParam, 0, len(paramList))
+	for i := range paramList {
+		result = append(result, ai.ToolParam{
+			ParamName: paramList[i].ParamName, ParamLabel: paramList[i].ParamLabel,
+			RequiredFlag: paramList[i].RequiredFlag, DefaultValue: paramList[i].DefaultValue,
+			DescriptionText: paramList[i].DescriptionText,
 		})
 	}
 	return result

@@ -193,12 +193,40 @@ func (c *Client) Generate(ctx context.Context, spec ProviderSpec, messages []*sc
 
 // Stream 流式对话（首个分片到达即返回，用量在流结束时由调用方补记）。
 func (c *Client) Stream(ctx context.Context, spec ProviderSpec, messages []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-	startedAt := time.Now()
 	chatModel, err := c.chatModelOf(spec)
 	if err != nil {
-		c.record(spec, CallTypeChat, false, nil, time.Since(startedAt))
 		return nil, err
 	}
+	return c.streamWith(ctx, spec, chatModel, messages)
+}
+
+// StreamWithTools 绑定工具后流式对话。
+// 工具由模型自行决定是否调用，服务端只提供声明；WithTools 返回新实例，
+// 因此这里不写回缓存，避免带工具与不带工具的请求互相污染。
+func (c *Client) StreamWithTools(ctx context.Context, spec ProviderSpec, messages []*schema.Message,
+	infoList []*schema.ToolInfo) (*schema.StreamReader[*schema.Message], error) {
+	if len(infoList) == 0 {
+		return c.Stream(ctx, spec, messages)
+	}
+	chatModel, err := c.chatModelOf(spec)
+	if err != nil {
+		return nil, err
+	}
+	toolModel, ok := chatModel.(model.ToolCallingChatModel)
+	if !ok {
+		return nil, fmt.Errorf("model does not support tool calling: %s", spec.ProtocolCode)
+	}
+	withTools, err := toolModel.WithTools(infoList)
+	if err != nil {
+		return nil, fmt.Errorf("bind tools: %w", err)
+	}
+	return c.streamWith(ctx, spec, withTools, messages)
+}
+
+// streamWith 执行流式调用并上报首包结果（成功起点与失败次数）。
+func (c *Client) streamWith(ctx context.Context, spec ProviderSpec, chatModel model.BaseChatModel,
+	messages []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	startedAt := time.Now()
 	stream, err := chatModel.Stream(ctx, messages)
 	if err != nil {
 		c.record(spec, CallTypeChat, false, nil, time.Since(startedAt))

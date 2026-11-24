@@ -17,7 +17,6 @@ type ToolDO struct {
 	ToolName        string `json:"tool_name" gorm:"column:tool_name;size:64"`                   // 工具名称
 	ToolTypeCode    string `json:"tool_type_code" gorm:"column:tool_type_code;size:16;index"`   // 类型：builtin
 	DescriptionText string `json:"description_text" gorm:"column:description_text;size:256"`    // 一句话说明（模型可见）
-	TriggerKeywords string `json:"trigger_keywords" gorm:"column:trigger_keywords;size:256"`    // 自动触发关键词（逗号分隔）
 	ParamSchemaJSON string `json:"param_schema_json" gorm:"column:param_schema_json;type:text"` // 参数声明 JSON 数组
 	EnabledFlag     bool   `json:"enabled_flag" gorm:"column:enabled_flag;default:true"`        // 是否启用
 	BuiltinFlag     bool   `json:"builtin_flag" gorm:"column:builtin_flag;default:false"`       // 是否内置（内置不可删）
@@ -44,7 +43,6 @@ type ToolREQ struct {
 	ToolCode        string        `json:"tool_code" binding:"required,min=2,max=32"`     // 工具编码
 	ToolName        string        `json:"tool_name" binding:"required,max=64"`           // 工具名称
 	DescriptionText string        `json:"description_text" binding:"omitempty,max=256"`  // 说明
-	TriggerKeywords string        `json:"trigger_keywords" binding:"omitempty,max=256"`  // 触发关键词
 	ParamList       []ToolParamDO `json:"param_list"`                                    // 参数声明
 	EnabledFlag     *bool         `json:"enabled_flag"`                                  // 是否启用（nil 保持）
 	SortOrder       int           `json:"sort_order" binding:"omitempty,min=0,max=9999"` // 排序号
@@ -68,7 +66,6 @@ type ToolVO struct {
 	ToolName        string        `json:"tool_name"`        // 工具名称
 	ToolTypeCode    string        `json:"tool_type_code"`   // 类型
 	DescriptionText string        `json:"description_text"` // 说明
-	TriggerKeywords string        `json:"trigger_keywords"` // 触发关键词
 	ParamList       []ToolParamDO `json:"param_list"`       // 参数声明
 	EnabledFlag     bool          `json:"enabled_flag"`     // 是否启用
 	BuiltinFlag     bool          `json:"builtin_flag"`     // 是否内置

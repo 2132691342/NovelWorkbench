@@ -9,6 +9,8 @@ type ChatSessionDO struct {
 	ProjectULID string `json:"project_ulid" gorm:"column:project_ulid;size:40;index"`      // 所属项目
 	UserULID    string `json:"user_ulid" gorm:"column:user_ulid;size:40;index"`            // 所属用户
 	SessionName string `json:"session_name" gorm:"size:128"`                               // 会话名（默认取首条消息摘要）
+	SummaryText string `json:"summary_text" gorm:"column:summary_text;type:text"`          // 已压缩历史摘要（/compact 写入，注入时拼在历史之前）
+	CompactAt   string `json:"compact_at" gorm:"column:compact_at;size:32"`                // 最近一次压缩时间（RFC3339，未压缩为空）
 }
 
 // TableName 指定表名。
@@ -24,32 +26,34 @@ type ChatMessageDO struct {
 	ReasoningText  string `json:"reasoning_text" gorm:"type:text"`                            // 思考过程（推理模型返回，可为空）
 	PromptCode     string `json:"prompt_code" gorm:"column:prompt_code;size:32"`              // 命中的斜杠命令提示词编码（空为自由对话）
 	ToolCodeJSON   string `json:"tool_code_json" gorm:"type:text"`                            // 本轮执行的工具编码列表（JSON 数组）
-	RefDocJSON     string `json:"ref_doc_json" gorm:"type:text"`                              // @引用文档 ULID 列表（JSON 数组）
-	RefChapterJSON string `json:"ref_chapter_json" gorm:"type:text"`                          // @引用章节 ULID 列表（JSON 数组）
-	RefMessageJSON string `json:"ref_message_json" gorm:"type:text"`                          // 显式引用的历史消息 ULID 列表（JSON 数组）
-	RefSummaryJSON string `json:"ref_summary_json" gorm:"type:text"`                          // @引用章节摘要 ULID 列表（JSON 数组）
-	RefPromptJSON  string `json:"ref_prompt_json" gorm:"type:text"`                           // @引用提示词 ULID 列表（JSON 数组）
-	TokenUsedCount int    `json:"token_used_count"`                                           // 本条消耗的估算 token
+	RefDocJSON       string `json:"ref_doc_json" gorm:"type:text"`        // @文档 ULID 列表（JSON 数组）
+	RefChapterJSON   string `json:"ref_chapter_json" gorm:"type:text"`    // @章节 ULID 列表（JSON 数组）
+	RefSummaryJSON   string `json:"ref_summary_json" gorm:"type:text"`    // @章节摘要 ULID 列表（JSON 数组）
+	RefCharacterJSON string `json:"ref_character_json" gorm:"type:text"`  // @角色卡 ULID 列表（JSON 数组）
+	RefLoreJSON      string `json:"ref_lore_json" gorm:"type:text"`       // @设定条目 ULID 列表（JSON 数组）
+	RefSessionJSON   string `json:"ref_session_json" gorm:"type:text"`    // @历史会话 ULID 列表（JSON 数组，注入时压缩）
+	TokenUsedCount   int    `json:"token_used_count"`                     // 本条消耗的估算 token
 }
 
 // TableName 指定表名。
 func (ChatMessageDO) TableName() string { return "chat_messages" }
 
 // ChatSendREQ 发送聊天消息请求（POST，流式以 SSE 响应）。
+// @ 引用两类来源：素材库（角色/设定/文档/章节/摘要）与历史会话（整段压缩后注入）。
 type ChatSendREQ struct {
-	SessionULID        string   `json:"session_ulid" binding:"omitempty"`               // 会话 ULID，空则自动创建
-	ProjectULID        string   `json:"project_ulid" binding:"required"`                // 所属项目
-	ContentText        string   `json:"content_text" binding:"required,max=8000"`       // 消息正文
-	PromptCode         string   `json:"prompt_code" binding:"omitempty,max=32"`         // 提示词编码（对话中以 /code 触发）
-	ToolCodeList       []string `json:"tool_code_list"`                                 // 显式指定工具（正文 #code 亦可用）
-	RefDocULIDList     []string `json:"ref_doc_ulid_list"`                              // @引用文档
-	RefChapterULIDList []string `json:"ref_chapter_ulid_list"`                          // @引用章节
-	RefMessageULIDList []string `json:"ref_message_ulid_list"`                          // 显式引用的历史消息
-	RefSummaryULIDList []string `json:"ref_summary_ulid_list"`                          // @引用章节摘要
-	RefPromptULIDList  []string `json:"ref_prompt_ulid_list"`                           // @引用提示词
-	HistoryCount       int      `json:"history_count" binding:"omitempty,min=0,max=50"` // 历史消息注入条数，0 用全局配置
-	ModelULID          string   `json:"model_ulid" binding:"omitempty,max=40"`          // 指定模型，空用默认
-	SystemPromptCode   string   `json:"system_prompt_code" binding:"omitempty,max=32"`  // 指定身份提示词编码，空用默认全局身份提示词
+	SessionULID           string   `json:"session_ulid" binding:"omitempty"`               // 会话 ULID，空则自动创建
+	ProjectULID           string   `json:"project_ulid" binding:"required"`                // 所属项目
+	ContentText           string   `json:"content_text" binding:"required,max=8000"`       // 消息正文
+	PromptCode            string   `json:"prompt_code" binding:"omitempty,max=32"`         // 提示词编码（对话中以 /code 触发）
+	RefDocULIDList        []string `json:"ref_doc_ulid_list"`                              // @文档
+	RefChapterULIDList    []string `json:"ref_chapter_ulid_list"`                          // @章节
+	RefSummaryULIDList    []string `json:"ref_summary_ulid_list"`                          // @章节摘要
+	RefCharacterULIDList  []string `json:"ref_character_ulid_list"`                        // @角色卡
+	RefLoreULIDList       []string `json:"ref_lore_ulid_list"`                             // @设定条目
+	RefSessionULIDList    []string `json:"ref_session_ulid_list"`                          // @历史会话（注入时本地压缩）
+	HistoryCount          int      `json:"history_count" binding:"omitempty,min=0,max=50"` // 历史消息注入条数，0 用全局配置
+	ModelULID             string   `json:"model_ulid" binding:"omitempty,max=40"`          // 指定模型，空用默认
+	SystemPromptCode      string   `json:"system_prompt_code" binding:"omitempty,max=32"`  // 指定身份提示词编码，空用默认全局身份提示词
 }
 
 // ChatHistoryREQ 拉取会话历史。
@@ -65,24 +69,43 @@ type ChatSessionVO struct {
 	SessionName  string `json:"session_name"`  // 会话名
 	MessageCount int    `json:"message_count"` // 消息条数
 	UpdatedAt    string `json:"updated_at"`    // 最后活跃时间（RFC3339）
+	SummaryText  string `json:"summary_text"`  // 已压缩历史摘要（未压缩为空）
+	CompactAt    string `json:"compact_at"`    // 最近一次压缩时间（RFC3339，未压缩为空）
+}
+
+// ChatCompactREQ 压缩会话历史请求（POST /chat/session/compact）。
+type ChatCompactREQ struct {
+	SessionULID string `json:"session_ulid" binding:"required,max=40"` // 会话 ULID
+}
+
+// ChatCompactDTO 压缩结果（前端据此展示折叠了多少条、摘要多长）。
+type ChatCompactDTO struct {
+	SessionULID  string `json:"session_ulid"`  // 会话 ULID
+	FoldedCount  int    `json:"folded_count"`  // 被折叠进摘要的消息条数
+	DroppedCount int    `json:"dropped_count"` // 因摘要预算丢弃的折叠条数
+	KeptCount    int    `json:"kept_count"`    // 原样保留的消息条数
+	SummaryText  string `json:"summary_text"`  // 压缩后的完整摘要
+	CompactAt    string `json:"compact_at"`    // 压缩时间（RFC3339）
+	Compacted    bool   `json:"compacted"`     // 是否实际发生压缩（历史太短时 false）
 }
 
 // ChatMessageVO 消息视图对象。
 type ChatMessageVO struct {
-	MessageULID        string   `json:"message_ulid"`          // 消息 ULID
-	SessionULID        string   `json:"session_ulid"`          // 所属会话
-	RoleCode           string   `json:"role_code"`             // 角色
-	ContentText        string   `json:"content_text"`          // 正文
-	ReasoningText      string   `json:"reasoning_text"`        // 思考过程（推理模型返回，可为空）
-	PromptCode         string   `json:"prompt_code"`           // 命中斜杠命令提示词
-	ToolCodeList       []string `json:"tool_code_list"`        // 本轮执行的工具编码
-	RefDocULIDList     []string `json:"ref_doc_ulid_list"`     // 引用文档
-	RefChapterULIDList []string `json:"ref_chapter_ulid_list"` // 引用章节
-	RefMessageULIDList []string `json:"ref_message_ulid_list"` // 引用历史消息
-	RefSummaryULIDList []string `json:"ref_summary_ulid_list"` // 引用章节摘要
-	RefPromptULIDList  []string `json:"ref_prompt_ulid_list"`  // 引用提示词档案
-	TokenUsedCount     int      `json:"token_used_count"`      // 估算 token
-	CreatedAt          string   `json:"created_at"`            // 发送时间（RFC3339）
+	MessageULID          string   `json:"message_ulid"`            // 消息 ULID
+	SessionULID          string   `json:"session_ulid"`            // 所属会话
+	RoleCode             string   `json:"role_code"`               // 角色
+	ContentText          string   `json:"content_text"`            // 正文
+	ReasoningText        string   `json:"reasoning_text"`          // 思考过程（推理模型返回，可为空）
+	PromptCode           string   `json:"prompt_code"`             // 命中斜杠命令提示词
+	ToolCodeList         []string `json:"tool_code_list"`          // 本轮执行的工具编码
+	RefDocULIDList       []string `json:"ref_doc_ulid_list"`       // @文档
+	RefChapterULIDList   []string `json:"ref_chapter_ulid_list"`   // @章节
+	RefSummaryULIDList   []string `json:"ref_summary_ulid_list"`   // @章节摘要
+	RefCharacterULIDList []string `json:"ref_character_ulid_list"` // @角色卡
+	RefLoreULIDList      []string `json:"ref_lore_ulid_list"`      // @设定条目
+	RefSessionULIDList   []string `json:"ref_session_ulid_list"`   // @历史会话
+	TokenUsedCount       int      `json:"token_used_count"`        // 估算 token
+	CreatedAt            string   `json:"created_at"`              // 发送时间（RFC3339）
 }
 
 // ChatStreamEventDTO SSE 流式事件（EventType 取值见常量）。

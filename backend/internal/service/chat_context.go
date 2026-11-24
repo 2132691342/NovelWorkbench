@@ -29,9 +29,20 @@ const loreTypeCodeNote = "note"
 
 // chapterSource 章节上下文来源。
 type chapterSource struct {
+	ChapterULID string // 章节 ULID（模型调工具未给章节时补齐用）
 	ChapterName string // 章节名
 	ContentText string // 章节正文
 	IsCurrent   bool   // 是否当前章（当前章优先级 90，引用章 80）
+}
+
+// currentChapterULIDOf 取当前章 ULID（无当前章返回空，工具据此退回用正文）。
+func currentChapterULIDOf(input chatContextInput) string {
+	for i := range input.ChapterList {
+		if input.ChapterList[i].IsCurrent {
+			return input.ChapterList[i].ChapterULID
+		}
+	}
+	return ""
 }
 
 // docSource @引用文档上下文来源。
@@ -42,22 +53,29 @@ type docSource struct {
 
 // chatContextInput 上下文装配输入（纯数据，供 buildContextBlocks 消费，便于测试注入）。
 type chatContextInput struct {
-	UserInput      string                    // 解析后的用户正文（提示词占位符用）
-	ChapterList    []chapterSource           // 当前章与引用章（首项为当前章）
-	DocList        []docSource               // @引用文档
-	RagList        []domain.KnowledgeChunkVO // 知识库召回切片
-	RefSummaryList []string                  // @显式引用的章节摘要正文
-	RefPromptList  []string                  // @显式引用的提示词正文
-	SummaryList    []string                  // 当前章前后章梗概
-	CharacterList  []domain.CharacterDO      // 项目角色卡
-	LoreList       []domain.LoreDO           // 项目设定条目（note 类型禁止注入）
-	ToolResultList []string                  // 工具执行结果（按工具顺序注入）
+	UserInput        string                    // 解析后的用户正文（提示词占位符用）
+	ChapterList      []chapterSource           // 当前章与引用章（首项为当前章）
+	DocList          []docSource               // @文档
+	RagList          []domain.KnowledgeChunkVO // 知识库召回切片
+	RefSummaryList   []string                  // @章节摘要正文
+	RefCharacterList []domain.CharacterDO      // @角色卡（仅显式引用的那几张）
+	RefLoreList      []domain.LoreDO           // @设定条目（仅显式引用的那几条）
+	RefSessionList   []sessionSource           // @历史会话（已本地压缩的摘要文本）
+	SummaryList      []string                  // 当前章前后章梗概
+	CharacterList    []domain.CharacterDO      // 项目角色卡（全量，低优先级）
+	LoreList         []domain.LoreDO           // 项目设定条目（全量，低优先级；note 类型禁止注入）
+}
+
+// sessionSource @历史会话上下文来源。
+type sessionSource struct {
+	SessionName string // 会话名
+	ContentText string // 压缩后的会话摘要
 }
 
 // buildContextBlocks 组装上下文块（纯函数）。
-// 块顺序即同优先级稳定顺序：章节 → 文档 → 摘要 → 提示词 → 召回 → 梗概 → 角色 → 设定 → 工具结果。
+// 块顺序即同优先级稳定顺序：章节 → 文档 → 摘要 → 角色 → 设定 → 历史会话 → 召回 → 梗概 → 全量角色 → 全量设定。
 func buildContextBlocks(input chatContextInput) []ai.ContextBlock {
-	blocks := make([]ai.ContextBlock, 0, len(input.ChapterList)+len(input.DocList)+6)
+	blocks := make([]ai.ContextBlock, 0, len(input.ChapterList)+len(input.DocList)+8)
 	for i := range input.ChapterList {
 		chapter := &input.ChapterList[i]
 		if strings.TrimSpace(chapter.ContentText) == "" {
@@ -90,11 +108,32 @@ func buildContextBlocks(input chatContextInput) []ai.ContextBlock {
 			ContentText: "【引用章节摘要】\n" + strings.Join(input.RefSummaryList, "\n"),
 		})
 	}
-	if len(input.RefPromptList) > 0 {
+	if len(input.RefCharacterList) > 0 {
 		blocks = append(blocks, ai.ContextBlock{
-			BlockKey:    "ref_prompt",
+			BlockKey:    "ref_character",
 			Priority:    ai.PriorityExplicitRef,
-			ContentText: "【引用提示词】\n" + strings.Join(input.RefPromptList, "\n\n"),
+			ContentText: formatCharacterBlock(input.RefCharacterList),
+		})
+	}
+	if loreText := formatLoreBlock(input.RefLoreList); loreText != "" {
+		blocks = append(blocks, ai.ContextBlock{
+			BlockKey:    "ref_lore",
+			Priority:    ai.PriorityExplicitRef,
+			ContentText: loreText,
+		})
+	}
+	// 历史会话整段压缩后注入：作者 @ 的是「那次聊过什么」，不需要逐条原文
+	if len(input.RefSessionList) > 0 {
+		var builder strings.Builder
+		builder.WriteString("【引用历史会话】")
+		for i := range input.RefSessionList {
+			builder.WriteString("\n《" + input.RefSessionList[i].SessionName + "》\n")
+			builder.WriteString(input.RefSessionList[i].ContentText)
+		}
+		blocks = append(blocks, ai.ContextBlock{
+			BlockKey:    "ref_session",
+			Priority:    ai.PriorityExplicitRef,
+			ContentText: builder.String(),
 		})
 	}
 	if len(input.RagList) > 0 {
@@ -123,13 +162,7 @@ func buildContextBlocks(input chatContextInput) []ai.ContextBlock {
 		blocks = append(blocks, ai.ContextBlock{BlockKey: "lore", Priority: ai.PriorityCharacter, ContentText: loreText})
 	}
 	// 历史不注入上下文块：它以原生 role 消息追加到消息序列，两处同时注入会让模型看到两份对话。
-	if len(input.ToolResultList) > 0 {
-		blocks = append(blocks, ai.ContextBlock{
-			BlockKey:    "tool_result",
-			Priority:    ai.PriorityToolResult,
-			ContentText: "【工具结果】\n" + strings.Join(input.ToolResultList, "\n\n"),
-		})
-	}
+	// 工具结果同样不在这里：模型主动调用的工具结果以 tool 消息回到模型，作者显式 #code 的结果并入指令消息。
 	return blocks
 }
 
@@ -179,33 +212,47 @@ func formatLoreBlock(lores []domain.LoreDO) string {
 	return builder.String()
 }
 
-// selectHistoryMessages 选取注入历史（纯函数）：取最近 n 条为主干（旧→新，n<=0 不注入常规历史），
-// 显式引用消息必注入（不受 n 限制，去重后按时间旧→新追加到尾部）。
-func selectHistoryMessages(messages []domain.ChatMessageDO, refMessageULIDs []string, n int) []domain.ChatMessageDO {
+// selectHistory 选取注入历史并做本地压缩（不调用模型，O(n) 单趟）。
+// 规则：请求条数与配置给出取用上限 → 超出上限的旧消息折叠为摘要 → 会话已有持久摘要时与新摘要拼接。
+// 返回（原样保留的最近消息，历史摘要文本）。压缩阈值内不做任何改写，短会话不受影响。
+func (s *ChatService) selectHistory(ctx context.Context, session *domain.ChatSessionDO,
+	messages []domain.ChatMessageDO, reqCount int) ([]domain.ChatMessageDO, string) {
+	selected := selectHistoryMessages(messages, s.resolveHistoryLimit(ctx, reqCount))
+	if len(selected) == 0 {
+		return selected, strings.TrimSpace(session.SummaryText)
+	}
+	compactList := make([]ai.CompactMessage, 0, len(selected))
+	for i := range selected {
+		compactList = append(compactList, ai.CompactMessage{
+			RoleCode:    selected[i].RoleCode,
+			ContentText: selected[i].ContentText,
+		})
+	}
+	result := ai.CompactHistory(compactList, ai.DefaultCompactConfig())
+	keptList := make([]domain.ChatMessageDO, 0, len(result.KeptList))
+	// 压缩只改写正文载荷：其余字段（引用、提示词编码）随原消息保留，前端展示不受影响
+	keptIndex := len(selected) - len(result.KeptList)
+	for i := range result.KeptList {
+		original := selected[keptIndex+i]
+		if original.ContentText != result.KeptList[i].ContentText {
+			original.ContentText = result.KeptList[i].ContentText
+		}
+		keptList = append(keptList, original)
+	}
+	digestText := ai.JoinDigest(session.SummaryText, result.DigestText)
+	return keptList, digestText
+}
+
+// selectHistoryMessages 选取注入历史（纯函数）：取最近 n 条（旧→新，n<=0 不注入常规历史）。
+func selectHistoryMessages(messages []domain.ChatMessageDO, n int) []domain.ChatMessageDO {
+	if n <= 0 {
+		return nil
+	}
 	mainStart := 0
-	switch {
-	case n <= 0:
-		mainStart = len(messages) // 不注入常规历史
-	case len(messages) > n:
+	if len(messages) > n {
 		mainStart = len(messages) - n
 	}
-	selected := make([]domain.ChatMessageDO, 0, len(messages))
-	included := make(map[string]bool, len(messages))
-	for _, message := range messages[mainStart:] {
-		selected = append(selected, message)
-		included[message.MessageULID] = true
-	}
-	refSet := make(map[string]bool, len(refMessageULIDs))
-	for _, ulid := range refMessageULIDs {
-		refSet[ulid] = true
-	}
-	for _, message := range messages {
-		if refSet[message.MessageULID] && !included[message.MessageULID] {
-			selected = append(selected, message)
-			included[message.MessageULID] = true
-		}
-	}
-	return selected
+	return append(make([]domain.ChatMessageDO, 0, len(messages)-mainStart), messages[mainStart:]...)
 }
 
 // chatMessageInput 消息序列装配输入（纯数据，便于单测）。
@@ -213,22 +260,27 @@ type chatMessageInput struct {
 	SystemPromptText string                 // 身份提示词正文（空则用内置兜底）
 	StyleText        string                 // 项目文风约束
 	ContextText      string                 // 装配后的上下文文本（空则省略）
+	DigestText       string                 // 被压缩折叠的历史摘要（空则省略）
 	CommandText      string                 // 命中的指令提示词渲染文本（空则省略）
 	HistoryList      []domain.ChatMessageDO // 注入历史（旧→新）
 	UserText         string                 // 用户输入
 }
 
 // buildChatMessages 构造发往模型的消息序列（纯函数）：
-// 身份提示词（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史（原生角色）→ 用户输入（用户）。
+// 身份提示词（系统）→ 上下文（系统）→ 历史摘要（系统）→ 指令提示词（系统）→ 历史（原生角色）→ 用户输入（用户）。
 // 注入内容全部是系统级消息，用户输入始终是用户级消息，二者在消息列表里可区分。
 func buildChatMessages(input chatMessageInput) []*schema.Message {
-	messages := make([]*schema.Message, 0, len(input.HistoryList)+4)
+	messages := make([]*schema.Message, 0, len(input.HistoryList)+5)
 	messages = append(messages, &schema.Message{
 		Role:    schema.System,
 		Content: ai.ComposeSystemPrompt(input.SystemPromptText, input.StyleText),
 	})
 	if input.ContextText != "" {
 		messages = append(messages, &schema.Message{Role: schema.System, Content: "【上下文】\n" + input.ContextText})
+	}
+	// 历史摘要放在指令提示词之前：它是「之前说过什么」的事实，指令是「这次要做什么」的约束
+	if input.DigestText != "" {
+		messages = append(messages, &schema.Message{Role: schema.System, Content: input.DigestText})
 	}
 	if input.CommandText != "" {
 		messages = append(messages, &schema.Message{Role: schema.System, Content: input.CommandText})
@@ -301,6 +353,7 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 			return input, pkg.NewBizError(domain.RespCodeInvalidParam, "引用章节不存在")
 		}
 		input.ChapterList = append(input.ChapterList, chapterSource{
+			ChapterULID: chapter.ChapterULID,
 			ChapterName: chapter.ChapterName,
 			ContentText: chapter.ContentText,
 			IsCurrent:   i == 0,
@@ -345,17 +398,39 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 			input.RefSummaryList = append(input.RefSummaryList, text)
 		}
 	}
-	for _, promptULID := range req.RefPromptULIDList {
-		prompt, err := s.promptSvc.Detail(ctx, promptULID)
+	for _, characterULID := range req.RefCharacterULIDList {
+		character, err := s.characterRepo.GetByULID(ctx, characterULID)
 		if err != nil {
 			return input, err
 		}
-		if prompt.ScopeCode == domain.PromptScopeProject && prompt.ProjectULID != req.ProjectULID {
-			return input, pkg.NewBizError(domain.RespCodeForbidden, "无权引用该提示词")
+		if character == nil || character.ProjectULID != req.ProjectULID {
+			return input, pkg.NewBizError(domain.RespCodeInvalidParam, "引用角色不存在")
 		}
-		if text := strings.TrimSpace(prompt.PromptText); text != "" {
-			input.RefPromptList = append(input.RefPromptList, "《"+prompt.PromptName+"》\n"+text)
+		input.RefCharacterList = append(input.RefCharacterList, *character)
+	}
+	for _, loreULID := range req.RefLoreULIDList {
+		lore, err := s.loreRepo.GetByULID(ctx, loreULID)
+		if err != nil {
+			return input, err
 		}
+		if lore == nil || lore.ProjectULID != req.ProjectULID {
+			return input, pkg.NewBizError(domain.RespCodeInvalidParam, "引用设定不存在")
+		}
+		// 私人笔记禁止进入 AI 上下文，显式引用也不例外
+		if lore.LoreTypeCode == loreTypeCodeNote {
+			return input, pkg.NewBizError(domain.RespCodeInvalidParam, "创作笔记不能引用给 AI")
+		}
+		input.RefLoreList = append(input.RefLoreList, *lore)
+	}
+	for _, sessionULID := range req.RefSessionULIDList {
+		if sessionULID == req.SessionULID {
+			return input, pkg.NewBizError(domain.RespCodeInvalidParam, "不能引用当前会话自身")
+		}
+		source, err := s.loadSessionDigest(ctx, userULID, sessionULID)
+		if err != nil {
+			return input, err
+		}
+		input.RefSessionList = append(input.RefSessionList, source)
 	}
 	if strings.TrimSpace(userInput) != "" {
 		// TopKCount 留空，由知识库服务按应用配置 rag_top_k 解析
@@ -381,6 +456,39 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 	}
 	input.LoreList = lores
 	return input, nil
+}
+
+// loadSessionDigest 读取被 @ 的历史会话并本地压缩成摘要。
+// 归属校验与当前会话同口径：只能引用自己名下的会话；压缩不调用模型，长会话也只花一次遍历。
+func (s *ChatService) loadSessionDigest(ctx context.Context, userULID, sessionULID string) (sessionSource, error) {
+	session, err := s.mustOwnSession(ctx, userULID, sessionULID)
+	if err != nil {
+		return sessionSource{}, err
+	}
+	messages, err := s.chatRepo.ListMessagesBySession(ctx, session.SessionULID)
+	if err != nil {
+		return sessionSource{}, pkg.WrapBizError(domain.RespCodeStorageError, "引用会话读取失败", err)
+	}
+	compactList := make([]ai.CompactMessage, 0, len(messages))
+	for i := range messages {
+		compactList = append(compactList, ai.CompactMessage{
+			RoleCode:    messages[i].RoleCode,
+			ContentText: messages[i].ContentText,
+		})
+	}
+	// 引用整段会话时全部折叠：作者要的是「那次聊了什么」，不需要逐条原文
+	result := ai.CompactHistory(compactList, ai.CompactConfig{
+		PerMessageRunes: 80, BudgetChars: ai.ContextBudgetChars / 3, MinTotalChars: 1, FoldAll: true,
+	})
+	sessionName := session.SessionName
+	if strings.TrimSpace(sessionName) == "" {
+		sessionName = "未命名会话"
+	}
+	digestText := ai.JoinDigest(session.SummaryText, result.DigestText)
+	if strings.TrimSpace(digestText) == "" {
+		digestText = "（该会话没有可引用的内容）"
+	}
+	return sessionSource{SessionName: sessionName, ContentText: digestText}, nil
 }
 
 // loadNeighborSummaries 取当前章相邻前后章的梗概（按章节排序号相邻，缺位跳过）。
@@ -457,19 +565,20 @@ func decodeStringList(jsonText string) []string {
 // toChatMessageVO 组装消息视图对象（ref_*_json 解码为 ULID 列表）。
 func toChatMessageVO(do *domain.ChatMessageDO) domain.ChatMessageVO {
 	return domain.ChatMessageVO{
-		MessageULID:        do.MessageULID,
-		SessionULID:        do.SessionULID,
-		RoleCode:           do.RoleCode,
-		ContentText:        do.ContentText,
-		ReasoningText:      do.ReasoningText,
-		PromptCode:         do.PromptCode,
-		ToolCodeList:       decodeStringList(do.ToolCodeJSON),
-		RefDocULIDList:     decodeStringList(do.RefDocJSON),
-		RefChapterULIDList: decodeStringList(do.RefChapterJSON),
-		RefMessageULIDList: decodeStringList(do.RefMessageJSON),
-		RefSummaryULIDList: decodeStringList(do.RefSummaryJSON),
-		RefPromptULIDList:  decodeStringList(do.RefPromptJSON),
-		TokenUsedCount:     do.TokenUsedCount,
-		CreatedAt:          pkg.FormatTime(do.CreatedAt),
+		MessageULID:          do.MessageULID,
+		SessionULID:          do.SessionULID,
+		RoleCode:             do.RoleCode,
+		ContentText:          do.ContentText,
+		ReasoningText:        do.ReasoningText,
+		PromptCode:           do.PromptCode,
+		ToolCodeList:         decodeStringList(do.ToolCodeJSON),
+		RefDocULIDList:       decodeStringList(do.RefDocJSON),
+		RefChapterULIDList:   decodeStringList(do.RefChapterJSON),
+		RefSummaryULIDList:   decodeStringList(do.RefSummaryJSON),
+		RefCharacterULIDList: decodeStringList(do.RefCharacterJSON),
+		RefLoreULIDList:      decodeStringList(do.RefLoreJSON),
+		RefSessionULIDList:   decodeStringList(do.RefSessionJSON),
+		TokenUsedCount:       do.TokenUsedCount,
+		CreatedAt:            pkg.FormatTime(do.CreatedAt),
 	}
 }

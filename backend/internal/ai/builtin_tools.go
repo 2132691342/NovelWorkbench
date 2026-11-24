@@ -16,7 +16,6 @@ type BuiltinTool struct {
 	ToolCode        string // 工具编码（对话中以 #code 触发）
 	ToolName        string // 工具名称
 	DescriptionText string // 一句话说明（模型与用户可见）
-	TriggerKeywords string // 自动触发关键词（逗号分隔，命中即运行）
 	ParamList       []ToolParam
 	SortOrder       int // 排序号
 }
@@ -36,7 +35,6 @@ var builtinToolList = []BuiltinTool{
 		ToolCode:        "chapter_check",
 		ToolName:        "章节体检",
 		DescriptionText: "按量化门禁检查正文：字数、破折号、零容忍词、情绪命名、对话标签与章末钩子，输出问题清单与结论",
-		TriggerKeywords: "体检,检查这章,能不能发,过稿,审一下,查一下这章",
 		SortOrder:       10,
 		ParamList: []ToolParam{
 			{ParamName: "content_text", ParamLabel: "正文", DescriptionText: "待检正文，留空则取当前章节"},
@@ -46,7 +44,6 @@ var builtinToolList = []BuiltinTool{
 		ToolCode:        "deai_scan",
 		ToolName:        "去 AI 味扫描",
 		DescriptionText: "扫描 AI 写作痕迹：套路词、三段式排比、定性总结、均匀段落与形容词堆叠，给出可替换的具体改法",
-		TriggerKeywords: "去ai味,AI味,太像AI,机器味,像AI写的",
 		SortOrder:       20,
 		ParamList: []ToolParam{
 			{ParamName: "content_text", ParamLabel: "正文", DescriptionText: "待扫正文，留空则取当前章节"},
@@ -56,7 +53,6 @@ var builtinToolList = []BuiltinTool{
 		ToolCode:        "chapter_digest",
 		ToolName:        "章节摘要",
 		DescriptionText: "抽取式生成章节摘要：每段首句 + 章末钩子 + 出场角色，供连续性核对与 @摘要 引用",
-		TriggerKeywords: "摘要,总结这章,概括这章",
 		SortOrder:       30,
 		ParamList: []ToolParam{
 			{ParamName: "content_text", ParamLabel: "正文", DescriptionText: "待摘要正文，留空则取当前章节"},
@@ -67,7 +63,6 @@ var builtinToolList = []BuiltinTool{
 		ToolCode:        "character_scan",
 		ToolName:        "角色出场统计",
 		DescriptionText: "统计本项目角色在正文中的出场次数与首末位置，识别本章缺席的主角与突然出现的配角",
-		TriggerKeywords: "出场,谁出场,角色统计,人物统计",
 		SortOrder:       40,
 		ParamList: []ToolParam{
 			{ParamName: "content_text", ParamLabel: "正文", DescriptionText: "待统计正文，留空则取当前章节"},
@@ -77,7 +72,6 @@ var builtinToolList = []BuiltinTool{
 		ToolCode:        "foreshadow_scan",
 		ToolName:        "伏笔回收检查",
 		DescriptionText: "列出项目内未回收的伏笔钩子，并检查本章是否出现相关关键词，提示哪些该收、哪些放久了",
-		TriggerKeywords: "伏笔,回收,挖坑,坑填了没",
 		SortOrder:       50,
 		ParamList: []ToolParam{
 			{ParamName: "content_text", ParamLabel: "正文", DescriptionText: "待检正文，留空则取当前章节"},
@@ -87,7 +81,6 @@ var builtinToolList = []BuiltinTool{
 		ToolCode:        "lore_lookup",
 		ToolName:        "设定检索",
 		DescriptionText: "按关键词检索本项目世界观设定与知识库文档片段，返回原文与出处，避免模型编造设定",
-		TriggerKeywords: "设定是什么,查设定,世界观,资料里怎么写的",
 		SortOrder:       60,
 		ParamList: []ToolParam{
 			{ParamName: "query_text", ParamLabel: "检索词", RequiredFlag: true, DescriptionText: "要查的设定或名词"},
@@ -134,7 +127,7 @@ func (t BuiltinTool) ContentHash() string {
 			strconv.FormatBool(param.RequiredFlag), param.DefaultValue, param.DescriptionText)
 	}
 	digest := sha256.Sum256([]byte(strings.Join([]string{
-		"tool", t.ToolCode, t.ToolName, t.DescriptionText, t.TriggerKeywords,
+		"tool", t.ToolCode, t.ToolName, t.DescriptionText,
 		strconv.Itoa(t.SortOrder), strings.Join(paramText, "\x1f"),
 	}, "\x1e")))
 	return hex.EncodeToString(digest[:])
@@ -148,14 +141,3 @@ func BuiltinToolHashOf(toolCode string) string {
 	return ""
 }
 
-// ToolKeywordsOf 返回工具的触发关键词列表（逗号分隔，已去空白）。
-func ToolKeywordsOf(triggerKeywords string) []string {
-	parts := strings.Split(triggerKeywords, ",")
-	keywords := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			keywords = append(keywords, trimmed)
-		}
-	}
-	return keywords
-}

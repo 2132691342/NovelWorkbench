@@ -71,7 +71,6 @@ func (s *ToolService) SeedDefaults(ctx context.Context) error {
 				ToolName:        builtin.ToolName,
 				ToolTypeCode:    domain.ToolTypeBuiltin,
 				DescriptionText: builtin.DescriptionText,
-				TriggerKeywords: builtin.TriggerKeywords,
 				ParamSchemaJSON: paramJSON,
 				EnabledFlag:     true,
 				BuiltinFlag:     true,
@@ -89,7 +88,6 @@ func (s *ToolService) SeedDefaults(ctx context.Context) error {
 		if err := s.toolRepo.Update(ctx, existing.ToolULID, map[string]any{
 			"tool_name":         builtin.ToolName,
 			"description_text":  builtin.DescriptionText,
-			"trigger_keywords":  builtin.TriggerKeywords,
 			"param_schema_json": paramJSON,
 			"sort_order":        builtin.SortOrder,
 			"asset_hash_text":   assetHash,
@@ -134,7 +132,6 @@ func (s *ToolService) Save(ctx context.Context, req *domain.ToolREQ) (domain.Too
 			ToolName:        req.ToolName,
 			ToolTypeCode:    domain.ToolTypeBuiltin,
 			DescriptionText: req.DescriptionText,
-			TriggerKeywords: req.TriggerKeywords,
 			ParamSchemaJSON: paramJSON,
 			EnabledFlag:     enabledFlag,
 			SortOrder:       req.SortOrder,
@@ -158,14 +155,13 @@ func (s *ToolService) Save(ctx context.Context, req *domain.ToolREQ) (domain.Too
 		"tool_code":         req.ToolCode,
 		"tool_name":         req.ToolName,
 		"description_text":  req.DescriptionText,
-		"trigger_keywords":  req.TriggerKeywords,
 		"param_schema_json": paramJSON,
 		"enabled_flag":      enabledFlag,
 		"sort_order":        req.SortOrder,
 	}
 	if current.BuiltinFlag {
 		customized := req.ToolName != current.ToolName || req.DescriptionText != current.DescriptionText ||
-			req.TriggerKeywords != current.TriggerKeywords || paramJSON != current.ParamSchemaJSON
+			paramJSON != current.ParamSchemaJSON
 		fields["customized_flag"] = customized
 	}
 	if err := s.toolRepo.Update(ctx, req.ToolULID, fields); err != nil {
@@ -174,7 +170,6 @@ func (s *ToolService) Save(ctx context.Context, req *domain.ToolREQ) (domain.Too
 	current.ToolCode = req.ToolCode
 	current.ToolName = req.ToolName
 	current.DescriptionText = req.DescriptionText
-	current.TriggerKeywords = req.TriggerKeywords
 	current.ParamSchemaJSON = paramJSON
 	current.EnabledFlag = enabledFlag
 	current.SortOrder = req.SortOrder
@@ -223,24 +218,23 @@ func (s *ToolService) Invoke(ctx context.Context, userULID string, req *domain.T
 	return dto, nil
 }
 
-// ResolveTools 解析本轮要执行的工具：显式编码（请求体 + 正文 #code）优先，关键词自动触发补位。
-// 显式编码不存在或已停用返回 missingList，由调用方决定报错还是忽略。
-func (s *ToolService) ResolveTools(ctx context.Context, explicitCodeList []string,
-	contentText string) ([]domain.ToolVO, []string, error) {
-	dos, err := s.toolRepo.List(ctx, &domain.ToolListREQ{EnabledOnly: false})
+// ToolDeclarations 返回下发给模型的工具声明（仅启用的工具）。
+// 工具是否真的被调用完全由模型决定：这里只负责把「有哪几件工具、各自能吃哪些参数」讲清楚。
+func (s *ToolService) ToolDeclarations(ctx context.Context) ([]ai.ToolSpec, error) {
+	dos, err := s.toolRepo.List(ctx, &domain.ToolListREQ{EnabledOnly: true})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	parsedList, _ := parseHashToolCodes(contentText)
-	codeList := mergeToolCodes(explicitCodeList, parsedList)
-	explicitList, missingList := selectToolsByCode(dos, codeList)
-	excludeSet := make(map[string]bool, len(explicitList))
-	for i := range explicitList {
-		excludeSet[explicitList[i].ToolCode] = true
+	specList := make([]ai.ToolSpec, 0, len(dos))
+	for i := range dos {
+		specList = append(specList, ai.ToolSpec{
+			ToolCode:        dos[i].ToolCode,
+			ToolName:        dos[i].ToolName,
+			DescriptionText: dos[i].DescriptionText,
+			ParamList:       toAIToolParams(unmarshalToolParams(dos[i].ParamSchemaJSON)),
+		})
 	}
-	remainLimit := toolTotalLimit - len(explicitList)
-	autoList := matchToolsByKeyword(dos, contentText, excludeSet, remainLimit)
-	return append(explicitList, autoList...), missingList, nil
+	return specList, nil
 }
 
 // execute 分发到具体工具实现。

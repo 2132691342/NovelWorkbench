@@ -11,6 +11,8 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/cloudwego/eino/schema"
+
 	"github.com/2132691342/NovelWorkbench/backend/internal/ai"
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
@@ -25,6 +27,7 @@ const (
 	chatPingInterval           = 15 * time.Second     // 流式无输出心跳间隔
 	chatStreamIdleTimeout      = 6 * time.Minute      // 流式连续无分片的上限：超时判定网关已断
 	docFullTextPageSize        = 200                  // 文档切片全量拼接分页大小
+	chatToolRoundLimit         = 4                    // 工具往返轮数上限：防模型反复调用同一工具打转
 )
 
 // ChatStreamWriter SSE 输出接口（api 层实现为 text/event-stream 写入）。
@@ -35,11 +38,17 @@ type ChatStreamWriter interface {
 
 // chatEventWriter 流式事件封装：seq 从 1 单调递增，统一封装事件体。
 type chatEventWriter struct {
-	writer       ChatStreamWriter // SSE 输出实现
-	sessionULID  string           // 会话 ULID
-	messageULID  string           // 助手消息 ULID
-	toolCodeList []string         // 本轮执行的工具编码（done 事件下发）
-	seq          int64            // 事件序号（单调递增）
+	writer             ChatStreamWriter   // SSE 输出实现
+	sessionULID        string             // 会话 ULID
+	messageULID        string             // 助手消息 ULID
+	userULID           string             // 当前用户（工具调用归属校验）
+	projectULID        string             // 当前项目（工具调用上下文）
+	currentChapterULID string             // 当前章 ULID（模型调工具未给章节时补齐）
+	currentChapterText string             // 当前章正文（同上）
+	userInput          string             // 作者本轮原话（检索类工具兜底检索词）
+	toolInfoList       []*schema.ToolInfo // 下发给模型的工具声明（空表示不提供工具）
+	toolCodeList       []string           // 本轮模型实际调用的工具编码（done 事件下发）
+	seq                int64              // 事件序号（单调递增）
 }
 
 // emit 输出一条流式事件（reference_list 缺省为空数组）。
@@ -82,6 +91,7 @@ type ChatService struct {
 	projectRepo      *repo.ProjectRepo     // 项目仓储（归属校验）
 	chapterRepo      *repo.ChapterRepo     // 章节仓储
 	characterRepo    *repo.CharacterRepo   // 角色仓储
+	loreRepo         *repo.LoreRepo        // 设定仓储（@引用设定条目）
 	knowledgeRepo    *repo.KnowledgeRepo   // 知识库仓储
 	continuityRepo   *repo.ContinuityRepo  // 章节摘要仓储（@引用摘要）
 	settingRepo      *repo.SettingRepo     // 应用配置仓储
@@ -96,13 +106,14 @@ type ChatService struct {
 
 // NewChatService 构造对话服务。
 func NewChatService(chatRepo *repo.ChatRepo, projectRepo *repo.ProjectRepo, chapterRepo *repo.ChapterRepo,
-	characterRepo *repo.CharacterRepo, knowledgeRepo *repo.KnowledgeRepo, continuityRepo *repo.ContinuityRepo,
-	settingRepo *repo.SettingRepo, promptSvc *PromptService, knowledgeService *KnowledgeService,
-	toolService *ToolService, providerSvc *ModelProviderService, aiClient *ai.Client, db *gorm.DB,
-	config ChatConfig) *ChatService {
+	characterRepo *repo.CharacterRepo, loreRepo *repo.LoreRepo, knowledgeRepo *repo.KnowledgeRepo,
+	continuityRepo *repo.ContinuityRepo, settingRepo *repo.SettingRepo, promptSvc *PromptService,
+	knowledgeService *KnowledgeService, toolService *ToolService, providerSvc *ModelProviderService,
+	aiClient *ai.Client, db *gorm.DB, config ChatConfig) *ChatService {
 	return &ChatService{
 		chatRepo: chatRepo, projectRepo: projectRepo, chapterRepo: chapterRepo,
-		characterRepo: characterRepo, knowledgeRepo: knowledgeRepo, continuityRepo: continuityRepo,
+		characterRepo: characterRepo, loreRepo: loreRepo,
+		knowledgeRepo: knowledgeRepo, continuityRepo: continuityRepo,
 		settingRepo: settingRepo, promptSvc: promptSvc, knowledgeService: knowledgeService,
 		toolService: toolService, providerSvc: providerSvc, aiClient: aiClient, db: db, config: config,
 	}
@@ -173,7 +184,51 @@ func (s *ChatService) History(ctx context.Context, userULID string, req *domain.
 	return domain.PageDTO[domain.ChatMessageVO]{Total: int64(len(items)), PageNum: 1, PageSize: len(items), Items: items}, nil
 }
 
-// Send 流式对话主链路：提示词解析 → 上下文装配 → 流式生成 → 落库与统计。
+// SessionCompact 压缩会话历史：把除最近若干条之外的消息折叠成摘要存到会话上（/compact 的持久压缩点）。
+// 本地实现，不调用模型；历史太短时不动摘要，只回报未压缩。
+func (s *ChatService) SessionCompact(ctx context.Context, userULID string, req *domain.ChatCompactREQ) (domain.ChatCompactDTO, error) {
+	session, err := s.mustOwnSession(ctx, userULID, req.SessionULID)
+	if err != nil {
+		return domain.ChatCompactDTO{}, err
+	}
+	messages, err := s.chatRepo.ListMessagesBySession(ctx, session.SessionULID)
+	if err != nil {
+		return domain.ChatCompactDTO{}, pkg.WrapBizError(domain.RespCodeStorageError, "会话历史读取失败", err)
+	}
+	compactList := make([]ai.CompactMessage, 0, len(messages))
+	for i := range messages {
+		compactList = append(compactList, ai.CompactMessage{
+			RoleCode:    messages[i].RoleCode,
+			ContentText: messages[i].ContentText,
+		})
+	}
+	result := ai.CompactHistory(compactList, ai.DefaultCompactConfig())
+	if !result.Compacted {
+		return domain.ChatCompactDTO{
+			SessionULID: session.SessionULID,
+			KeptCount:   len(messages),
+			SummaryText: session.SummaryText,
+			CompactAt:   session.CompactAt,
+			Compacted:   false,
+		}, nil
+	}
+	summaryText := ai.JoinDigest(session.SummaryText, result.DigestText)
+	compactAt := pkg.FormatTime(time.Now())
+	if err := s.chatRepo.UpdateSessionCompact(ctx, session.SessionULID, summaryText, compactAt); err != nil {
+		return domain.ChatCompactDTO{}, pkg.WrapBizError(domain.RespCodeStorageError, "会话压缩保存失败", err)
+	}
+	return domain.ChatCompactDTO{
+		SessionULID:  session.SessionULID,
+		FoldedCount:  result.FoldedCount,
+		DroppedCount: result.DroppedCount,
+		KeptCount:    len(result.KeptList),
+		SummaryText:  summaryText,
+		CompactAt:    compactAt,
+		Compacted:    true,
+	}, nil
+}
+
+// Send 流式对话主链路：提示词解析 → 上下文装配 → 历史压缩 → 流式生成（含工具往返）→ 落库与统计。
 // 流开始前的失败返回 error（api 输出 JSON 包络）；流开始后失败经 SSE error 事件下发并返回 nil。
 func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.ChatSendREQ, writer ChatStreamWriter) error {
 	project, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID)
@@ -185,10 +240,6 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		return err
 	}
 	promptCode, promptText, userInput := prompt.PromptCode, prompt.PromptText, prompt.RemainderText
-	// 正文里的 #code 触发词在进入上下文前剥离，避免模型把命令当正文读
-	if _, strippedText := parseHashToolCodes(userInput); strippedText != userInput {
-		userInput = strippedText
-	}
 	session, err := s.resolveSession(ctx, userULID, req)
 	if err != nil {
 		return err
@@ -197,21 +248,12 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	if err != nil {
 		return pkg.WrapBizError(domain.RespCodeStorageError, "会话历史读取失败", err)
 	}
-	refMessageULIDs, err := validateRefMessages(sessionMessages, req.RefMessageULIDList)
-	if err != nil {
-		return err
-	}
-	historyList := selectHistoryMessages(sessionMessages, refMessageULIDs, s.resolveHistoryLimit(ctx, req.HistoryCount))
+	historyList, digestText := s.selectHistory(ctx, session, sessionMessages, req.HistoryCount)
 	contextInput, err := s.loadContextInput(ctx, userULID, req, userInput)
 	if err != nil {
 		return err
 	}
-	toolResultList, toolCodeList, err := s.runTools(ctx, userULID, req, contextInput)
-	if err != nil {
-		return err
-	}
 	contextInput.UserInput = userInput
-	contextInput.ToolResultList = toolResultList
 	blocks := buildContextBlocks(contextInput)
 	assembledText, droppedKeys := ai.AssembleContext(blocks, ai.ContextBudgetChars)
 	if len(droppedKeys) > 0 {
@@ -226,19 +268,21 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 			"prompt_code":     promptCode,
 		})
 	}
+	// 工具不由命令注入：模型拿到工具声明后自行决定是否调用，作者无需（也无法）手动点名
 	userMessage := &domain.ChatMessageDO{
 		MessageULID:    pkg.NewULID(domain.IDPrefixMessage),
 		SessionULID:    session.SessionULID,
 		RoleCode:       domain.ChatRoleUser,
 		ContentText:    req.ContentText,
 		PromptCode:     promptCode,
-		ToolCodeJSON:   encodeStringList(toolCodeList),
-		RefDocJSON:     encodeStringList(req.RefDocULIDList),
-		RefChapterJSON: encodeStringList(req.RefChapterULIDList),
-		RefMessageJSON: encodeStringList(req.RefMessageULIDList),
-		RefSummaryJSON: encodeStringList(req.RefSummaryULIDList),
-		RefPromptJSON:  encodeStringList(req.RefPromptULIDList),
-		TokenUsedCount: estimateTokenCount(utf8.RuneCountInString(req.ContentText), 0),
+		ToolCodeJSON:     "[]",
+		RefDocJSON:       encodeStringList(req.RefDocULIDList),
+		RefChapterJSON:   encodeStringList(req.RefChapterULIDList),
+		RefSummaryJSON:   encodeStringList(req.RefSummaryULIDList),
+		RefCharacterJSON: encodeStringList(req.RefCharacterULIDList),
+		RefLoreJSON:      encodeStringList(req.RefLoreULIDList),
+		RefSessionJSON:   encodeStringList(req.RefSessionULIDList),
+		TokenUsedCount:   estimateTokenCount(utf8.RuneCountInString(req.ContentText), 0),
 	}
 	if err := s.chatRepo.CreateMessage(ctx, userMessage); err != nil {
 		return pkg.WrapBizError(domain.RespCodeStorageError, "消息保存失败", err)
@@ -253,6 +297,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		SystemPromptText: systemPromptText,
 		StyleText:        project.StyleText,
 		ContextText:      assembledText,
+		DigestText:       digestText,
 		CommandText:      commandText,
 		HistoryList:      historyList,
 		UserText:         userInput,
@@ -261,13 +306,24 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	if err != nil {
 		return err // 供应商不可用：流未开始，api 层输出 JSON 包络
 	}
-	events := &chatEventWriter{
-		writer:       writer,
-		sessionULID:  session.SessionULID,
-		messageULID:  pkg.NewULID(domain.IDPrefixMessage),
-		toolCodeList: toolCodeList,
+	toolInfoList, err := s.toolDeclarations(ctx)
+	if err != nil {
+		// 工具声明读失败不该阻断对话：退化为不带工具，模型仍能基于上下文作答
+		pkg.SLogger().Warnw("工具声明读取失败，本轮不提供工具", "error", err)
 	}
-	replyText, reasoningText, completed := s.streamChat(ctx, events, messages, providerSpec, countMessagesRunes(messages))
+	events := &chatEventWriter{
+		writer:             writer,
+		sessionULID:        session.SessionULID,
+		messageULID:        pkg.NewULID(domain.IDPrefixMessage),
+		userULID:           userULID,
+		projectULID:        req.ProjectULID,
+		currentChapterULID: currentChapterULIDOf(contextInput),
+		currentChapterText: joinChapterContent(contextInput.ChapterList),
+		userInput:          userInput,
+		toolInfoList:       toolInfoList,
+	}
+	replyText, reasoningText, completed := s.streamChat(ctx, events, messages, providerSpec,
+		countMessagesRunes(messages))
 	if !completed {
 		return nil // 客户端断开或生成失败：不落 assistant 消息，用户消息保留对话痕迹
 	}
@@ -278,13 +334,14 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		ContentText:    replyText,
 		ReasoningText:  reasoningText,
 		PromptCode:     promptCode,
-		ToolCodeJSON:   encodeStringList(toolCodeList),
-		RefDocJSON:     encodeStringList(req.RefDocULIDList),
-		RefChapterJSON: encodeStringList(req.RefChapterULIDList),
-		RefMessageJSON: encodeStringList(req.RefMessageULIDList),
-		RefSummaryJSON: encodeStringList(req.RefSummaryULIDList),
-		RefPromptJSON:  encodeStringList(req.RefPromptULIDList),
-		TokenUsedCount: estimateTokenCount(countMessagesRunes(messages), utf8.RuneCountInString(replyText)),
+		ToolCodeJSON:     encodeStringList(events.toolCodeList),
+		RefDocJSON:       encodeStringList(req.RefDocULIDList),
+		RefChapterJSON:   encodeStringList(req.RefChapterULIDList),
+		RefSummaryJSON:   encodeStringList(req.RefSummaryULIDList),
+		RefCharacterJSON: encodeStringList(req.RefCharacterULIDList),
+		RefLoreJSON:      encodeStringList(req.RefLoreULIDList),
+		RefSessionJSON:   encodeStringList(req.RefSessionULIDList),
+		TokenUsedCount:   estimateTokenCount(countMessagesRunes(messages), utf8.RuneCountInString(replyText)),
 	}
 	// assistant 消息与今日 AI 字数统计同事务，保证两者一致落库
 	if err := repo.WithTx(s.db, func(tx *gorm.DB) error {
@@ -365,58 +422,58 @@ func (s *ChatService) mustOwnSession(ctx context.Context, userULID, sessionULID 
 	return session, nil
 }
 
-// runTools 执行本轮工具并把结果转为上下文块。
-// 显式触发的工具若编码不存在、已停用或执行失败，直接返回错误：用户主动点名却静默不执行
-// 会让人误以为已经跑过；关键词自动触发的失败只告警，不阻断对话。
-func (s *ChatService) runTools(ctx context.Context, userULID string, req *domain.ChatSendREQ,
-	contextInput chatContextInput) ([]string, []string, error) {
+// toolDeclarations 取本轮下发给模型的工具声明（模型据此自行决定调不调、调哪个）。
+func (s *ChatService) toolDeclarations(ctx context.Context) ([]*schema.ToolInfo, error) {
 	if s.toolService == nil {
-		return nil, nil, nil
+		return nil, nil
 	}
-	matchedList, missingList, err := s.toolService.ResolveTools(ctx, req.ToolCodeList, req.ContentText)
+	specList, err := s.toolService.ToolDeclarations(ctx)
 	if err != nil {
-		return nil, nil, pkg.WrapBizError(domain.RespCodeStorageError, "工具列表读取失败", err)
+		return nil, err
 	}
-	if len(missingList) > 0 {
-		return nil, nil, pkg.NewBizError(domain.RespCodeInvalidParam,
-			"工具不存在或已停用: "+strings.Join(missingList, ", "))
+	return ai.ToolInfos(specList), nil
+}
+
+// invokeModelToolCall 执行模型请求的一次工具调用，返回写给模型的 tool 消息正文。
+// 模型通常只给出 tool_code（它看不到章节 ULID），因此工作区上下文由服务端补齐：
+// 提到「这章」用具当前章，正文缺省用当前章正文，检索词缺省用作者那句话。
+func (s *ChatService) invokeModelToolCall(ctx context.Context, events *chatEventWriter,
+	toolCode, argumentsJSON string) (string, error) {
+	if s.toolService == nil {
+		return "", pkg.NewBizError(domain.RespCodeBizFailed, "工具服务不可用")
 	}
-	if len(matchedList) == 0 {
-		return nil, nil, nil
-	}
-	parsedList, _ := parseHashToolCodes(req.ContentText)
-	explicitSet := make(map[string]bool, len(req.ToolCodeList)+len(parsedList))
-	for _, code := range mergeToolCodes(req.ToolCodeList, parsedList) {
-		explicitSet[code] = true
-	}
-	// 待检正文只取附带章节：把用户那句「帮我体检这章」当正文会让体检结论毫无意义。
-	// 没有章节上下文时留空，由工具给出「请提供正文或指定章节」的明确提示。
-	contentText := ""
-	if len(contextInput.ChapterList) > 0 {
-		contentText = contextInput.ChapterList[0].ContentText
-	}
-	paramValue := map[string]string{"content_text": contentText, "query_text": req.ContentText}
-	resultList := make([]string, 0, len(matchedList))
-	codeList := make([]string, 0, len(matchedList))
-	for i := range matchedList {
-		toolCode := matchedList[i].ToolCode
-		dto, invokeErr := s.toolService.Invoke(ctx, userULID, &domain.ToolInvokeREQ{
-			ProjectULID: req.ProjectULID,
-			ToolCode:    toolCode,
-			ContentText: contentText,
-			ParamValue:  paramValue,
-		})
-		if invokeErr != nil {
-			if explicitSet[toolCode] {
-				return nil, nil, pkg.WrapBizError(domain.RespCodeBizFailed, "工具 "+toolCode+" 执行失败", invokeErr)
-			}
-			pkg.SLogger().Warnw("工具执行失败", "tool_code", toolCode, "error", invokeErr)
-			continue
+	paramValue := ai.DecodeToolArguments(argumentsJSON)
+	contentText := paramValue["content_text"]
+	chapterULID := paramValue["chapter_ulid"]
+	if contentText == "" && chapterULID == "" {
+		if events.currentChapterULID != "" {
+			chapterULID = events.currentChapterULID
+		} else {
+			contentText = events.currentChapterText
 		}
-		resultList = append(resultList, dto.ResultText)
-		codeList = append(codeList, toolCode)
 	}
-	return resultList, codeList, nil
+	paramValue["query_text"] = firstNonEmpty(paramValue["query_text"], events.userInput)
+	dto, err := s.toolService.Invoke(ctx, events.userULID, &domain.ToolInvokeREQ{
+		ProjectULID: events.projectULID,
+		ToolCode:    toolCode,
+		ChapterULID: chapterULID,
+		ContentText: contentText,
+		ParamValue:  paramValue,
+	})
+	if err != nil {
+		return "", err
+	}
+	return dto.ResultText, nil
+}
+
+// firstNonEmpty 返回第一个非空字符串（缺省值兜底用）。
+func firstNonEmpty(valueList ...string) string {
+	for _, value := range valueList {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // resolveHistoryLimit 历史注入条数：请求值 > 应用配置 chat_history_count > 全局配置。
@@ -435,23 +492,3 @@ func (s *ChatService) resolveHistoryLimit(ctx context.Context, reqCount int) int
 	return s.config.HistoryCount
 }
 
-// validateRefMessages 校验显式引用消息均属于当前会话（去重保序）。
-func validateRefMessages(sessionMessages []domain.ChatMessageDO, refMessageULIDs []string) ([]string, error) {
-	existing := make(map[string]bool, len(sessionMessages))
-	for i := range sessionMessages {
-		existing[sessionMessages[i].MessageULID] = true
-	}
-	seen := make(map[string]bool, len(refMessageULIDs))
-	result := make([]string, 0, len(refMessageULIDs))
-	for _, ulid := range refMessageULIDs {
-		if seen[ulid] {
-			continue
-		}
-		if !existing[ulid] {
-			return nil, pkg.NewBizError(domain.RespCodeInvalidParam, "引用消息不存在或不属于该会话")
-		}
-		seen[ulid] = true
-		result = append(result, ulid)
-	}
-	return result, nil
-}

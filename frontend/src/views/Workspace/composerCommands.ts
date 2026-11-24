@@ -73,6 +73,13 @@ export const COMPOSER_ACTION_LIST: ComposerAction[] = [
     action_scope: 'workspace'
   },
   {
+    action_code: 'compact',
+    action_name: '压缩历史',
+    action_desc: '把较早的对话折叠成摘要，本地即时完成，不耗模型',
+    action_icon: 'mdi:archive-arrow-down-outline',
+    action_scope: 'panel'
+  },
+  {
     action_code: 'snapshot',
     action_name: '章节快照',
     action_desc: '保存或恢复当前章的历史版本',

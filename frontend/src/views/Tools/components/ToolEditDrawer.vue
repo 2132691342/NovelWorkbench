@@ -1,4 +1,4 @@
-<!-- 工具编辑抽屉：名称、说明、触发关键词与参数声明；内置工具不可改编码。 -->
+<!-- 工具编辑抽屉：名称、说明与参数声明；内置工具不可改编码。 -->
 <script setup lang="ts">
   import { computed, reactive, ref } from 'vue'
   import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
@@ -15,7 +15,6 @@
     tool_code: '',
     tool_name: '',
     description_text: '',
-    trigger_keywords: '',
     param_list: [] as NWToolParamVo[],
     enabled_flag: true,
     sort_order: 100
@@ -37,7 +36,6 @@
     form.tool_code = row?.tool_code ?? ''
     form.tool_name = row?.tool_name ?? ''
     form.description_text = row?.description_text ?? ''
-    form.trigger_keywords = row?.trigger_keywords ?? ''
     form.param_list = (row?.param_list ?? []).map((item) => ({ ...item }))
     form.enabled_flag = row?.enabled_flag ?? true
     form.sort_order = row?.sort_order ?? 100
@@ -69,7 +67,6 @@
         tool_code: form.tool_code,
         tool_name: form.tool_name,
         description_text: form.description_text,
-        trigger_keywords: form.trigger_keywords,
         param_list: form.param_list.filter((item) => item.param_name.trim() !== ''),
         enabled_flag: form.enabled_flag,
         sort_order: form.sort_order
@@ -88,7 +85,7 @@
 <template>
   <ElDrawer v-model="visible" :title="title" size="600px" destroy-on-close>
     <ElAlert v-if="builtinFlag" type="warning" :closable="false" show-icon class="tool-edit__alert">
-      内置工具由服务端实现，只能修改名称、说明、触发关键词与启用状态；编码不可改、不可删除。
+      内置工具由服务端实现，只能修改名称、说明、参数与启用状态；编码不可改、不可删除。
     </ElAlert>
     <ElForm ref="formRef" :model="form" :rules="rules" label-position="top">
       <div class="tool-edit__row">
@@ -110,13 +107,6 @@
           maxlength="256"
           show-word-limit
           placeholder="模型与用户都会看到这段说明，写清它解决什么问题"
-        />
-      </ElFormItem>
-      <ElFormItem label="触发关键词">
-        <ElInput
-          v-model="form.trigger_keywords"
-          maxlength="256"
-          placeholder="逗号分隔，正文命中即自动运行，如 体检,能不能发,过稿"
         />
       </ElFormItem>
       <ElFormItem label="启用">

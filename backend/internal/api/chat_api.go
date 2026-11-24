@@ -101,6 +101,21 @@ func (a *ChatAPI) SessionDelete(c *gin.Context) {
 	pkg.Ok(c, nil)
 }
 
+// SessionCompact 压缩会话历史（POST /chat/session/compact，本地实现不耗模型）。
+func (a *ChatAPI) SessionCompact(c *gin.Context) {
+	var req domain.ChatCompactREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "chat.session.compact", bindErr(err))
+		return
+	}
+	dto, err := a.svc.SessionCompact(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), &req)
+	if err != nil {
+		respondErr(c, "chat.session.compact", err)
+		return
+	}
+	pkg.Ok(c, dto)
+}
+
 // sseChatWriter 将流式事件写为 text/event-stream：事件行 `data: {json}`，心跳为 `: ping` 注释行。
 type sseChatWriter struct {
 	ctx     *gin.Context // Gin 上下文

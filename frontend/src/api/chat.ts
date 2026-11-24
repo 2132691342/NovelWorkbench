@@ -1,6 +1,7 @@
 // AI 会话 / 消息接口封装（SSE 发送走 composables/useSSE.ts，这里只管普通请求）
 import { post } from '@/api/http'
 import type {
+  NWChatCompactVo,
   NWChatHistoryReqVo,
   NWChatMessageVo,
   NWChatSessionCreateReqVo,
@@ -21,6 +22,11 @@ export function listChatSessions(projectUlid: string): Promise<NWChatSessionVo[]
 /** 删除会话（级联删消息） */
 export async function deleteChatSession(sessionUlid: string): Promise<void> {
   await post('/chat/session/delete', { session_ulid: sessionUlid })
+}
+
+/** 压缩会话历史（本地实现，不耗模型） */
+export function compactChatSession(sessionUlid: string): Promise<NWChatCompactVo> {
+  return post<NWChatCompactVo>('/chat/session/compact', { session_ulid: sessionUlid })
 }
 
 /** 会话消息分页历史 */

@@ -249,6 +249,21 @@ export interface NWChatSessionVo {
   session_name: string
   message_count: number
   updated_at: string
+  /** 已压缩历史摘要（未压缩为空） */
+  summary_text: string
+  /** 最近一次压缩时间（RFC3339，未压缩为空） */
+  compact_at: string
+}
+
+/** 压缩会话历史结果（字段对齐后端 ChatCompactDTO） */
+export interface NWChatCompactVo {
+  session_ulid: string
+  folded_count: number
+  dropped_count: number
+  kept_count: number
+  summary_text: string
+  compact_at: string
+  compacted: boolean
 }
 
 /** AI 消息视图（字段对齐后端 ChatMessageVO） */
@@ -262,9 +277,10 @@ export interface NWChatMessageVo {
   tool_code_list: string[]
   ref_doc_ulid_list: string[]
   ref_chapter_ulid_list: string[]
-  ref_message_ulid_list: string[]
   ref_summary_ulid_list: string[]
-  ref_prompt_ulid_list: string[]
+  ref_character_ulid_list: string[]
+  ref_lore_ulid_list: string[]
+  ref_session_ulid_list: string[]
   token_used_count: number
   created_at: string
 }
@@ -360,8 +376,9 @@ export interface NWChatSendReqVo {
   ref_doc_ulid_list?: string[]
   ref_chapter_ulid_list?: string[]
   ref_summary_ulid_list?: string[]
-  ref_prompt_ulid_list?: string[]
-  ref_message_ulid_list?: string[]
+  ref_character_ulid_list?: string[]
+  ref_lore_ulid_list?: string[]
+  ref_session_ulid_list?: string[]
   history_count?: number
   model_ulid?: string
   system_prompt_code?: string
