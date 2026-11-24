@@ -194,7 +194,7 @@ backend/
 `backend/cmd/server/main.go` 的顺序：
 
 1. 初始化 Zap 与配置（`infra.LoadConfig`，启动期校验关键项）。
-2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 35 张表（失败即退出）。
+2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 33 张表（失败即退出）。
 3. 连接 Redis / RabbitMQ / MinIO / Manticore；失败只告警并降级。
 4. 构造仓储 → 服务 → 中间件 → 路由。
 5. 播种：内置提示词（24 份指令 + 12 份身份，按内容指纹升级）、6 个内置工具、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。

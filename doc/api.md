@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 业务基础路径 | `/api/v1` | `router.go` 的 `v1 := router.Group("/api/v1")` |
 | 探针路径 | `/health`、`/ready`，注册在 `/api/v1` 之外 | `router.go` 的 `NewRouter` |
-| 接口总数 | `/api/v1` 下 119 条，另有 2 条探针，共 121 条 | `router.go` |
+| 接口总数 | `/api/v1` 下 112 条，另有 2 条探针，共 114 条 | `router.go` |
 | 允许方法 | 仅 `GET` / `POST`；`OPTIONS` 只用于 CORS 预检 | `pkg.MethodWhitelistMiddleware` |
 | 请求编码 | `POST` 默认 `application/json`（`ShouldBindJSON`）；`/knowledge/upload` 为 `multipart/form-data` | 各 `*_api.go` |
 | 查询参数 | `GET` 用 query（`ShouldBindQuery`），路径变量用 `c.Param` | 各 `*_api.go` |
@@ -162,7 +162,7 @@ flowchart LR
 
 约定：`POST` 请求体为 JSON（`/knowledge/upload` 除外），`GET` 参数为 query 或路径变量；权限门禁见第 5 节——未列入该节权限码表的路由均为「登录用户即可访问」，数据范围由归属校验收窄。
 
-### 7.1 接口总表（119 条）
+### 7.1 接口总表（112 条）
 
 | 模块 | 方法 | 路径 | 请求 | 响应 data | Handler |
 | --- | --- | --- | --- | --- | --- |

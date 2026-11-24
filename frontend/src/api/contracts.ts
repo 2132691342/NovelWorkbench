@@ -56,75 +56,35 @@ export interface NWSettingItemVo {
   setting_desc: string
 }
 
-export interface NWSkillVariableVo {
-  variable_name: string
-  variable_label: string
-  default_value: string
-  required_flag: boolean
-  description_text: string
-}
-
-/** 技能视图对象（字段对齐后端 SkillVO） */
-/** 系统提示词档案视图（字段对齐后端 PromptProfileVO） */
-export interface NWPromptProfileVo {
-  prompt_profile_ulid: string
-  prompt_profile_code: string
-  prompt_profile_name: string
+/** 提示词视图（字段对齐后端 PromptVO） */
+export interface NWPromptVo {
+  prompt_ulid: string
+  prompt_code: string
+  prompt_name: string
+  prompt_kind_code: string
   scope_code: string
   project_ulid: string
-  description_text: string
-  system_prompt_text: string
-  builtin_flag: boolean
-  enabled_flag: boolean
-  customized_flag: boolean
   domain_code: string
   domain_name: string
-  sort_order: number
-  updated_at: string
-}
-
-export interface NWSkillVo {
-  skill_ulid: string
-  skill_code: string
-  skill_name: string
-  scope_code: string
-  project_ulid: string
   category_code: string
   description_text: string
-  prompt_template: string
-  variable_list: NWSkillVariableVo[]
-  ref_count: number
+  prompt_text: string
   enabled_flag: boolean
   builtin_flag: boolean
   customized_flag: boolean
   overridden_flag: boolean
-  domain_code: string
-  domain_name: string
   sort_order: number
   created_at: string
   updated_at: string
 }
 
-/** 技能参考资料视图对象（字段对齐后端 SkillReferenceVO） */
-export interface NWSkillReferenceVo {
-  ref_ulid: string
-  skill_ulid: string
-  ref_name: string
-  ref_text: string
-  keyword_list: string
-  sort_order: number
-  created_at: string
-}
-
-/** 技能解析结果（字段对齐后端 SkillResolveDTO） */
-export interface NWSkillResolveVo {
-  skill_ulid: string
-  skill_code: string
-  skill_name: string
+/** 提示词解析结果（字段对齐后端 PromptResolveDTO） */
+export interface NWPromptResolveVo {
+  prompt_ulid: string
+  prompt_code: string
+  prompt_name: string
+  prompt_text: string
   remainder_text: string
-  variable_map: Record<string, string>
-  missing_list: string[]
-  ref_text_list: string[]
 }
 
 /** 菜单树节点（字段对齐后端 MenuTreeNodeVO） */
