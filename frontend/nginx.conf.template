@@ -20,12 +20,19 @@ server {
         return 200 "ok";
     }
 
-    # SPA 前端静态资源
-    location / {
-        try_files $uri $uri/ /index.html;
+    # SPA 前端静态资源：index.html 必须每次回源校验，
+    # 否则浏览器用旧 index 里的 hash 去拉新包，会整站白屏（引用的文件名已不存在）
+    location = /index.html {
+        add_header Cache-Control "no-cache, must-revalidate";
+        try_files $uri =404;
     }
 
-    # 带 hash 的构建产物长缓存
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+    # 带 hash 的构建产物长缓存（文件名随内容变化，命中缓存不影响发版）
     location /assets/ {
         expires 30d;
         add_header Cache-Control "public, immutable";

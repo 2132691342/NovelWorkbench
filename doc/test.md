@@ -45,7 +45,7 @@ go test -short -run TestChatContextChain ./internal/service/   # 定位单个链
 
 ### 2.2 用例清单
 
-后端共 7 个测试文件、13 条用例，每条用例对应一条完整链路。
+后端共 8 个测试文件、16 条用例，每条用例对应一条完整链路。
 
 | 文件 | 用例 | 覆盖链路 |
 | --- | --- | --- |
@@ -61,6 +61,9 @@ go test -short -run TestChatContextChain ./internal/service/   # 定位单个链
 | `backend/internal/service/knowledge_chain_test.go` | `TestKnowledgeRetrievalChain` | 文本切片（重叠窗口、非法 overlap 收敛）→ 查询词抽取 → RRF 双通道融合 → 单通道排序与 TopK → 重排解析与 fail-open |
 | `backend/internal/service/knowledge_chain_test.go` | `TestManticoreSchemaMigrationChain` | Manticore 表结构识别 → 旧表重建 → 回灌只执行一次；新结构启动不重建 |
 | `backend/internal/service/menu_chain_test.go` | `TestMenuAndPermissionChain` | 可下发过滤（隐藏页保留标记）→ 菜单树装配与隐藏标记透传 → 权限目录汇总 → 重复权限码去重 → 动作与菜单权限说明区分 |
+| `backend/internal/service/menu_seed_test.go` | `TestMenuSeedComponentFiles` | 每个内置菜单的 `component_path` 在 `frontend/src` 下有对应页面文件（防止登记了菜单却没有页面） |
+| `backend/internal/service/menu_seed_test.go` | `TestMenuSeedUniqueCodes` | 菜单编码与路由路径全局唯一（前端以编码生成唯一路由名） |
+| `backend/internal/service/menu_seed_test.go` | `TestProfileMenuRegistered` | 「个人中心」入口固定登记为隐藏页，顶栏用户菜单点击不会 404 |
 | `backend/internal/ai/check/chapter_check_test.go` | `TestChapterCheckChain` | 空正文判阻断 → 零容忍词计数与分级 → 缺钩子警示 → 干净正文不误判 → 同一输入结论确定性 |
 
 ### 2.3 覆盖取向
@@ -89,12 +92,15 @@ pnpm test # vitest run
 
 ### 3.2 用例清单
 
-前端只保留一条链路：流式对话的报文解析与事件归并。它决定了 AI 回复能否正确落到界面——解析偏差会丢事件或重复事件，归并偏差会让正文重复累加或思考被清空。
+前端保留两条链路：流式对话的报文解析与事件归并，以及路由路径装配。前者决定 AI 回复能否正确落到界面——解析偏差会丢事件或重复事件，归并偏差会让正文重复累加或思考被清空；后者决定「点菜单能不能打开页面」——路径拼接多一个结尾斜杠，`strict` 路由就会整片落到 404，而控制台不会报任何错。
 
 | 文件 | 用例 | 覆盖链路 |
 | --- | --- | --- |
 | `frontend/src/views/Workspace/streamChain.test.ts` | 报文解析链路 | 跨 chunk 断行、多事件粘包、CRLF、非法 JSON 跳过、心跳注释忽略、尾部半行留存 |
 | `frontend/src/views/Workspace/streamChain.test.ts` | 事件归并链路 | 思考与正文分别累加、`done` 用服务端全量覆盖并补齐召回依据、`error` 落兜底文案、未知事件不改写消息 |
+| `frontend/src/utils/routerHelper.test.ts` | `pathResolve` | 空子路径不产生结尾斜杠、根路径保持单斜杠、绝对路径与外部链接原样返回 |
+| `frontend/src/utils/routerHelper.test.ts` | `routeNameOf` | 菜单编码转 PascalCase 唯一路由名（下划线与连字符都归一） |
+| `frontend/src/utils/routerHelper.test.ts` | `substituteProject` | `:project_ulid` 占位替换保持树形结构；无当前项目时保留占位符 |
 
 组件渲染与样式存在性不设断言；类型正确性与生产产物由 `pnpm build` 保证，CI 与镜像构建都执行它。
 

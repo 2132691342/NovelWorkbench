@@ -14,10 +14,11 @@ export const Layout = () => import('@/layout/Layout.vue')
 /** 是否为外部链接 */
 export const isUrl = (path: string) => /^(?:https?:|mailto:|tel:)/.test(path)
 
-/** 拼接父子路由路径并消除重复斜杠 */
+/** 拼接父子路由路径并消除重复斜杠与结尾斜杠（路由为 strict 模式，结尾斜杠会落到 404） */
 export const pathResolve = (parentPath: string, path: string) => {
   if (isUrl(path) || path.startsWith('/')) return path
-  return `${parentPath}/${path}`.replace(/\/+/g, '/')
+  const merged = `${parentPath}/${path}`.replace(/\/+/g, '/')
+  return merged.length > 1 ? merged.replace(/\/+$/, '') : merged
 }
 
 /** 按组件路径取懒加载组件；找不到返回 undefined（路由仍注册，页面显示 404） */

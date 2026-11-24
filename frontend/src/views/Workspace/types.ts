@@ -44,3 +44,11 @@ export interface ChatRefItem {
 
 /** @ 引用选择器的页签编码 */
 export type ChatRefTabCode = 'doc' | 'chapter' | 'summary' | 'prompt' | 'message'
+
+/** 命令弹层候选项：技能与工具归一成同一形状 */
+export interface ChatCommandOption {
+  code: string
+  title: string
+  desc: string
+  active: boolean
+}

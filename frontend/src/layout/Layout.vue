@@ -24,14 +24,14 @@
     permissionStore.routers.filter((route) => !route.meta?.hidden)
   )
   const layout = computed(() => (appStore.mobile ? 'sidebar' : appStore.layout))
-  const activePrimary = computed(
-    () =>
-      visibleRoutes.value.find(
-        (route) =>
-          router.currentRoute.value.path === route.path ||
-          router.currentRoute.value.path.startsWith(`${route.path}/`)
-      ) ?? visibleRoutes.value[0]
-  )
+  // 一级菜单按路由匹配链判定：项目作用域路由带 :project_ulid 占位，字符串前缀比较永远对不上
+  const activePrimary = computed(() => {
+    const matchedPathList = router.currentRoute.value.matched.map((record) => record.path)
+    return (
+      visibleRoutes.value.find((route) => matchedPathList.includes(route.path)) ??
+      visibleRoutes.value[0]
+    )
+  })
 
   const makeAbsoluteRoutes = (
     routes: AppRouteRecordRaw[],
@@ -80,11 +80,26 @@
     appStore.collapse = true
   }
 
-  // 深链进入项目页时同步项目选中态：顶栏切换器与项目作用域页面据此高亮/取数
+  // 移动端点击菜单后收抽屉：导航成功即失去浮层意义，同时避免遮住正文
+  watch(
+    () => router.currentRoute.value.fullPath,
+    () => {
+      if (appStore.mobile) appStore.collapse = true
+    }
+  )
+
+  // 深链进入项目页时同步项目选中态：顶栏切换器与项目作用域页面据此高亮/取数；
+  // 项目已被删除时把 URL 上的旧 ULID 换成可用项目，避免整页 404。
   watch(
     () => String(router.currentRoute.value.params.project_ulid ?? ''),
-    (projectUlid) => {
-      if (projectUlid) void projectStore.syncFromRoute(projectUlid)
+    async (projectUlid) => {
+      if (!projectUlid) return
+      const ok = await projectStore.syncFromRoute(projectUlid)
+      const fallbackUlid = projectStore.currentProjectUlid
+      if (ok || !fallbackUlid || fallbackUlid === projectUlid) return
+      void router.replace({
+        path: router.currentRoute.value.path.replace(projectUlid, fallbackUlid)
+      })
     },
     { immediate: true }
   )
@@ -133,7 +148,7 @@
       </aside>
 
       <aside
-        v-if="layout === 'mixed' || layout === 'dual'"
+        v-if="(layout === 'mixed' || layout === 'dual') && secondaryRoutes.length > 0"
         :class="['v-layout__secondary', { 'is-collapsed': appStore.collapse }]"
       >
         <div v-if="!appStore.collapse" class="v-layout__secondary-title">

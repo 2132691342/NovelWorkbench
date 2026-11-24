@@ -13,10 +13,10 @@
 | 路径 | 职责 |
 | --- | --- |
 | `src/main.ts` | 入口：Pinia → 导航/鉴权 → i18n → 全局组件 → Element Plus → 路由 → 挂载 |
-| `src/App.vue` | 根组件：`ConfigGlobal`（Element Plus 语言包 + 响应式断点）包裹 `RouterView` |
+| `src/App.vue` | 根组件：`ConfigGlobal` 包裹 `RouterView`；用 `useMediaQuery`（≤767px）同步 `appStore.mobile`，窄屏自动切抽屉导航并在路由变化时收起 |
 | `src/api/` | `http.ts`（get/post 薄封装）、`contracts.ts`（后端 VO 类型）与各业务模块 |
 | `src/request/` | 请求实例：注入令牌、解包包络、401 会话过期 |
-| `src/layout/` | `Layout.vue`（四种布局外壳）、`components/`（`Menu`、`PrimaryNav`、`LayoutSwitcher`、顶栏、项目切换、通知铃铛）、`menuIcons.ts` |
+| `src/layout/` | `Layout.vue`（四种布局外壳）、`components/`（`PrimaryNav`、顶栏布局切换、项目切换、通知铃铛）、`menuIcons.ts` |
 | `src/router/` | 常量路由表（登录 / 404 / 业务外壳）；业务页面由后端菜单动态注册 |
 | `src/permission.ts` | 唯一全局守卫：登录态、动态路由注册、项目作用域补全、页面权限码 |
 | `src/store/modules/` | `user`（含导航树与权限码）、`permission`（路由表）、`project`、`app`、`locale`、`tagsView`、`notification` |
@@ -116,6 +116,13 @@
 
 业务页统一用全局类，避免每页各写一套间距：`.nw-page`（纵向栅格 + 入场动画）、`.nw-toolbar`（工具条）、`.nw-grid`、`.nw-hint`、`.nw-badge` 及四个色调变体。
 
+### 2.6 回到顶部与滚动容器
+
+`components/Backtop` 绑定内容区滚动容器 `.v-layout-content-scrollbar > .el-scrollbar__wrap`，与应用外壳的 `ElScrollbar` 类名同源。
+`ElBacktop` 的 `target` 选择器找不到元素时会在 `onMounted` 抛错（`target does not exist`），而它和页面组件在同一个
+调度队列里 flush：抛错会中断本轮渲染，页面数据已经请求回来但 DOM 永远不更新，且控制台只有一条 Element 的 `throwError`。
+改外壳类名时必须同步这里，否则表现为「接口 200、页面空白/数字全是 0」。
+
 ## 3. 状态与数据流
 
 ### 3.1 七个 Store
@@ -137,6 +144,8 @@
 `src/request/index.ts` 基于 `@novelworkbench/request` 的 `createRequest` 构造实例：
 
 1. `beforeRequest` 注入 `Authorization: Bearer <token>`（令牌来自 `localStorage`，SSE 与普通请求同源）。
+   请求体是 `FormData` 时**不写 `Content-Type`**：必须交给浏览器生成带 boundary 的 `multipart/form-data`，
+   写死 `application/json` 会让后端 `ShouldBind` 收不到任何字段（表现为上传接口 400「project_ulid 不能为空」）。
 2. `transformResponse` 解包后端包络：`resp_code === 'SUCCESS'` 时直接返回 `data`，否则抛 `ApiError`（保留 `resp_code` / `resp_message` / `trace_id` / `http_status`）。
 3. 统一出口 `send()`：401 视为会话过期，清本地会话并跳登录（登录接口自身的 401 是凭据错误，单独放行）；其余失败按 `silent` 决定是否弹 `ElMessage`。
 
@@ -175,8 +184,10 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 
 - 组件解析：`import.meta.glob('../views/**/*.{vue,tsx}')` 构建期收集，`component_path`（如 `views/Workspace/index`）按字符串取懒加载函数；
   找不到组件时路由仍注册但页面显示 404，管理端改错路径不会让整个前端白屏。
+- 路径拼接：`pathResolve()` 会合并重复斜杠并去掉**结尾斜杠**。路由表是 `strict: true`，`/workspace/PRJ_x/` 与 `/workspace/PRJ_x` 不匹配同一个记录，尾斜杠会让任何菜单点击都落到 Fallback（回归用例：`src/utils/routerHelper.test.ts`）。
 - 分组节点（`menu_type_code=group`）只生成 children 与 `redirect`，不渲染自身页面。
 - 新增页面：写 `.vue` → 在「菜单管理」登记 `component_path` → 刷新即生效，**不需要前端发版**。
+- 顶栏入口（如「个人中心」）也必须登记菜单行并置 `visible_flag=false`：菜单即路由，未登记就没有路由，点击只会 404（回归用例：`backend/internal/service/menu_seed_test.go`）。
 
 ### 4.2 唯一全局守卫
 
@@ -197,6 +208,13 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 `projectStore.currentProjectUlid` 后再交给 `Menu`，因此菜单 index 与当前 URL 能对上；`watch(route.params.project_ulid)`
 调 `projectStore.syncFromRoute()` 把 URL 上的项目同步为当前项目。顶栏项目切换器改选项目时只替换 URL 中的 ULID，停留在同一功能页。
 
+项目已被删除时 `syncFromRoute()` 返回 false，`Layout` 把 URL 上的旧 ULID 替换为 `projectOptions[0]` 并 `router.replace`，
+避免分享出去的旧链接整页报「项目不存在」；`loadProjectOptions()` 同样会在当前项目失效时回退，不再把无效 ULID 持久化进会话。
+
+一级菜单高亮按 `route.matched` 的路径集合判定，不用字符串前缀比较：项目作用域路由的登记路径带 `:project_ulid` 占位，
+与浏览器里的真实路径永远不相等，前缀比较会让「创作」分组在写作台页面失去高亮、混合/双列布局的二级菜单整列为空。
+控制台不报错，只是界面静默错位，属于最难排查的一类缺陷。
+
 ### 4.4 后端驱动导航与四种布局
 
 `components/Menu/index.vue` 用 Element Plus `ElMenu` / `ElSubMenu` / `ElMenuItem`：折叠、二级展开、弹层与键盘可达性都沿用组件库行为；`mode="horizontal"` 用于顶栏，`mode="vertical"` 用于侧栏/二级栏。
@@ -212,7 +230,12 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 | `dual` | 左侧图标栏 + 二级菜单栏 | 一级只显示图标，二级常驻 |
 
 `dual` 与 `mixed` 的一级点击只切换二级菜单（`PrimaryNav` 的 `select` 事件），不跳转；`dual` 默认跟随当前路由的分组。
-窄屏（≤767px）强制回落 `sidebar` 并以抽屉形式展开。
+当前分组由 `route.matched` 的路径集合确定，因此项目作用域页面也能正确高亮。分组没有下级页面时（如「工作台」「系统设置」）
+二级栏整列不渲染，避免留下一条空白列。
+
+窄屏（≤767px）强制回落 `sidebar` 并以抽屉形式展开：`App.vue` 用 `useMediaQuery('(max-width: 767px)')` 同步 `appStore.mobile`，
+首次进入与每次路由变化时把 `appStore.collapse` 置为 true，点菜单跳转后抽屉自动收起；遮罩点击同样收起。
+`appStore.mobile` 未接线时布局永远按桌面渲染，抽屉样式与遮罩全部失效——这是移动端「点了没反应」的典型成因。
 
 ## 5. 页面实现
 

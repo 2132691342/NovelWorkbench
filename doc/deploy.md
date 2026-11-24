@@ -82,11 +82,16 @@ flowchart LR
 | `resolver ${NGINX_RESOLVER} valid=10s` | 每 10 秒重新解析 | 容器重建后不残留旧 IP |
 | `client_max_body_size ${NW_CLIENT_MAX_BODY_SIZE}` | 紧跟 `resolver` 之后，作用于整个 server | 上传体积上限与后端 `NW_APP_UPLOAD_MAX_MB` 对齐，避免反代先于后端返回 413 |
 | `location = /healthz` | `return 200 "ok"`，`access_log off` | 前端存活探针，不依赖后端 |
-| `location /` | `try_files $uri $uri/ /index.html` | SPA 路由兜底 |
+| `location = /index.html` | `Cache-Control: no-cache, must-revalidate` | 入口必须每次回源校验，见下方发版缓存说明 |
+| `location /` | `try_files $uri $uri/ /index.html` + `Cache-Control: no-cache, must-revalidate` | SPA 路由兜底；HTML 不做启发式缓存 |
 | `location /assets/` | `expires 30d` + `Cache-Control: public, immutable` | 带 hash 的产物长缓存 |
 | `location /api/` | `proxy_pass $api_backend$request_uri` | 变量形式的上游，触发按请求 DNS 解析 |
 | `/api/` 头部 | `Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Request-ID` | 链路追踪与客户端 IP 透传 |
 | SSE | `proxy_buffering off`、`proxy_read_timeout 3600s` | 流式响应不被缓冲、不被读超时截断 |
+
+**发版缓存**：`index.html` 是唯一不带内容哈希的入口，必须 `no-cache`。若它被浏览器缓存，用户手里的旧 HTML 会去请求
+上一版 `assets/Login-xxxx.js`，而新容器里只有新哈希文件，结果是 `ERR_ABORTED` + 整站白屏，且服务端日志全是 200。
+`/assets/` 可以放心长缓存：文件名随内容变化，新版本必然是新 URL。
 
 后端侧配合 SSE：`http.Server` 的 `WriteTimeout` 取 `server.write_timeout_sec`，仓库配置为 `0`（不限），`ReadTimeout` 取 `server.read_timeout_sec`（30s）；`service.ChatService` 用 `chatPingInterval = 15s` 的定时器在无输出时调用 `sseChatWriter.Ping` 输出 `: ping` 注释行维持连接，有数据块时重置定时器。
 

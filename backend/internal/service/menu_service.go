@@ -57,6 +57,8 @@ var menuSeedList = []menuSeed{
 	{MenuCode: "admin_jobs", ParentCode: "group_system", MenuName: "任务中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/jobs", ComponentPath: "views/Admin/Jobs", IconCode: "pulse", PermCode: domain.PermJobManage, SortOrder: 65},
 	{MenuCode: "admin_status", ParentCode: "group_system", MenuName: "运行状态", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/admin/status", ComponentPath: "views/Admin/Status", IconCode: "pulse", PermCode: domain.PermSystemRead, SortOrder: 70},
 	{MenuCode: "settings", MenuName: "系统设置", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/settings", ComponentPath: "views/Settings/index", IconCode: "sliders", PermCode: domain.PermSettingManage, SortOrder: 50},
+	// 个人中心从顶栏用户菜单进入，不进导航但有路由与组件（菜单即路由：不登记就 404）
+	{MenuCode: "profile", MenuName: "个人中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/profile", ComponentPath: "views/Profile/index", IconCode: "user", SortOrder: 60, HiddenFlag: true},
 
 	// 动作权限（不进入导航，仅登记权限码，由角色勾选后控制接口）
 	{MenuCode: "action_model_write", MenuName: "维护模型供应商", MenuTypeCode: domain.MenuTypeAction, ScopeCode: domain.MenuScopeGlobal, PermCode: domain.PermModelManage, SortOrder: 910},

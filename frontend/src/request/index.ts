@@ -69,10 +69,12 @@ const client = createRequest({
   },
   beforeRequest(config) {
     const token = readToken()
+    // FormData 必须交给 axios 自行生成带 boundary 的 multipart 头，写死 JSON 会让后端收不到任何字段
+    const isFormData = typeof FormData !== 'undefined' && config.data instanceof FormData
     return {
       ...config,
       headers: {
-        'Content-Type': 'application/json',
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...config.headers
       }

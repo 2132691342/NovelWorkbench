@@ -51,7 +51,7 @@
 
 **职责与实现**
 
-`menus` 表同时承担两件事：前端导航树的唯一数据源，以及权限码的登记处（菜单即权限单一事实源）。表内 30 条内置菜单由 `service/menu_service.go` 的 `menuSeedList` 播种：3 个分组（创作 / 平台 / 系统）、26 个页面节点、1 条动作节点 `action_model_write`。
+`menus` 表同时承担两件事：前端导航树的唯一数据源，以及权限码的登记处（菜单即权限单一事实源）。表内 31 条内置菜单由 `service/menu_service.go` 的 `menuSeedList` 播种：3 个分组（创作 / 平台 / 系统）、27 个页面节点、1 条动作节点 `action_model_write`。其中「个人中心」（`/profile`）与并入素材库的四个旧页面一样置 `visible_flag=false`：不进导航，但必须有菜单行，否则前端没有对应路由，顶栏入口点下去就是 404。`service/menu_seed_test.go` 做两道校验：每个 `component_path` 必须在 `frontend/src` 下有同名页面文件，菜单编码与路由路径唯一。
 
 | 列 | 取值 | 作用 |
 | --- | --- | --- |
