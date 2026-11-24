@@ -61,8 +61,7 @@ Authorization: Bearer <token>
 | `system:usage:read` | 用量分析 | `/model/usage/overview` |
 | `system:status:read` | 运行状态 | `/system/status` |
 | `system:setting:manage` | 运行时配置 | `/setting/update` |
-| `skill:manage` | 技能资产 | `/skill/save`、`/skill/delete`、`/skill/reference/*` |
-| `prompt:manage` | 提示词档案 | `/prompt/profile/save`、`/prompt/profile/delete` |
+| `prompt:manage` | 提示词库 | `/prompt/save`、`/prompt/delete` |
 | `tool:manage` | 工具资产 | `/tool/save`、`/tool/delete` |
 
 权限码常量定义在 `backend/internal/domain/role.go`。
@@ -106,7 +105,7 @@ Authorization: Bearer <token>
 - 所有 POST 请求（除登录、登出、`/chat/send`）记录一条审计，无论成败。
 - 字段：级别（`info` / `warn` / `error`，按 HTTP 状态推导）、链路 ID（与响应包络 `trace_id` 同值）、操作者 ULID 与登录名快照、动作码（路径去掉 `/api/v1/`）、请求路径与方法、脱敏请求体、目标类型与目标 ULID、业务响应码与说明、HTTP 状态、耗时、IP、UA。
 - 所有 POST 都读取 body 提取目标，上限 32KB，读后还原供 handler 绑定；`multipart` 请求不采样。
-- 目标提取白名单覆盖 user / role / menu / project / chapter / document / skill / tool / model / provider / prompt_profile / chat_session / notification，取第一个命中的键。
+- 目标提取白名单覆盖 user / role / menu / project / chapter / document / prompt / tool / model / provider / chat_session / notification，取第一个命中的键。
 - 凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）一律替换为 `***`，审计表即使被读也不泄露口令。
 - 写入失败只告警（`audit_record_failed`），不阻断业务。
 

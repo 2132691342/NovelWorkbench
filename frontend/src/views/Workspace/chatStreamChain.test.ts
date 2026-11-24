@@ -13,7 +13,7 @@ function blankMessage(): ChatDisplayMessage {
     role_code: 'assistant',
     content_text: '',
     reasoning_text: '',
-    skill_code: '',
+    prompt_code: '',
     tool_code_list: [],
     created_at: '',
     reference_list: [],

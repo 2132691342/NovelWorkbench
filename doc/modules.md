@@ -42,7 +42,7 @@
 - 内置角色不可删除、不可改编码；角色下仍有用户时删除被拒（`ERR_CONFLICT`）。
 - 管理员不能禁用或删除自己；邮箱与登录名唯一性由数据库唯一索引与服务层双重保证。
 - 角色保存不校验权限码是否存在于权限目录，前端选项来自权限目录接口。
-- 删除项目只校验归属，不额外要求权限码；技能使用对所有登录用户开放，只有维护动作收口到 `skill:manage`。
+- 删除项目只校验归属，不额外要求权限码；提示词使用对所有登录用户开放，只有维护动作收口到 `prompt:manage`。
 - 权限判定逐请求查库、不做缓存，因此角色权限修改在下一次请求即生效。
 
 取舍：权限码存在角色行的 JSON 列里，而不是「角色-权限」关联表：读路径只有一次 `roles` 查询加内存遍历，写入是整行覆盖，模型极简。代价是无法按权限码反查角色、也无法在数据库层做外键约束，权限码拼写错误只能靠人工发现。逐请求查库省掉缓存失效问题，代价是管理接口每次多一跳主库——对「写操作少、管理端并发低」的定位可以接受。
@@ -81,7 +81,7 @@
 | `audit_logs` | 操作者、动作码（去掉 `/api/v1/` 的路径）、级别、链路 ID、请求路径/方法/体（脱敏）、目标类型与 ULID、业务响应码与说明、HTTP 状态、耗时、IP、UA | `pkg.AuditMiddleware` |
 | `login_logs` | 账号、命中用户、结果码、失败原因、IP、UA | `AuthService.recordLogin` → `LoginLogService.Record` |
 
-`pkg/access_middleware.go` 的 `AuditMiddleware`：仅对 `POST` 且不在跳过名单内的请求生效。请求前读取并还原 body（≤32KB，`multipart` 不采样），把凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）替换为 `***`；用包装后的 `ResponseWriter` 捕获响应前 8KB，`c.Next()` 后解析包络得到 `resp_code` / `resp_message`，再按 HTTP 状态推导级别（`info` / `warn` / `error`），并写入 `trace_id`（与响应包络同值）。`extractAuditTarget` 按 `auditTargetKeys` 白名单从请求体提取目标（user / role / menu / project / chapter / document / skill / tool / model / provider / prompt_profile / chat_session / notification），取第一个命中键。跳过名单在 `cmd/server/main.go` 装配：`/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`（SSE 流不适合等待后置写入）。`service/audit_service.go` 的 `Record`：补 `audit_ulid`，`user_name` 为空时回查用户登录名；`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤；`Detail` 返回单条含请求体原文；历史行缺级别时按 HTTP 状态补全。`service/login_log_service.go` 承担登录日志的写入与分页查询（`Record` / `ListPage`），与审计日志分表：两者查询维度与保留策略不同。前端 `views/Admin/Audit.vue`：级别徽标、目标、响应码与说明、HTTP 状态、耗时、链路 ID（点击复制），抽屉展示脱敏请求体。
+`pkg/access_middleware.go` 的 `AuditMiddleware`：仅对 `POST` 且不在跳过名单内的请求生效。请求前读取并还原 body（≤32KB，`multipart` 不采样），把凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）替换为 `***`；用包装后的 `ResponseWriter` 捕获响应前 8KB，`c.Next()` 后解析包络得到 `resp_code` / `resp_message`，再按 HTTP 状态推导级别（`info` / `warn` / `error`），并写入 `trace_id`（与响应包络同值）。`extractAuditTarget` 按 `auditTargetKeys` 白名单从请求体提取目标（user / role / menu / project / chapter / document / prompt / tool / model / provider / chat_session / notification），取第一个命中键。跳过名单在 `cmd/server/main.go` 装配：`/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`（SSE 流不适合等待后置写入）。`service/audit_service.go` 的 `Record`：补 `audit_ulid`，`user_name` 为空时回查用户登录名；`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤；`Detail` 返回单条含请求体原文；历史行缺级别时按 HTTP 状态补全。`service/login_log_service.go` 承担登录日志的写入与分页查询（`Record` / `ListPage`），与审计日志分表：两者查询维度与保留策略不同。前端 `views/Admin/Audit.vue`：级别徽标、目标、响应码与说明、HTTP 状态、耗时、链路 ID（点击复制），抽屉展示脱敏请求体。
 
 **边界与权衡**
 
@@ -272,78 +272,85 @@
 
 **职责与实现**
 
-`chat_sessions`（项目 + 用户 + 会话名）与 `chat_messages`（角色、正文、思考过程、命中技能码、工具编码、五类引用 ULID 的 JSON、召回依据、估算 token）。会话名缺省时用首条消息前 20 字回填。
+`chat_sessions`（项目 + 用户 + 会话名）与 `chat_messages`（角色、正文、思考过程、命中提示词编码、工具编码、五类引用 ULID 的 JSON、召回依据、估算 token）。会话名缺省时用首条消息前 20 字回填。
 
 `ChatService.Send`（`service/chat_service.go`）是唯一生成入口，顺序固定：
 
-1. `mustOwnProject` → `resolveSkill`（项目技能覆盖同编码全局技能）。
+1. `mustOwnProject` → `resolvePrompt`（项目提示词覆盖同编码全局提示词；`prompt_code` 优先，否则解析正文首 token 的 `/code`）。
 2. `resolveSession`：`session_ulid` 为空自动建会话，否则 `mustOwnSession` 校验归属并要求项目一致。
 3. `validateRefMessages` 校验显式引用的历史消息都属于本会话（去重保序）；`selectHistoryMessages` 取最近 `n` 条为骨干，引用消息必注入。
-4. `loadContextInput`（`service/chat_context.go`）：引用章节（首项标记当前章）、引用文档全文、引用章节摘要、引用提示词档案、RAG 召回（失败降级为空）、项目角色、设定（排除 `note`）、当前章前后章梗概。
-5. `buildContextBlocks` 组装块并给优先级：技能 100、当前章 90、技能参考资料 85、显式引用 80、RAG 70、章节梗概 60、角色与设定 50、历史 40；技能命中时渲染 `{{user_input}}` / `{{chapter_content}}` / `{{context}}`。
+4. `loadContextInput`（`service/chat_context.go`）：引用章节（首项标记当前章）、引用文档全文、引用章节摘要、引用提示词、RAG 召回（失败降级为空）、项目角色、设定（排除 `note`）、当前章前后章梗概。
+5. `buildContextBlocks` 组装块并给优先级：当前章 100、显式引用 90、工具结果 85、RAG 70、章节梗概 60、角色与设定 50；历史不进块。
 6. `ai.AssembleContext` 按优先级装入、超 `ai.ContextBudgetChars`（12000 字符）的块整块丢弃并返回 `dropped_keys` 记日志。
-7. 先落用户消息（含引用与 token 估算），会话名为空则回填；`providerSvc.ChatSpecOf` 取模型规格。
-8. `streamChat`（`service/chat_stream.go`）消费模型流：`thinking`/`chunk` 事件逐段下发，15 秒无输出发 `: ping` 心跳，连续 6 分钟无分片判网关已断并发 `error` 事件。
-9. 生成完成后单事务写入 assistant 消息与当日 `ai_word_delta`，再发 `done` 事件并携带 RAG 依据与本轮工具编码。
+7. 命中指令提示词时用 `ai.RenderPrompt` 渲染 `{{user_input}}` / `{{chapter_content}}` / `{{context}}` / `{{prompt_code}}`，得到独立的系统级指令消息。
+8. 先落用户消息（含引用与 token 估算），会话名为空则回填；`promptSvc.SystemPromptOf` 解析身份提示词，`providerSvc.ChatSpecOf` 取模型规格。
+9. `buildChatMessages` 组装：身份（系统）→ 上下文（系统）→ 指令（系统）→ 历史（原生角色）→ 用户输入（用户）。
+10. `streamChat`（`service/chat_stream.go`）消费模型流：`thinking`/`chunk` 事件逐段下发，15 秒无输出发 `: ping` 心跳，连续 6 分钟无分片判网关已断并发 `error` 事件。
+11. 生成完成后单事务写入 assistant 消息与当日 `ai_word_delta`，再发 `done` 事件并携带 RAG 依据与本轮工具编码。
 
 SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单行事件，`begin()` 首次输出时提交 `text/event-stream`、`no-cache`、`X-Accel-Buffering: no`；事件 `seq` 由 `chatEventWriter.emit` 单调递增。
 
 **边界与权衡**
 
-- 单链路：没有「一键生成摘要/续写」的独立接口，所有生成都走 `/chat/send` + 技能码。
-- 流开始前的失败（项目、技能、会话）返回 JSON 包络且不写任何消息；但 `ChatSpecOf` 在用户消息落库之后才执行，供应商不可用时同样返回 JSON 包络，此时用户消息已留在会话里、assistant 消息缺失。
+- 单链路：没有「一键生成摘要/续写」的独立接口，所有生成都走 `/chat/send` + 提示词编码。
+- 注入内容一律系统级消息，用户输入一律用户级消息：模型侧能区分"约束"与"要求"，界面侧也不会把上下文误显示成用户发言。
+- 流开始前的失败（项目、提示词、会话）返回 JSON 包络且不写任何消息；但 `ChatSpecOf` 在用户消息落库之后才执行，供应商不可用时同样返回 JSON 包络，此时用户消息已留在会话里、assistant 消息缺失。
 - 流开始后的失败只能经 `error` 事件下发。
 - 客户端断开或生成失败时不写 assistant 消息，但已落库的用户消息保留。
-- 引用文档必须是本项目或全局库，跨项目返回 `ERR_FORBIDDEN`。
+- 引用文档必须是本项目或全局库，跨项目返回 `ERR_FORBIDDEN`；引用项目提示词同理。
 - 历史条数优先级：请求参数 > `chat_history_count` > `ChatConfig.HistoryCount`；上下文超预算时丢弃是静默的。
 - `chat/send` 在审计跳过名单内，用量统计仍由 `ai.Client` 上报。
 
+
 取舍：单链路把所有生成收口到一处，上下文装配、容错、流式协议、落库与统计只有一份实现，排错路径唯一；代价是交互上多一步「生成 → 手动插入」。上下文用「优先级 + 整块丢弃」而不是「逐块摘要压缩」：行为确定、不会二次调用模型，但预算不足时可能丢掉整块角色信息。RAG 失败降级为空上下文而不是报错，是保证「对话永远可用」的取舍，代价是回答质量静默下降。
 
-## 15. 技能资产
+## 15. 提示词资产
 
 **职责与实现**
 
-`skills` 是可编辑的提示词资产：编码（对话中以 `/code` 触发）、名称、作用域、分类、模板 `prompt_template`、变量声明 `variable_spec_json`、启停与内置标记。`skill_references` 存参考资料（名称、正文、逗号分隔关键词、排序），在技能命中时按关键词挑选注入。内置 24 个，按 12 个流程域组织（每域一份档案 + 两个技能），完整矩阵见 [skills.md](skills.md)。
+`prompts` 是可编辑的提示词资产：编码（对话中以 `/code` 触发）、名称、种类（`system` 身份 / `command` 指令）、作用域、分类、正文 `prompt_text`、启停与内置标记。身份与指令同表同构，靠 `prompt_kind_code` 区分——它们本就是同一种东西（一段可编辑、可注入、可停用的提示词），拆成两张表只会让"哪一段真的生效"变难查。
 
-`SkillService.List`：`project_ulid` 非空时合并「项目技能 + 全局技能」，并用 `isOverriddenGlobalSkill` 给被覆盖的全局技能打标记。`SkillService.Save`：作用域缺省 `global`；项目技能必须带项目并经 `mustProjectAccess` 校验项目存在（不校验创建者）；`validateSkillTemplate` 要求模板占位符都在变量声明里；同一作用域下 `skill_code` 唯一；内置技能不允许改编码与作用域。`resolveByCode` / `pickSkillByScope`：启用中的项目技能优先，其次启用中的全局技能，都不命中则报「技能不存在或已停用」。`resolveSkillCode` / `parseSlashToken`：显式 `skill_code` 优先，否则只解析正文**首个 token** 的 `/code`，命中才剥离命令，未命中正文原样返回。`resolveSkillVariables`：按变量声明取请求值，缺省值兜底，必填缺失进 `missing_list` 返回前端提示补全。参考资料：`skill_reference_service.go` 的 `matchReferences` → `selectSkillReferences`：关键词为空总是命中，否则任一关键词出现在正文中即命中；按排序累计字符，超过 4000 即停止。`service/skill_template.go` 承载技能解析与变量取值的纯函数（`resolveSkillCode`、`parseSlashToken`、`resolveByCode`、`pickSkillByScope`、`resolveSkillVariables`、`validateSkillTemplate`、`isOverriddenGlobalSkill`），与 `skill_service.go` 的仓储编排分开，便于脱离数据库单测。
+`PromptService.List`：`project_ulid` 非空时合并「项目提示词 + 全局提示词」，并用 `isOverriddenGlobalPrompt` 给被覆盖的全局提示词打 `overridden_flag`。`PromptService.Save`：作用域缺省 `global`；项目提示词必须带项目并经 `mustProjectAccess` 校验项目存在（不校验创建者，方便团队协作）；`validatePromptPlaceholders` 要求正文占位符都在内置白名单内；同一作用域下 `prompt_code` 唯一；内置提示词不允许改编码、作用域与种类。`resolveByCode` / `pickPromptByScope`：启用中的项目提示词优先，其次启用中的全局提示词，都不命中则报「提示词不存在或已停用」。`resolveSlashCode` / `parseSlashToken`：显式 `prompt_code` 优先，否则只解析正文**首个 token** 的 `/code`，命中则剥离命令，未命中按自由对话处理。
 
 **边界与权衡**
 
-- 内置技能不可删除（可停用），删除自定义技能时级联清理其参考资料。
-- 只识别正文首个 token 的斜杠命令，正文中间出现的 `/xxx` 不会触发技能。
-- 参考资料按字符预算硬截断，不做摘要或二次筛选。
-- 项目技能的作用域校验只看「项目存在」，不看归属——同一项目的协作者都能维护项目技能，这是刻意的团队协作放宽。
-- 变量只支持字符串；模板占位符未声明的会被拒绝保存。
+- 内置提示词不可删除（可停用），可改名称、说明、正文与排序号。
+- 只识别正文首个 token 的斜杠命令，正文中间出现的 `/xxx` 不会触发提示词。
+- 项目提示词的作用域校验只看「项目存在」，不看归属——同一项目的协作者都能维护项目提示词，这是刻意的团队协作放宽。
+- 占位符只支持四个内置变量；未登记的占位符在保存期就被拒绝，避免运行期静默渲染成空串。
+- 旧的 `skills` / `skill_references` / `prompt_profiles` 三张表已合并为 `prompts`：技能参考资料（关键词命中的长资料）随技能一起删除，改为 `@` 引用提示词，作者显式挑选，行为更可预期。
 
-取舍：把提示词做成数据而不是代码，让作者不改代码、不发版就能调技能；代价是模板与变量的一致性必须在保存期校验，运行期还要处理变量缺失与参考资料预算。作用域覆盖规则让「全局默认 + 项目特化」成为可能，代价是列表页必须显式标注「被覆盖」。参考资料用关键词命中而不是向量相似度，与第 13 节的检索取舍一致：可解释、零额外依赖，但同义表达命中率有限。
+取舍：把提示词做成数据而不是代码，让作者不改代码、不发版就能调提示词；代价是占位符一致性必须在保存期校验，运行期还要处理上下文预算裁剪。作用域覆盖规则让「全局默认 + 项目特化」成为可能，代价是列表页必须显式标注「被覆盖」。放弃关键词命中参考资料，换来更短的链路与更可解释的上下文：作者 @ 了什么，模型就看到什么。
 
-## 16. 提示词档案
+## 16. 提示词注入与身份解析
 
 **职责与实现**
 
-`prompt_profiles` 存「AI 是谁」：编码、名称、作用域、系统提示词正文、启停与内置标记。与技能的分工是：**档案定身份与底线，技能定本次动作**。同一次对话两者同时下发，档案不会被技能覆盖。内置 12 份，与流程域一一配对。
+身份提示词决定「AI 是谁」，指令提示词决定「这一单活怎么干」。二者都以**系统级消息**进入消息序列，用户在对话框输入的内容始终是**用户级消息**。
 
-`SystemPromptOf(projectULID, promptProfileULID)`：显式档案（须启用且为全局或属于当前项目）→ 启用的全局默认档案（排序号最小）→ `ai.SystemPrompt("")` 内置兜底。解析失败不报错，直接降级。`ai.ComposeSystemPrompt(profileText, styleText)`：档案正文 + 「本项目文风约束」段落。有档案时不再拼内置人设，避免两套身份打架。`Save`：作用域缺省 `global`；项目档案必须带项目并经 `mustOwnProject` 校验归属；`CountByCode` 保证作用域内编码唯一；内置档案可改正文与名称，但编码与作用域不可变。`Delete`：内置档案拒绝删除（可停用），停用后使用它的对话自动回退到默认档案。前端 `views/Prompts/index.vue` 管理档案，`views/Workspace/ChatComposer.vue` 提供对话期档案选择。
+`SystemPromptOf(projectULID, systemPromptCode)`：显式身份提示词编码（须启用且为全局或属于当前项目）→ 启用的全局默认身份提示词（`GetDefaultSystem`，排序号最小）→ `ai.SystemPrompt("")` 内置兜底。项目层再叠加 `projects.style_text`（`ai.ComposeSystemPrompt`）。
 
 **边界与权衡**
 
-取舍：档案不参与上下文预算裁剪：它走 `system` 角色，不受 `ContextBudgetChars` 约束，因此正文上限设为 8000 字符。项目档案的归属校验比技能严格：档案用 `mustOwnProject`（校验创建者），技能用 `mustProjectAccess`（只校验项目存在）——档案直接影响模型行为，收得更紧。档案只在对话链路生效，知识库重排等内部调用仍走固定提示词。
+- 身份提示词不参与上下文预算裁剪：它走 `system` 角色，不受 `ContextBudgetChars` 约束，因此正文上限设为 12000 字符（与指令提示词同一上限）。
+- 项目提示词的归属校验只看项目存在，与提示词库一致；对话期 @ 引用项目提示词时会再校验一次 `project_ulid` 匹配，防止跨项目引用。
+- 身份提示词与指令提示词同时下发、互不覆盖：身份写底线，指令写动作，模型看到的是"以什么身份 + 这次做什么"。
+- 旧版把上下文塞进 `user` 消息，与真实用户输入混在一起；现在上下文、指令都是系统级消息，模型侧的约束边界清晰，前端也能正确区分"我发的"和"系统注入的"。
 
-把系统提示词做成可编辑资产，让「换一种 AI 身份」不需要改代码；代价是多一层解析与一次数据库读取（单行主键查询，可忽略）。不做缓存是刻意的：档案改完要立刻生效，缓存失效逻辑比查询本身更贵。
+取舍：把系统提示词做成可编辑资产，让「换一种 AI 身份」不需要改代码；代价是每次对话多一次身份提示词查询（单行按编码/默认排序取，代价可忽略）。
 
 ## 16.1 工具资产
 
 **职责与实现**
 
-`tools` 表存「对话期可被调用的能力单元」。与技能的分工是：技能让模型**按格式写**，工具让服务端**先算出事实**，结果以「工具结果」上下文块注入，模型据此作答，避免自己心算或编造。
+`tools` 表存「对话期可被调用的能力单元」。与提示词的分工是：提示词让模型**按格式写**，工具让服务端**先算出事实**，结果以「工具结果」上下文块注入，模型据此作答，避免自己心算或编造。
 
 | 列 | 说明 |
 | --- | --- |
 | `tool_code` | 唯一编码，`#编码` 触发；内置不可改 |
 | `trigger_keywords` | 逗号分隔的自动触发词，正文命中即运行 |
 | `param_schema_json` | 参数声明（`ToolParamDO` 数组），前端表单与调用校验共用 |
-| `builtin_flag` / `customized_flag` / `asset_hash_text` | 与技能同构的出厂资产三件套 |
+| `builtin_flag` / `customized_flag` / `asset_hash_text` | 与提示词同构的出厂资产三件套 |
 
 `ai/builtin_tools.go`：6 个内置工具定义（`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`）与 `ContentHash` 指纹。`service/tool_service.go` 的 `SeedDefaults`：按 `tool_code` 查缺补插；指纹变化且未自改时覆盖；已下线编码删除。`Invoke`：按编码取工具 → 校验启用 → `execute` 分发。`chapter_check` / `deai_scan` 复用 `ai/check.Analyze`；`chapter_digest` 抽取每段首句；`character_scan` 统计角色卡姓名（含别名）在本章的命中；`foreshadow_scan` 用双字片段粗匹配伏笔相关词；`lore_lookup` 按关键词查设定并剥掉富文本标签。结果统一截断到 4000 字符。`ResolveTools`：解析本轮工具。显式编码来自请求体 `tool_code_list` 与正文内联 `#code`，合并后去重保序、上限 3 个；编码不存在或已停用时返回 `missingList`，由 `ChatService` 直接报错（用户点名却不执行比报错更糟）。余量再按 `trigger_keywords` 自动补位，已显式选中的不重复触发。`service/tool_command.go`：`parseHashToolCodes` 只认行首或空白后的 `#code`（`C#` 之类不误判），剥离触发词时保留其余换行与缩进；`selectToolsByCode` / `matchToolsByKeyword` 是纯函数，可脱离仓储单测。`service/tool_helper.go` 承载五个内置工具的执行器（正文抽取、段落首句摘要、角色姓名命中统计、伏笔粗匹配、设定检索与富文本剥离）与结果截断，与 `tool_service.go` 的编排职责分开，避免单文件超过 500 行。`ChatService.runTools`：在上下文装配前调用，失败只 `Warnw` 不阻断对话；返回的工具编码写入消息的 `tool_code_json` 并随 `done` 事件下发，前端据此在消息头展示 `#编码` 徽标，历史回看同样保留。
 
@@ -351,7 +358,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 取舍：只支持内置类型：自定义工具需要服务端实现，因此新建入口仅对管理员开放且类型固定。工具不写业务数据：全部是只读计算，`/tool/invoke` 不产生章节、消息或统计变更。自动触发不看权限码，只看启用状态；参数缺失时由执行器给明确提示（如「请提供正文或指定章节」），不抛 panic。
 
-把「可机检的门禁」从提示词搬进代码，换来三件事：结果可复现（同一正文永远同一结论）、可单测（`ai/check` 是纯函数）、零模型成本。代价是规则改动需要发版，因此阈值集中定义在 `ai/check/chapter_check.go` 顶部常量。并且工具只做「发现问题」，改稿仍由技能完成——工具给依据，技能给产出。
+把「可机检的门禁」从提示词搬进代码，换来三件事：结果可复现（同一正文永远同一结论）、可单测（`ai/check` 是纯函数）、零模型成本。代价是规则改动需要发版，因此阈值集中定义在 `ai/check/chapter_check.go` 顶部常量。并且工具只做「发现问题」，改稿仍由提示词完成——工具给依据，提示词给产出。
 
 ## 17. 模型生态
 
@@ -467,8 +474,8 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 | 依赖 | 说明 |
 | --- | --- |
-| 对话 → 技能 / 知识库 / 模型 | `ChatService` 持有 `SkillService`、`KnowledgeService`、`ModelProviderService`：先解析技能，再召回切片，最后取 `ChatSpecOf` 下发模型规格 |
-| 对话 → 提示词档案 / 工具 | `SystemPromptOf` 解析对话系统提示词，显式档案优先、默认档案兜底；`ResolveTools` 解析本轮工具，结果注入上下文块 |
+| 对话 → 提示词 / 知识库 / 模型 | `ChatService` 持有 `PromptService`、`KnowledgeService`、`ModelProviderService`：先解析提示词，再召回切片，最后取 `ChatSpecOf` 下发模型规格 |
+| 对话 → 身份提示词 / 工具 | `SystemPromptOf` 解析身份提示词，显式编码优先、默认身份兜底；`ResolveTools` 解析本轮工具，结果注入上下文块 |
 | 对话 → 角色卡 / 设定 / 项目 | `loadContextInput` 按项目装载角色、设定与章节上下文 |
 | 知识库 → 模型 / 任务中心 / 通知 | 重排走 `DefaultChatSpec`（系统默认模型），无模型时 fail-open；`enqueueIndexJob` 写 `jobs` 行后投递队列，worker 回写任务与文档状态并发通知 |
 | 知识库 → 应用配置 | `resolveRAGTopK` 读 `rag_top_k` 配置决定召回条数 |
@@ -476,7 +483,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 | 模型 → 角色 | 授权表按角色 ULID 关联；`isAdminUser` 用 `*` 权限码判定管理员 |
 | 认证 / 用户管理 → 通知 | 改密、建号、重置密码各发一条 `account` 通知，失败只告警 |
 | 认证 → 登录日志 | 三条失败分支与成功分支各写一条登录结果 |
-| 技能 → 项目 | 项目技能需带项目并经 `mustProjectAccess` 校验 |
+| 提示词 → 项目 | 项目提示词需带项目并经 `mustProjectAccess` 校验 |
 | 项目 → 知识库 / 角色 / 设定 / 大纲 / 连续性 | `ProjectService.Delete` 在事务内级联删这些表，提交后清 MinIO 与 Manticore |
 | 数据总览 → 项目 | 所有统计查询 `JOIN projects` 按 `user_ulid` 过滤，不直接信任前端传入的归属 |
 | 用量分析 ← ai.Client | `ai` 只依赖 `ai.UsageRecorder` 接口，由 `main.go` 注入 `ModelUsageService`，避免叶子层反向依赖 service |
@@ -484,6 +491,6 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 三条贯穿全局的约定：
 
-1. **归属校验统一走 `mustOwnProject`**：项目、卷、章节、角色卡、设定、大纲、连续性、知识库、对话、提示词档案全部经此函数；技能例外地只校验项目存在（`mustProjectAccess`），方便协作。
+1. **归属校验统一走 `mustOwnProject`**：项目、卷、章节、角色卡、设定、大纲、连续性、知识库、对话、提示词库全部经此函数；提示词例外地只校验项目存在（`mustProjectAccess`），方便协作。
 2. **事务边界在 service**：跨表写入用 `repo.WithTx`（章节更新、项目级联删除、切片重建、助手消息 + AI 字数），事务外只做可重建或可降级的外部清理。
 3. **外部依赖失败按「能力边界」处理，而非一律中断**：站内通知、审计日志、登录日志、用量缓冲、Manticore 同步、令牌黑名单查询失败只降级并告警，主链路继续；而 MinIO 写入/读取、队列投递、检索双通道全失败属于该能力本身不可用，直接返回 `ERR_STORAGE`。

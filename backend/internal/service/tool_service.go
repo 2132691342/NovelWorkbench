@@ -541,4 +541,3 @@ func (s *ToolService) runLoreLookup(ctx context.Context, userULID, projectULID s
 	return domain.ToolInvokeDTO{ResultText: builder.String(),
 		MetricMap: map[string]string{"hit_count": intToText(int64(len(loreList)))}}
 }
-

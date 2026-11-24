@@ -59,8 +59,7 @@ func main() {
 		&domain.ForeshadowHookDO{},
 		&domain.ChapterSummaryDO{},
 		&domain.KnowledgeChunkDO{},
-		&domain.SkillDO{},
-		&domain.SkillReferenceDO{},
+
 		&domain.MenuDO{},
 		&domain.JobDO{},
 		&domain.AppSettingDO{},
@@ -76,7 +75,7 @@ func main() {
 		&domain.ModelUsageStatDO{},
 		&domain.NotificationDO{},
 		&domain.LoginLogDO{},
-		&domain.PromptProfileDO{},
+		&domain.PromptDO{},
 		&domain.ToolDO{},
 	); err != nil {
 		pkg.SLogger().Errorw("数据库迁移失败", "error", err)
@@ -126,7 +125,7 @@ func main() {
 	knowledgeRepo := repo.NewKnowledgeRepo(db)
 	outlineRepo := repo.NewOutlineRepo(db)
 	continuityRepo := repo.NewContinuityRepo(db)
-	skillRepo := repo.NewSkillRepo(db)
+	promptRepo := repo.NewPromptRepo(db)
 	menuRepo := repo.NewMenuRepo(db)
 	settingRepo := repo.NewSettingRepo(db)
 	statsRepo := repo.NewStatsRepo(db)
@@ -163,10 +162,8 @@ func main() {
 	chapterService := service.NewChapterService(chapterRepo, volumeRepo, projectRepo, db)
 	characterService := service.NewCharacterService(characterRepo, projectRepo, db)
 	loreService := service.NewLoreService(loreRepo, projectRepo)
-	skillService := service.NewSkillService(skillRepo, projectRepo)
+	promptService := service.NewPromptService(promptRepo, projectRepo)
 	toolService := service.NewToolService(repo.NewToolRepo(db), projectRepo, chapterRepo, characterRepo, loreRepo, continuityRepo)
-	promptProfileRepo := repo.NewPromptProfileRepo(db)
-	promptProfileService := service.NewPromptProfileService(promptProfileRepo, projectRepo)
 	settingService := service.NewSettingService(settingRepo)
 	statsService := service.NewStatsService(statsRepo, projectRepo)
 

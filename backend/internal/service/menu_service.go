@@ -41,9 +41,9 @@ var menuSeedList = []menuSeed{
 
 	{MenuCode: "group_platform", MenuName: "AI 资产", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "layers", SortOrder: 30},
 	{MenuCode: "models", ParentCode: "group_platform", MenuName: "模型供应商", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/models", ComponentPath: "views/Models/index", IconCode: "model", PermCode: domain.PermModelManage, SortOrder: 10},
-	{MenuCode: "skills", ParentCode: "group_platform", MenuName: "技能管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/skills", ComponentPath: "views/Skills/index", IconCode: "wand", PermCode: domain.PermSkillManage, SortOrder: 20},
+
 	{MenuCode: "tools", ParentCode: "group_platform", MenuName: "工具管理", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/tools", ComponentPath: "views/Tools/index", IconCode: "tool", PermCode: domain.PermToolManage, SortOrder: 25},
-	{MenuCode: "prompts", ParentCode: "group_platform", MenuName: "提示词档案", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/prompts", ComponentPath: "views/Prompts/index", IconCode: "sparkles", PermCode: domain.PermPromptManage, SortOrder: 30},
+	{MenuCode: "prompts", ParentCode: "group_platform", MenuName: "提示词库", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/prompts", ComponentPath: "views/Prompts/index", IconCode: "sparkles", PermCode: domain.PermPromptManage, SortOrder: 20},
 	{MenuCode: "notifications", ParentCode: "group_platform", MenuName: "通知中心", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeGlobal, RoutePath: "/notifications", ComponentPath: "views/Notifications/index", IconCode: "bell", SortOrder: 40},
 
 	{MenuCode: "group_system", MenuName: "系统", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "settings", SortOrder: 40},
@@ -77,6 +77,9 @@ func NewMenuService(menuRepo *repo.MenuRepo, roleSvc *RoleService) *MenuService 
 
 // SeedDefaults 播种内置菜单（幂等：按 menu_code 查缺补插；已存在则同步内置字段，保证升级后路由与权限不漂移）。
 func (s *MenuService) SeedDefaults(ctx context.Context) error {
+	if err := s.dropRetiredSeeds(ctx); err != nil {
+		return err
+	}
 	ulidByCode := make(map[string]string, len(menuSeedList))
 	for _, item := range menuSeedList {
 		existing, err := s.menuRepo.GetByCode(ctx, item.MenuCode)
@@ -120,6 +123,34 @@ func (s *MenuService) SeedDefaults(ctx context.Context) error {
 			return err
 		}
 		ulidByCode[item.MenuCode] = do.MenuULID
+	}
+	return nil
+}
+
+// retiredMenuCodeList 已下线菜单编码：这些页面被合并或删除，库里的残留行必须清理，
+// 否则导航会指向已不存在的前端组件，点击必然 404。作者自建菜单不在其中。
+var retiredMenuCodeList = []string{"skills"}
+
+// dropRetiredSeeds 删除已下线的内置菜单行（只按显式清单删，作者自建菜单不受影响）。
+func (s *MenuService) dropRetiredSeeds(ctx context.Context) error {
+	for _, menuCode := range retiredMenuCodeList {
+		existing, err := s.menuRepo.GetByCode(ctx, menuCode)
+		if err != nil {
+			return err
+		}
+		if existing == nil {
+			continue
+		}
+		children, err := s.menuRepo.CountChildren(ctx, existing.MenuULID)
+		if err != nil {
+			return err
+		}
+		if children > 0 {
+			continue // 作者在该页下挂了子项，保留层级不破坏导航
+		}
+		if err := s.menuRepo.Delete(ctx, existing.MenuULID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

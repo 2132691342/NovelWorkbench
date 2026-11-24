@@ -1,11 +1,11 @@
-// 本文件实现 AI 对话的上下文装配：素材加载、块构造、截断与消息序列成型（纯函数为主）。
+// 本文件实现 AI 对话的上下文装配：素材加载、上下文块构造、历史选取与消息序列成型。
+// 关键约定：注入的提示词与上下文一律以系统级消息进入消息序列，用户输入始终是用户级消息。
 
 package service
 
 import (
 	"context"
 	"encoding/json"
-
 	"strings"
 	"unicode/utf8"
 
@@ -42,33 +42,29 @@ type docSource struct {
 
 // chatContextInput 上下文装配输入（纯数据，供 buildContextBlocks 消费，便于测试注入）。
 type chatContextInput struct {
-	SkillTemplate  string                    // 命中技能的提示词模板（空为自由对话）
-	SkillVariable  map[string]string         // 技能变量取值（渲染模板用）
-	SkillRefList   []string                  // 技能参考资料正文（命中后注入）
-	UserInput      string                    // 解析后的用户正文（技能参数）
+	UserInput      string                    // 解析后的用户正文（提示词占位符用）
 	ChapterList    []chapterSource           // 当前章与引用章（首项为当前章）
 	DocList        []docSource               // @引用文档
 	RagList        []domain.KnowledgeChunkVO // 知识库召回切片
 	RefSummaryList []string                  // @显式引用的章节摘要正文
-	RefPromptList  []string                  // @显式引用的提示词档案正文
+	RefPromptList  []string                  // @显式引用的提示词正文
 	SummaryList    []string                  // 当前章前后章梗概
 	CharacterList  []domain.CharacterDO      // 项目角色卡
 	LoreList       []domain.LoreDO           // 项目设定条目（note 类型禁止注入）
-	HistoryList    []domain.ChatMessageDO    // 注入历史（旧→新）
 	ToolResultList []string                  // 工具执行结果（按工具顺序注入）
 }
 
-// buildContextBlocks 组装上下文块并返回最终指令文本（纯函数）。
-// 技能命中时渲染 {{user_input}}/{{chapter_content}}/{{context}}（context 为其余块先装配文本）；
-// 块顺序即同优先级稳定顺序：章节 → 文档 → 召回 → 梗概 → 角色 → 设定 → 历史。
-func buildContextBlocks(input chatContextInput) ([]ai.ContextBlock, string) {
+// buildContextBlocks 组装上下文块（纯函数）。
+// 块顺序即同优先级稳定顺序：章节 → 文档 → 摘要 → 提示词 → 召回 → 梗概 → 角色 → 设定 → 工具结果。
+func buildContextBlocks(input chatContextInput) []ai.ContextBlock {
 	blocks := make([]ai.ContextBlock, 0, len(input.ChapterList)+len(input.DocList)+6)
 	for i := range input.ChapterList {
 		chapter := &input.ChapterList[i]
 		if strings.TrimSpace(chapter.ContentText) == "" {
 			continue
 		}
-		block := ai.ContextBlock{BlockKey: "ref_chapter", Priority: ai.PriorityExplicitRef, ContentText: "【引用章节】" + chapter.ChapterName + "\n" + chapter.ContentText}
+		block := ai.ContextBlock{BlockKey: "ref_chapter", Priority: ai.PriorityExplicitRef,
+			ContentText: "【引用章节】" + chapter.ChapterName + "\n" + chapter.ContentText}
 		if chapter.IsCurrent {
 			block.BlockKey = "current_chapter"
 			block.Priority = ai.PriorityCurrentChapter
@@ -98,7 +94,7 @@ func buildContextBlocks(input chatContextInput) ([]ai.ContextBlock, string) {
 		blocks = append(blocks, ai.ContextBlock{
 			BlockKey:    "ref_prompt",
 			Priority:    ai.PriorityExplicitRef,
-			ContentText: "【引用提示词档案】\n" + strings.Join(input.RefPromptList, "\n\n"),
+			ContentText: "【引用提示词】\n" + strings.Join(input.RefPromptList, "\n\n"),
 		})
 	}
 	if len(input.RagList) > 0 {
@@ -130,33 +126,11 @@ func buildContextBlocks(input chatContextInput) ([]ai.ContextBlock, string) {
 	if len(input.ToolResultList) > 0 {
 		blocks = append(blocks, ai.ContextBlock{
 			BlockKey:    "tool_result",
-			Priority:    ai.PrioritySkillRef,
+			Priority:    ai.PriorityToolResult,
 			ContentText: "【工具结果】\n" + strings.Join(input.ToolResultList, "\n\n"),
 		})
 	}
-	if len(input.SkillRefList) > 0 {
-		blocks = append(blocks, ai.ContextBlock{
-			BlockKey:    "skill_reference",
-			Priority:    ai.PrioritySkillRef,
-			ContentText: "【技能参考资料】\n" + strings.Join(input.SkillRefList, "\n\n"),
-		})
-	}
-	if input.SkillTemplate == "" {
-		return blocks, input.UserInput
-	}
-	// 技能渲染块优先级最高：context 取其余块先装配文本，chapter_content 超预算由装配裁剪。
-	contextText, _ := ai.AssembleContext(blocks, ai.ContextBudgetChars)
-	valueMap := map[string]string{
-		"user_input":      input.UserInput,
-		"chapter_content": truncateRunes(joinChapterContent(input.ChapterList), ai.ContextBudgetChars),
-		"context":         contextText,
-	}
-	for key, value := range input.SkillVariable {
-		valueMap[key] = value
-	}
-	rendered := ai.RenderPrompt(input.SkillTemplate, valueMap)
-	skillBlock := ai.ContextBlock{BlockKey: "skill", Priority: ai.PrioritySkill, ContentText: rendered}
-	return append([]ai.ContextBlock{skillBlock}, blocks...), rendered
+	return blocks
 }
 
 // joinChapterContent 拼接引用章节正文（当前章在前）。
@@ -205,20 +179,6 @@ func formatLoreBlock(lores []domain.LoreDO) string {
 	return builder.String()
 }
 
-// formatHistoryBlock 拼接对话历史块（旧→新，角色标注）。
-func formatHistoryBlock(messages []domain.ChatMessageDO) string {
-	var builder strings.Builder
-	builder.WriteString("【对话历史】")
-	for i := range messages {
-		roleLabel := "用户"
-		if messages[i].RoleCode == domain.ChatRoleAssistant {
-			roleLabel = "助手"
-		}
-		builder.WriteString("\n" + roleLabel + "：" + messages[i].ContentText)
-	}
-	return builder.String()
-}
-
 // selectHistoryMessages 选取注入历史（纯函数）：取最近 n 条为主干（旧→新，n<=0 不注入常规历史），
 // 显式引用消息必注入（不受 n 限制，去重后按时间旧→新追加到尾部）。
 func selectHistoryMessages(messages []domain.ChatMessageDO, refMessageULIDs []string, n int) []domain.ChatMessageDO {
@@ -249,17 +209,27 @@ func selectHistoryMessages(messages []domain.ChatMessageDO, refMessageULIDs []st
 }
 
 // buildChatMessages 构造发往模型的消息序列（纯函数）：
-// 系统提示词（档案正文 + 项目文风约束）→ 【上下文】装配文本（为空省略）→ 历史（role 映射）→ 最终指令。
-func buildChatMessages(systemPromptText, styleText, contextText, instructionText string, historyList []domain.ChatMessageDO) []*schema.Message {
-	messages := make([]*schema.Message, 0, len(historyList)+3)
-	messages = append(messages, &schema.Message{Role: schema.System, Content: ai.ComposeSystemPrompt(systemPromptText, styleText)})
-	if contextText != "" {
-		messages = append(messages, &schema.Message{Role: schema.User, Content: "【上下文】\n" + contextText})
+// 身份提示词（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史（原生角色）→ 用户输入（用户）。
+// 注入内容全部是系统级消息，用户输入始终是用户级消息，二者在消息列表里可区分。
+func buildChatMessages(input chatMessageInput) []*schema.Message {
+	messages := make([]*schema.Message, 0, len(input.HistoryList)+4)
+	messages = append(messages, &schema.Message{
+		Role:    schema.System,
+		Content: ai.ComposeSystemPrompt(input.SystemPromptText, input.StyleText),
+	})
+	if input.ContextText != "" {
+		messages = append(messages, &schema.Message{Role: schema.System, Content: "【上下文】\n" + input.ContextText})
 	}
-	for i := range historyList {
-		messages = append(messages, &schema.Message{Role: chatRoleOf(historyList[i].RoleCode), Content: historyList[i].ContentText})
+	if input.CommandText != "" {
+		messages = append(messages, &schema.Message{Role: schema.System, Content: input.CommandText})
 	}
-	messages = append(messages, &schema.Message{Role: schema.User, Content: instructionText})
+	for i := range input.HistoryList {
+		messages = append(messages, &schema.Message{
+			Role:    chatRoleOf(input.HistoryList[i].RoleCode),
+			Content: input.HistoryList[i].ContentText,
+		})
+	}
+	messages = append(messages, &schema.Message{Role: schema.User, Content: input.UserText})
 	return messages
 }
 
@@ -366,12 +336,15 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 		}
 	}
 	for _, promptULID := range req.RefPromptULIDList {
-		profile, err := s.promptProfileSvc.mustReadableProfile(ctx, userULID, promptULID)
+		prompt, err := s.promptSvc.Detail(ctx, promptULID)
 		if err != nil {
 			return input, err
 		}
-		if text := strings.TrimSpace(profile.SystemPromptText); text != "" {
-			input.RefPromptList = append(input.RefPromptList, "《"+profile.PromptProfileName+"》\n"+text)
+		if prompt.ScopeCode == domain.PromptScopeProject && prompt.ProjectULID != req.ProjectULID {
+			return input, pkg.NewBizError(domain.RespCodeForbidden, "无权引用该提示词")
+		}
+		if text := strings.TrimSpace(prompt.PromptText); text != "" {
+			input.RefPromptList = append(input.RefPromptList, "《"+prompt.PromptName+"》\n"+text)
 		}
 	}
 	if strings.TrimSpace(userInput) != "" {
@@ -479,7 +452,7 @@ func toChatMessageVO(do *domain.ChatMessageDO) domain.ChatMessageVO {
 		RoleCode:           do.RoleCode,
 		ContentText:        do.ContentText,
 		ReasoningText:      do.ReasoningText,
-		SkillCode:          do.SkillCode,
+		PromptCode:         do.PromptCode,
 		ToolCodeList:       decodeStringList(do.ToolCodeJSON),
 		RefDocULIDList:     decodeStringList(do.RefDocJSON),
 		RefChapterULIDList: decodeStringList(do.RefChapterJSON),

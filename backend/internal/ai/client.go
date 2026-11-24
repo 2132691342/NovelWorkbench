@@ -1,4 +1,4 @@
-// Package ai 封装模型网关调用（eino + OpenAI 兼容 / Anthropic 原生组件）、提示词装配与技能资产。
+// Package ai 封装模型网关调用（eino + OpenAI 兼容 / Anthropic 原生组件）、提示词装配与上下文预算。
 package ai
 
 import (

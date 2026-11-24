@@ -100,10 +100,10 @@
     }
   }
 
-  const openAiWithSkill = (skillCode: string) => {
+  const openAiWithPrompt = (promptCode: string) => {
     rightCollapsed.value = false
     const refList = currentChapter.value ? [currentChapter.value.chapter_ulid] : []
-    aiPanelRef.value?.presetSkill(skillCode, refList)
+    aiPanelRef.value?.presetPrompt(promptCode, refList)
   }
 
   const insertToChapter = (contentText: string) => {
@@ -126,11 +126,11 @@
     await checkPanelRef.value?.run()
   }
 
-  /** 体检面板把问题清单交给 AI 面板（带当前章节引用，用去 AI 味档案改） */
+  /** 体检面板把问题清单交给 AI 面板（带当前章节引用，用去 AI 味提示词改） */
   const askAiWithPrompt = (promptText: string) => {
     rightCollapsed.value = false
     const refList = currentChapter.value ? [currentChapter.value.chapter_ulid] : []
-    aiPanelRef.value?.presetSkill('deai', refList)
+    aiPanelRef.value?.presetPrompt('deai', refList)
     aiPanelRef.value?.presetText(promptText)
   }
 
@@ -169,6 +169,21 @@
     const nextFlag = !focusMode.value
     leftCollapsed.value = nextFlag
     rightCollapsed.value = nextFlag
+  }
+
+  /** AI 面板转来的斜杠动作：写作台级动作用当前章执行 */
+  const handlePanelAction = (actionCode: string) => {
+    if (actionCode === 'check') {
+      void openCheck()
+      return
+    }
+    if (actionCode === 'focus') {
+      toggleFocusMode()
+      return
+    }
+    if (actionCode === 'snapshot') {
+      void openSnapshot()
+    }
   }
 
   watch(
@@ -241,9 +256,9 @@
           :chapter="currentChapter"
           @save-success="handleSaveSuccess"
           @word-count-change="(wordCount) => (liveWordCount = wordCount)"
-          @ai-continue="openAiWithSkill('continue')"
-          @ai-polish="openAiWithSkill('polish')"
-          @ai-summary="openAiWithSkill('summary')"
+          @ai-continue="openAiWithPrompt('continue')"
+          @ai-polish="openAiWithPrompt('polish')"
+          @ai-summary="openAiWithPrompt('summary')"
           @open-snapshot="openSnapshot"
         />
         <ChapterCheckPanel
@@ -264,6 +279,7 @@
           :current-chapter-name="currentChapter?.chapter_name ?? ''"
           @insert-to-chapter="insertToChapter"
           @replace-chapter="replaceChapter"
+          @action="handlePanelAction"
         />
       </aside>
     </div>

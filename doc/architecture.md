@@ -10,8 +10,8 @@
 | --- | --- | --- |
 | 1 | 本文 | 系统是什么、怎么分层、一次请求怎么走、关键取舍在哪 |
 | 2 | [modules.md](modules.md) | 每个业务模块负责什么、数据落在哪、边界与代价 |
-| 3 | [ai.md](ai.md) | 模型网关、上下文装配、技能体系、检索与流式协议 |
-| 4 | [skills.md](skills.md) | 提示词资产的组织方式与维护流程 |
+| 3 | [ai.md](ai.md) | 模型网关、提示词资产与注入、上下文装配、检索与流式协议 |
+| 4 | [prompts.md](prompts.md) | 提示词资产的组织方式与维护流程 |
 | 5 | [api.md](api.md) | 接口契约、包络、业务码与权限码 |
 | 6 | [database.md](database.md) | 表结构、非关系存储、事务与迁移 |
 | 7 | [frontend.md](frontend.md) | 前端工程结构、设计系统、状态与页面实现 |
@@ -23,11 +23,11 @@
 
 ## 1. 系统定位
 
-NovelWorkbench 是前后端分离的 AI 小说创作工作台。以「项目 → 卷 → 章节」为写作主线，把大纲、正文、角色、世界观、知识资料、AI 对话与技能资产收拢进同一个工作台，同时提供完整的 SaaS 管理能力。
+NovelWorkbench 是前后端分离的 AI 小说创作工作台。以「项目 → 卷 → 章节」为写作主线，把大纲、正文、角色、世界观、知识资料、AI 对话与提示词资产收拢进同一个工作台，同时提供完整的 SaaS 管理能力。
 
 | 职责 | 内容 |
 | --- | --- |
-| 创作业务 | 项目导航、卷章目录、正文编辑、快照回滚、角色关系、世界观设定、创作规划、连续性看板、知识库检索、技能资产、AI 流式生成 |
+| 创作业务 | 项目导航、卷章目录、正文编辑、快照回滚、角色关系、世界观设定、创作规划、连续性看板、知识库检索、提示词资产、AI 流式生成 |
 | SaaS 管理 | 用户、角色权限、菜单与权限目录、审计、登录日志、模型供应商与模型目录、用量分析、运行状态、任务中心、站内通知 |
 
 系统不开放注册，账号只能由管理员在「用户管理」中创建并分配角色。
@@ -73,8 +73,6 @@ flowchart LR
 | 12 | 连续性 | `temporal_facts`、`foreshadow_hooks`、`chapter_summaries` | `service/continuity_service.go` |
 | 13 | 知识库 | `knowledge_documents`、`knowledge_chunks` + MinIO + Manticore | `service/knowledge_service.go`、`service/knowledge_worker.go` |
 | 14 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`、`service/chat_context.go`、`service/chat_stream.go` |
-| 15 | 技能资产 | `skills`、`skill_references` | `service/skill_service.go`、`service/skill_template.go`、`service/skill_reference_service.go` |
-| 16 | 提示词档案 | `prompt_profiles` | `service/prompt_profile_service.go` |
 | 16.1 | 工具资产 | `tools` | `service/tool_service.go`、`service/tool_command.go`、`service/tool_helper.go`、`ai/builtin_tools.go`、`ai/check/chapter_check.go` |
 | 17 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants` | `service/model_provider_service.go`、`service/model_access_service.go` |
 | 18 | 数据总览 | `word_count_stats`、`projects` | `service/stats_service.go` |
@@ -117,14 +115,14 @@ backend/
     ├── service       业务规则、事务边界、上下文装配（38 个文件）
     ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，27 个文件）
     ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（24 个文件）
-    ├── ai            模型网关、提示词装配、内置技能、用量契约（18 个文件）
+    ├── ai            模型网关、提示词装配、内置提示词资产、用量契约（19 个文件）
     ├── infra         配置加载、连接构造、启动校验
     └── pkg           ULID、包络、错误、JWT、中间件、密钥封存、审计字段回调与时间工具
 ```
 
 `pkg` 各文件：`ulid.go`（带业务前缀的 ULID 生成）、`errors.go`（业务码与 HTTP 状态映射）、`logger.go`（Zap 全局日志）、`time.go`（RFC3339 格式化）、`text.go`（字数统计与文本工具）、`actor.go`（GORM 审计字段回调）、`jwt.go`（签名与校验）、`secret.go`（密钥封存）、`access_middleware.go`（鉴权、权限、审计）、`middleware.go`（请求 ID、CORS、方法白名单）、`response.go`（统一包络）。
 
-`ai` 目录的 `domain_<域>.go` 共 12 个文件，一个流程域一个文件，与 `skills.md` 的域矩阵一一对应。
+`ai` 目录的 `domain_<域>.go` 共 12 个文件，一个流程域一个文件，与 `prompts.md` 的域矩阵一一对应。
 
 | 约束 | 原因 |
 | --- | --- |
@@ -199,7 +197,7 @@ backend/
 2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 35 张表（失败即退出）。
 3. 连接 Redis / RabbitMQ / MinIO / Manticore；失败只告警并降级。
 4. 构造仓储 → 服务 → 中间件 → 路由。
-5. 播种：内置技能（24 个，12 个流程域各 2 个，按内容指纹升级）、12 份提示词档案、6 个内置工具、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。
+5. 播种：内置提示词（24 份指令 + 12 份身份，按内容指纹升级）、6 个内置工具、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。
 6. 可选播种出厂模型供应商（配置了网关地址与模型名且供应商表为空时）。
 7. 启动知识库索引 worker（RabbitMQ 消费）。
 8. 监听端口；收到 SIGINT/SIGTERM 后优雅关闭 HTTP、worker、连接池。
@@ -234,7 +232,7 @@ sequenceDiagram
   participant AI as ai.Client
   FE->>API: POST /chat/send
   API->>SVC: Send(ctx, req, writer)
-  SVC->>SVC: 技能解析（项目技能覆盖全局）
+  SVC->>SVC: 提示词解析（项目提示词覆盖全局）
   SVC->>RAG: 混合检索（词法 + RRF + 可选重排）
   RAG-->>SVC: 召回切片与追踪
   SVC->>SVC: 上下文装配（优先级 + 12000 字节预算）
@@ -246,7 +244,7 @@ sequenceDiagram
   SVC-->>API: SSE done（含召回依据）
 ```
 
-关键机制见 [ai.md](ai.md)。设计取舍：单链路（所有生成走 `/chat/send` + 技能码）保证上下文、容错与审计只有一处实现。
+关键机制见 [ai.md](ai.md)。设计取舍：单链路（所有生成走 `/chat/send` + 提示词码）保证上下文、容错与审计只有一处实现。
 
 ### 7.4 AI 开书
 
@@ -302,7 +300,7 @@ frontend/
 │   ├── store       user / menu / project / app / locale / tagsView / notification
 │   ├── locales     界面壳文案（zh-CN）
 │   └── views       登录、仪表盘、写作台、创作规划、连续性、角色、设定、知识库、笔记、
-│                   模型、技能、提示词、通知、个人中心、管理端各页、系统设置
+│                   模型、提示词、工具、通知、个人中心、管理端各页、系统设置
 ```
 
 交互约定：按钮五态（默认/悬停/按下/禁用/加载，悬停放大、按下缩小）、异步动作必有反馈、列表具备加载与空态、危险操作二次确认、路由切换有过渡、AI 流式输出可中止。侧边栏由 `GET /menu/nav` 决定显示什么，页面组件静态声明，因此改菜单不需要前端发版。

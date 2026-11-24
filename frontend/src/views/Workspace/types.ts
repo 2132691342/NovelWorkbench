@@ -40,10 +40,12 @@ export interface ChatRefItem {
   ref_ulid: string
   ref_name: string
   ref_desc: string
+  /** 条目来源页签：聚合页签下选中时据此写回对应列表 */
+  ref_tab_code: ChatRefTabCode
 }
 
-/** @ 引用选择器的页签编码 */
-export type ChatRefTabCode = 'doc' | 'chapter' | 'summary' | 'prompt' | 'message'
+/** @ 引用选择器的页签编码（all 为跨来源聚合检索） */
+export type ChatRefTabCode = 'all' | 'doc' | 'chapter' | 'summary' | 'prompt' | 'message'
 
 /** 命令弹层候选项：技能与工具归一成同一形状 */
 export interface ChatCommandOption {
@@ -51,4 +53,8 @@ export interface ChatCommandOption {
   title: string
   desc: string
   active: boolean
+  /** 来源：action=本地动作（不耗模型）；prompt=指令提示词（系统级注入）；tool=服务端工具 */
+  source_code: 'action' | 'prompt' | 'tool'
+  /** 图标（mdi 名），本地动作才有 */
+  icon: string
 }

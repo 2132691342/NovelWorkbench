@@ -1,5 +1,5 @@
-// AI 基础能力的长链路回归：出厂资产 → 开书方案解析 → 模型网关实例构造。
-// 三条链路的共同点是「配错才在生产暴露」：资产形状错会让播种出的技能无法触发，
+// AI 基础能力的长链路回归：出厂提示词资产 → 开书方案解析 → 模型网关实例构造。
+// 三条链路的共同点是「配错才在生产暴露」：资产形状错会让播种出的提示词无法触发，
 // 方案解析错会让整份开书结果作废，缓存键漏维度会让换密钥后继续用旧凭据。
 
 package ai
@@ -10,48 +10,53 @@ import (
 	"time"
 )
 
-// TestBuiltinAssetChain 覆盖出厂资产从定义到可播种的完整链路：
-// 域形状（每域一份档案两个技能）→ 编码全局唯一 → 模板占位符全部登记 → 指纹稳定。
+// TestBuiltinAssetChain 覆盖出厂提示词从定义到可播种的完整链路：
+// 域形状（每域一份身份提示词两份指令提示词）→ 编码全局唯一 → 占位符全部登记 → 指纹稳定。
 func TestBuiltinAssetChain(t *testing.T) {
 	domainList := BuiltinDomains()
 	if len(domainList) == 0 {
 		t.Fatal("内置流程域为空")
 	}
 
-	// 步骤1：形状与编码唯一。档案与技能编码重复会在播种时互相覆盖。
-	profileCodeSet := map[string]bool{}
-	skillCodeSet := map[string]bool{}
+	// 步骤1：形状与编码唯一。身份与指令编码重复会在播种时互相覆盖。
+	codeSet := map[string]bool{}
 	for _, item := range domainList {
-		if item.DomainCode == "" || item.DomainName == "" || item.Profile.ProfileCode == "" ||
-			item.Profile.SystemPrompt == "" || len(item.SkillList) != 2 {
+		if item.DomainCode == "" || item.DomainName == "" || item.SystemPromptCode == "" ||
+			item.SystemPromptText == "" || len(item.CommandList) != 2 {
 			t.Fatalf("流程域形状不合法：%+v", item)
 		}
-		if profileCodeSet[item.Profile.ProfileCode] {
-			t.Fatalf("档案编码重复：%s", item.Profile.ProfileCode)
+		if codeSet[item.SystemPromptCode] {
+			t.Fatalf("身份提示词编码重复：%s", item.SystemPromptCode)
 		}
-		profileCodeSet[item.Profile.ProfileCode] = true
-		for _, skill := range item.SkillList {
-			if skillCodeSet[skill.CommandCode] {
-				t.Fatalf("技能编码重复：%s", skill.CommandCode)
+		codeSet[item.SystemPromptCode] = true
+		for _, command := range item.CommandList {
+			if codeSet[command.PromptCode] {
+				t.Fatalf("指令提示词编码重复：%s", command.PromptCode)
 			}
-			skillCodeSet[skill.CommandCode] = true
+			codeSet[command.PromptCode] = true
 		}
 	}
 
-	// 步骤2：模板可渲染。占位符未登记会让渲染后变量为空，技能在对话中无法产出可用提示词。
+	// 步骤2：占位符可渲染。未登记占位符会被渲染为空串，等于静默丢上下文。
 	for _, item := range domainList {
-		for _, skill := range item.SkillList {
-			if unknown := TemplatePlaceholders(skill.PromptTemplate, BuiltinPlaceholders); len(unknown) > 0 {
-				t.Fatalf("技能 %s 使用了未登记的占位符：%v", skill.CommandCode, unknown)
+		for _, command := range item.CommandList {
+			if unknown := TemplatePlaceholders(command.PromptText, BuiltinPlaceholders); len(unknown) > 0 {
+				t.Fatalf("提示词 %s 使用了未登记的占位符：%v", command.PromptCode, unknown)
 			}
+		}
+		if unknown := TemplatePlaceholders(item.SystemPromptText, BuiltinPlaceholders); len(unknown) > 0 {
+			t.Fatalf("身份提示词 %s 使用了未登记的占位符：%v", item.SystemPromptCode, unknown)
 		}
 	}
 
 	// 步骤3：指纹稳定。格式或算法变化会让历史资产被误判为「内容已变」而全量重播种。
 	for _, item := range domainList {
-		for _, skill := range item.SkillList {
-			if len(skill.ContentHash()) != 64 {
-				t.Fatalf("技能 %s 指纹异常", skill.CommandCode)
+		if len(item.SystemContentHash()) != 64 {
+			t.Fatalf("身份提示词 %s 指纹异常", item.SystemPromptCode)
+		}
+		for _, command := range item.CommandList {
+			if len(command.ContentHash()) != 64 {
+				t.Fatalf("指令提示词 %s 指纹异常", command.PromptCode)
 			}
 		}
 	}
@@ -80,10 +85,10 @@ func TestOpenBookPlanChain(t *testing.T) {
 
 	// 步骤2：拒绝。无 JSON、缺书名、缺卷章与非法 JSON 一律报错，不产出半成品方案。
 	badCases := map[string]string{
-		"无 JSON":    "抱歉，我无法完成。",
-		"缺书名":       `{"project_name":"","volume_list":[{"volume_name":"第一卷","chapter_list":[]}]}`,
-		"缺卷章结构":     `{"project_name":"长夜行","volume_list":[]}`,
-		"非法 JSON":   `{"project_name":"长夜行","volume_list":[}`,
+		"无 JSON":  "抱歉，我无法完成。",
+		"缺书名":     `{"project_name":"","volume_list":[{"volume_name":"第一卷","chapter_list":[]}]}`,
+		"缺卷章结构":   `{"project_name":"长夜行","volume_list":[]}`,
+		"非法 JSON": `{"project_name":"长夜行","volume_list":[}`,
 	}
 	for name, bad := range badCases {
 		if _, err := ParseBootstrapPlan(bad); err == nil {

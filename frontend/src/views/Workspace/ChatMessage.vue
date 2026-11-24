@@ -57,7 +57,7 @@
     <div class="chat-message__body">
       <header class="chat-message__head">
         <span class="chat-message__role">{{ isUser ? '我' : 'AI' }}</span>
-        <span v-if="message.skill_code" class="chat-message__skill">/{{ message.skill_code }}</span>
+        <span v-if="message.prompt_code" class="chat-message__prompt">/{{ message.prompt_code }}</span>
         <span
           v-for="toolCode in message.tool_code_list"
           :key="`tool-${toolCode}`"
@@ -180,7 +180,7 @@
       color: var(--el-text-color-secondary);
     }
 
-    &__skill {
+    &__prompt {
       padding: 0 6px;
       font-size: 10px;
       color: var(--el-color-primary);

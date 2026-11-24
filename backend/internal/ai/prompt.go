@@ -1,4 +1,4 @@
-// 本文件定义 AI 上下文的优先级体系与装配规则：上下文块、字符预算裁剪与提示词模板渲染。
+// 本文件定义 AI 上下文的优先级体系与装配规则：上下文块、字符预算裁剪与提示词渲染。
 
 package ai
 
@@ -8,16 +8,14 @@ import (
 	"strings"
 )
 
-// 上下文块优先级常量：数值越大越先获得预算（技能提示与当前章节不可丢弃）。
+// 上下文块优先级常量：数值越大越先获得预算（当前章节与指令提示词不可丢弃）。
 const (
-	PrioritySkill          = 100 // 技能提示词模板
-	PriorityCurrentChapter = 90  // 当前编辑章节正文
-	PrioritySkillRef       = 85  // 技能参考资料（低于当前章节，高于显式引用）
-	PriorityExplicitRef    = 80  // @显式引用的文档/章节
+	PriorityCurrentChapter = 100 // 当前编辑章节正文
+	PriorityExplicitRef    = 90  // @显式引用的文档/章节/摘要/提示词
+	PriorityToolResult     = 85  // 工具执行结果
 	PriorityRAG            = 70  // 知识库召回片段
 	PriorityChapterSummary = 60  // 前文章节梗概
-	PriorityCharacter      = 50  // 相关角色卡
-	PriorityHistory        = 40  // 最近聊天历史
+	PriorityCharacter      = 50  // 相关角色卡与设定
 )
 
 // ContextBudgetChars 上下文装配的字符预算（约 8k token 输入侧，宁少勿超保证稳定）。
@@ -57,9 +55,9 @@ func AssembleContext(blocks []ContextBlock, budgetChars int) (string, []string) 
 var placeholderPattern = regexp.MustCompile(`\{\{\s*(\w+)\s*\}\}`)
 
 // BuiltinPlaceholders 内置占位符白名单：这些变量由系统在装配上下文时自动注入，
-// 技能模板可直接使用而无需在变量声明中登记。
+// 提示词可直接使用而无需额外登记。
 var BuiltinPlaceholders = map[string]bool{
-	"user_input": true, "chapter_content": true, "context": true, "skill_code": true,
+	"user_input": true, "chapter_content": true, "context": true, "prompt_code": true,
 }
 
 // RenderPrompt 渲染 {{占位符}} 模板：命中 valueMap 替换为值，缺失占位符替换为空串。
@@ -85,13 +83,13 @@ func TemplatePlaceholders(template string, known map[string]bool) []string {
 	return unknown
 }
 
-// SystemPrompt 生成小说创作助手系统提示词（无档案时的兜底，注入项目文风约束）。
+// SystemPrompt 生成小说创作助手基础提示词（无身份提示词时的兜底，注入项目文风约束）。
 func SystemPrompt(styleText string) string {
 	return ComposeSystemPrompt("", styleText)
 }
 
-// ComposeSystemPrompt 组合最终系统提示词：档案正文（为空用内置兜底）+ 项目文风约束。
-// 档案决定身份与底线，文风约束属于项目事实，二者始终同时下发。
+// ComposeSystemPrompt 组合最终系统提示词：身份提示词正文（为空用内置兜底）+ 项目文风约束。
+// 身份提示词决定身份与底线，文风约束属于项目事实，二者始终同时下发。
 func ComposeSystemPrompt(profileText, styleText string) string {
 	var builder strings.Builder
 	if strings.TrimSpace(profileText) == "" {

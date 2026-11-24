@@ -1,4 +1,4 @@
-<!-- 提示词档案页：按流程域分组展示与编辑档案。 -->
+<!-- 提示词库页：按流程域分组展示身份提示词与指令提示词，支持编辑、启停、预览与命令解析。 -->
 <script setup lang="ts">
   import { computed, onMounted, ref, watch } from 'vue'
   import {
@@ -14,40 +14,46 @@
     ElTableColumn,
     ElTag
   } from 'element-plus'
-  import { deletePromptProfile, listPromptProfiles, savePromptProfile } from '@/api/prompt'
-  import type { NWPromptProfileVo } from '@/api/contracts'
+  import { deletePrompt, listPrompts, savePrompt } from '@/api/prompt'
+  import type { NWPromptVo } from '@/api/contracts'
   import { useProjectStore } from '@/store/modules/project'
   import { formatRelativeTime } from '@/utils/time'
   import PromptEditDrawer from './components/PromptEditDrawer.vue'
   import PromptPreviewDialog from './components/PromptPreviewDialog.vue'
 
-  /** 分组结构：按流程域归组，无流程域的自建档案归入「自建档案」 */
-  interface ProfileGroup {
+  /** 分组结构：按流程域归组，无流程域的自建提示词归入「自建提示词」 */
+  interface PromptGroup {
     groupKey: string
     groupName: string
-    rows: NWPromptProfileVo[]
+    rows: NWPromptVo[]
   }
 
   const projectStore = useProjectStore()
 
   const loading = ref(false)
-  const rows = ref<NWPromptProfileVo[]>([])
+  const rows = ref<NWPromptVo[]>([])
   const projectUlid = ref(projectStore.currentProjectUlid)
   const enabledOnly = ref(false)
+  const kindCode = ref('')
+  const keywordText = ref('')
   const togglingUlid = ref('')
 
   const drawer = ref<InstanceType<typeof PromptEditDrawer>>()
   const previewVisible = ref(false)
-  const previewProfile = ref<NWPromptProfileVo | null>(null)
+  const previewPrompt = ref<NWPromptVo | null>(null)
 
   const projectNameOf = (ulid: string) =>
     projectStore.projectOptions.find((item) => item.project_ulid === ulid)?.project_name ?? ''
 
+  const kindLabel = (code: string) => (code === 'system' ? '身份' : '指令')
+
   const load = async () => {
     loading.value = true
     try {
-      rows.value = await listPromptProfiles({
+      rows.value = await listPrompts({
         project_ulid: projectUlid.value || undefined,
+        prompt_kind_code: kindCode.value || undefined,
+        keyword_text: keywordText.value || undefined,
         enabled_only: enabledOnly.value || undefined
       })
     } catch {
@@ -57,11 +63,11 @@
     }
   }
 
-  const groups = computed<ProfileGroup[]>(() => {
-    const groupMap = new Map<string, ProfileGroup>()
+  const groups = computed<PromptGroup[]>(() => {
+    const groupMap = new Map<string, PromptGroup>()
     for (const row of rows.value) {
       const groupKey = row.domain_code || 'custom'
-      const groupName = row.domain_name || '自建档案'
+      const groupName = row.domain_name || '自建提示词'
       const existing = groupMap.get(groupKey)
       if (existing) {
         existing.rows.push(row)
@@ -71,29 +77,36 @@
     }
     return [...groupMap.values()].map((group) => ({
       ...group,
-      rows: [...group.rows].sort((left, right) => left.sort_order - right.sort_order)
+      rows: [...group.rows].sort((left, right) => {
+        if (left.prompt_kind_code !== right.prompt_kind_code) {
+          return left.prompt_kind_code === 'system' ? -1 : 1
+        }
+        return left.sort_order - right.sort_order
+      })
     }))
   })
 
   const builtinCount = computed(() => rows.value.filter((row) => row.builtin_flag).length)
   const enabledCount = computed(() => rows.value.filter((row) => row.enabled_flag).length)
 
-  /** 开关切换需回传完整档案体（保存为整体覆盖） */
-  const toggleEnabled = async (row: NWPromptProfileVo, enabled: boolean) => {
-    togglingUlid.value = row.prompt_profile_ulid
+  /** 开关切换需回传完整提示词体（保存为整体覆盖） */
+  const toggleEnabled = async (row: NWPromptVo, enabled: boolean) => {
+    togglingUlid.value = row.prompt_ulid
     try {
-      await savePromptProfile({
-        prompt_profile_ulid: row.prompt_profile_ulid,
-        prompt_profile_code: row.prompt_profile_code,
-        prompt_profile_name: row.prompt_profile_name,
+      await savePrompt({
+        prompt_ulid: row.prompt_ulid,
+        prompt_code: row.prompt_code,
+        prompt_name: row.prompt_name,
+        prompt_kind_code: row.prompt_kind_code,
         scope_code: row.scope_code,
         project_ulid: row.project_ulid || undefined,
+        category_code: row.category_code,
         description_text: row.description_text,
-        system_prompt_text: row.system_prompt_text,
+        prompt_text: row.prompt_text,
         enabled_flag: enabled,
         sort_order: row.sort_order
       })
-      ElMessage.success(enabled ? '档案已启用' : '档案已停用')
+      ElMessage.success(enabled ? '提示词已启用' : '提示词已停用')
       await load()
     } catch {
       row.enabled_flag = !enabled
@@ -102,33 +115,25 @@
     }
   }
 
-  const remove = async (row: NWPromptProfileVo) => {
+  const remove = async (row: NWPromptVo) => {
     try {
-      await ElMessageBox.confirm(
-        `将删除提示词档案「${row.prompt_profile_name}」，确定吗？`,
-        '删除档案',
-        { type: 'warning' }
-      )
+      await ElMessageBox.confirm(`将删除提示词「${row.prompt_name}」，确定吗？`, '删除提示词', {
+        type: 'warning'
+      })
     } catch {
       return
     }
-    await deletePromptProfile(row.prompt_profile_ulid)
-    ElMessage.success('档案已删除')
+    await deletePrompt(row.prompt_ulid)
+    ElMessage.success('提示词已删除')
     await load()
   }
 
-  const openPreview = (row: NWPromptProfileVo) => {
-    previewProfile.value = row
+  const openPreview = (row: NWPromptVo) => {
+    previewPrompt.value = row
     previewVisible.value = true
   }
 
-  watch(projectUlid, () => {
-    void load()
-  })
-
-  watch(enabledOnly, () => {
-    void load()
-  })
+  watch([projectUlid, enabledOnly, kindCode], () => void load())
 
   onMounted(async () => {
     const initialUlid = projectUlid.value
@@ -146,7 +151,7 @@
     <div class="nw-toolbar">
       <ElSelect
         v-model="projectUlid"
-        placeholder="仅全局档案"
+        placeholder="仅全局提示词"
         clearable
         filterable
         class="prompts__project"
@@ -158,9 +163,13 @@
           :value="item.project_ulid"
         />
       </ElSelect>
+      <ElSelect v-model="kindCode" placeholder="全部种类" clearable class="prompts__kind">
+        <ElOption label="身份提示词（会话常驻）" value="system" />
+        <ElOption label="指令提示词（/ 触发）" value="command" />
+      </ElSelect>
       <ElButton type="primary" plain @click="drawer?.open(undefined, projectUlid)">
         <Icon icon="mdi:plus" :size="15" />
-        <span class="ml-4px">新建档案</span>
+        <span class="ml-4px">新建提示词</span>
       </ElButton>
       <div class="prompts__spacer" />
       <div class="prompts__filter">
@@ -168,7 +177,7 @@
         <span class="nw-hint">仅看启用</span>
       </div>
       <span class="nw-hint">
-        共 {{ rows.length }} 个档案 · 启用 {{ enabledCount }} · 内置 {{ builtinCount }}
+        共 {{ rows.length }} 条 · 启用 {{ enabledCount }} · 内置 {{ builtinCount }}
       </span>
     </div>
 
@@ -177,30 +186,42 @@
         <template #header>
           <div class="prompts__group-head">
             <span class="prompts__group-title">{{ group.groupName }}</span>
-            <span class="nw-hint">{{ group.rows.length }} 个</span>
+            <span class="nw-hint">{{ group.rows.length }} 条</span>
           </div>
         </template>
 
         <ElTable :data="group.rows" size="small">
-          <ElTableColumn label="档案" min-width="200">
+          <ElTableColumn label="提示词" min-width="240">
             <template #default="{ row }">
               <div class="cell-main">
                 <span class="cell-main__title">
-                  {{ row.prompt_profile_name }}
-                  <span class="cell-main__code">{{ row.prompt_profile_code }}</span>
+                  {{ row.prompt_name }}
+                  <span class="cell-main__code">
+                    {{ row.prompt_kind_code === 'command' ? '/' : '' }}{{ row.prompt_code }}
+                  </span>
                 </span>
                 <span class="cell-main__sub">
-                  {{ row.description_text || row.system_prompt_text.slice(0, 60) }}
+                  {{ row.description_text || row.prompt_text.slice(0, 60) }}
                 </span>
               </div>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="标记" width="180">
+          <ElTableColumn label="种类" width="90">
+            <template #default="{ row }">
+              <ElTag size="small" :type="row.prompt_kind_code === 'system' ? 'success' : 'info'" effect="plain">
+                {{ kindLabel(row.prompt_kind_code) }}
+              </ElTag>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="标记" width="170">
             <template #default="{ row }">
               <div class="cell-tags">
                 <ElTag v-if="row.builtin_flag" size="small" type="info" effect="plain">内置</ElTag>
                 <ElTag v-if="row.customized_flag" size="small" type="warning" effect="plain">
                   已自定义
+                </ElTag>
+                <ElTag v-if="row.overridden_flag" size="small" type="danger" effect="plain">
+                  被项目覆盖
                 </ElTag>
                 <ElTag v-if="!row.builtin_flag" size="small" type="success" effect="plain">自建</ElTag>
               </div>
@@ -215,10 +236,7 @@
             </template>
           </ElTableColumn>
           <ElTableColumn label="字数" width="80">
-            <template #default="{ row }">{{ row.system_prompt_text.length }}</template>
-          </ElTableColumn>
-          <ElTableColumn label="排序" width="70">
-            <template #default="{ row }">{{ row.sort_order }}</template>
+            <template #default="{ row }">{{ row.prompt_text.length }}</template>
           </ElTableColumn>
           <ElTableColumn label="更新" width="110">
             <template #default="{ row }">
@@ -230,15 +248,15 @@
               <ElSwitch
                 :model-value="row.enabled_flag"
                 size="small"
-                :loading="togglingUlid === row.prompt_profile_ulid"
-                @update:model-value="toggleEnabled(row as NWPromptProfileVo, Boolean($event))"
+                :loading="togglingUlid === row.prompt_ulid"
+                @update:model-value="toggleEnabled(row as NWPromptVo, Boolean($event))"
               />
             </template>
           </ElTableColumn>
           <ElTableColumn label="操作" width="180" fixed="right">
             <template #default="{ row }">
-              <ElButton size="small" text @click="openPreview(row as NWPromptProfileVo)">预览</ElButton>
-              <ElButton size="small" text @click="drawer?.open(row as NWPromptProfileVo, projectUlid)">
+              <ElButton size="small" text @click="openPreview(row as NWPromptVo)">预览</ElButton>
+              <ElButton size="small" text @click="drawer?.open(row as NWPromptVo, projectUlid)">
                 编辑
               </ElButton>
               <ElButton
@@ -246,7 +264,7 @@
                 text
                 type="danger"
                 :disabled="row.builtin_flag"
-                @click="remove(row as NWPromptProfileVo)"
+                @click="remove(row as NWPromptVo)"
               >
                 删除
               </ElButton>
@@ -255,14 +273,11 @@
         </ElTable>
       </ElCard>
 
-      <ElEmpty
-        v-if="!loading && groups.length === 0"
-        description="还没有提示词档案，先建一个吧"
-      />
+      <ElEmpty v-if="!loading && groups.length === 0" description="还没有提示词，先建一条吧" />
     </div>
 
     <PromptEditDrawer ref="drawer" :projects="projectStore.projectOptions" @saved="load" />
-    <PromptPreviewDialog v-model:visible="previewVisible" :profile="previewProfile" />
+    <PromptPreviewDialog v-model:visible="previewVisible" :prompt="previewPrompt" />
   </div>
 </template>
 
@@ -270,6 +285,10 @@
   .prompts {
     &__project {
       width: 180px;
+    }
+
+    &__kind {
+      width: 200px;
     }
 
     &__spacer {

@@ -199,7 +199,7 @@ func sanitizeAuditBody(raw []byte) string {
 			fields[key] = "***"
 			continue
 		}
-		// 嵌套结构（技能变量等）同样按字段名脱敏一层
+		// 嵌套结构同样按字段名脱敏一层
 		if nested, ok := fields[key].(map[string]any); ok {
 			for nestedKey := range nested {
 				if auditSecretKeys[nestedKey] {

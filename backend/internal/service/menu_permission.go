@@ -76,7 +76,7 @@ func menuDescOf(do *domain.MenuDO, selfName map[string]string) string {
 	return "菜单权限：" + do.MenuName
 }
 
-// permGroupCode 取权限码首段作为分组编码（system/skill/project）。
+// permGroupCode 取权限码首段作为分组编码（system/prompt/tool/project）。
 func permGroupCode(permCode string) string {
 	if permCode == domain.PermAdminAll {
 		return "all"
@@ -94,8 +94,8 @@ func permGroupLabel(groupCode string) string {
 		return "全部权限"
 	case "system":
 		return "系统管理"
-	case "skill":
-		return "技能"
+	case "prompt":
+		return "提示词"
 	case "project":
 		return "项目"
 	default:

@@ -1,6 +1,6 @@
 # AI 子系统设计
 
-本文描述 NovelWorkbench 的 AI 能力：模型网关、上下文装配、技能资产、无向量检索、流式协议与用量统计。
+本文描述 NovelWorkbench 的 AI 能力：模型网关、提示词资产与注入、上下文装配、无向量检索、流式协议与用量统计。
 
 ## 1. 定位与边界
 
@@ -31,7 +31,7 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | `ai.ProviderSpec` | 同上 | 单次调用所需供应商快照；`APIKey` 明文只存在于内存 |
 | `ai.UsageRecorder` | `backend/internal/ai/usage.go` | 用量上报接口，由 `service.ModelUsageService` 实现 |
 | `ai.AssembleContext` / `ai.RenderPrompt` / `ai.SystemPrompt` / `ai.TemplatePlaceholders` | `backend/internal/ai/prompt.go` | 上下文装配、模板渲染与校验、系统提示词 |
-| `ai.BuiltinSkills` / `ai.BuiltinPromptProfiles` | `backend/internal/ai/builtin_assets.go` + `domain_<域>.go` | 12 个流程域的档案与 24 个技能定义、下线集合与内容指纹，与持久化结构解耦 |
+| `ai.BuiltinDomains` / `ai.BuiltinCommandPrompts` / `ai.BuiltinSystemPrompts` | `backend/internal/ai/prompt_assets.go` + `domain_<域>.go` | 12 个流程域的身份提示词与 24 份指令提示词、下线集合与内容指纹，与持久化结构解耦 |
 
 `ProviderSpec` 字段：`ProviderULID`、`ProviderName`、`ProtocolCode`、`BaseURL`、`APIKey`、`ChatModelName`、`Temperature`、`MaxTokens`、`Timeout`。密钥由 `ModelProviderService.specOf` 解密后传入，`ai` 包不接触存储。
 
@@ -94,43 +94,48 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 ## 3. 上下文装配
 
-### 3.1 系统提示词与提示词档案
+### 3.1 提示词注入：身份与指令分层
 
-系统提示词由两层组成，`ai.ComposeSystemPrompt(profileText, styleText)` 负责组合：
+提示词只有一种资产，用 `prompt_kind_code` 分两类，**都以系统级消息下发**：
 
-1. **档案层（身份与底线）**：`PromptProfileService.SystemPromptOf` 解析顺序为「请求显式 `prompt_profile_ulid` → 启用的全局默认档案（排序号最小）→ `ai.SystemPrompt("")` 内置兜底」。显式档案必须启用，且为全局档案或属于当前项目，否则视为未指定。
-2. **项目层（文风约束）**：`projects.style_text`，非空时以「本项目文风约束」段落追加在档案之后。
+1. **身份提示词（`system`）**：`PromptService.SystemPromptOf` 解析顺序为「请求显式 `system_prompt_code` → 启用的全局默认身份提示词（排序号最小）→ `ai.SystemPrompt("")` 内置兜底」。显式编码必须启用，且为全局或属于当前项目，否则视为未指定。
+2. **指令提示词（`command`）**：由 `/编码` 或请求体 `prompt_code` 命中，渲染后作为独立的系统级消息插在上下文之后、历史之前。
 
-分工约定：档案写「你是谁、什么绝不写」（长篇连载作者 / 责任编辑 / 故事架构师 / 去 AI 味修订 / 设定守门人），技能写「这一次做什么」。二者同时下发，互不覆盖。
+项目层约束：`projects.style_text` 非空时以「本项目文风约束」段落追加在身份提示词之后（`ai.ComposeSystemPrompt`）。
 
-内置档案按「流程域 = 1 份档案 + 2 个技能」组织，完整矩阵见 [skills.md](skills.md)。
+分工约定：身份写「你是谁、什么绝不写」，指令写「这一次做什么、按什么格式交付」。二者同时下发，互不覆盖。
 
-| 档案编码 | 名称 | 定位 |
+内置资产按「流程域 = 1 份身份 + 2 份指令」组织，完整矩阵见 [prompts.md](prompts.md)。
+
+| 身份编码 | 名称 | 定位 |
 | --- | --- | --- |
-| `novelist` | 长篇连载作者 | 默认档案：只交稿不解释、具体优先、章末留钩 |
+| `novelist` | 长篇连载作者 | 默认身份：只交稿不解释、具体优先、章末留钩 |
 | `architect` | 故事架构师 | 六层结构自上而下、每层给最薄弱处与补齐顺序 |
 | `stylist` | 文字打磨师 | 只改怎么说不动说什么、事实锁与声线锁 |
-| `deai` | 去 AI 味修订 | 三层痕迹扫描、命中必引原句、区分豁免与边缘 |
+| `deai_editor` | 去 AI 味修订 | 五层对抗、命中必引原句、误杀防护 |
 | `editor` | 连载责任编辑 | 先判后改、P0/P1/P2 分级、给可直接替换的改法 |
 | `continuity` | 设定守门人 | 只依据给定上下文作答、缺失即明说、冲突给三种收敛方案 |
 | `final_editor` | 定稿编辑 | 只做归档与对账、不改稿、不把推测写成事实 |
 | `serial_editor` | 连载平台主编 | 按第三章/第三十章/第一百章判断留存与商业化 |
 | `pitch_analyst` | 选题策划 | 开书前只答值不值得写、判断必带代价 |
+| `platform_operator` | 平台运营 | 书名与简介只对点击负责、不承诺数据 |
+| `short_story_author` | 短篇作者 | 一次完整呼吸、结尾留余震、禁 cliffhanger |
+| `screenwriter` | 改编编剧 | 可见优先、保留情感功能、材料不足即声明假设 |
 
-档案表 `prompt_profiles` 与技能表结构同构（作用域 + 编码唯一 + 内置不可删 + 可停用），由 `PromptProfileService.SeedDefaults` 幂等播种并做指纹升级，管理端在「提示词档案」页维护。
+提示词表 `prompts` 统一承载身份与指令（作用域 + 编码唯一 + 内置不可删 + 可停用），由 `PromptService.SeedDefaults` 幂等播种并做指纹升级，管理端在「提示词库」页维护。
 
 ### 3.2 块优先级
 
 | 优先级 | 常量 | BlockKey | 内容来源 |
 | --- | --- | --- | --- |
-| 100 | `PrioritySkill` | `skill` | 命中技能渲染后的提示词 |
-| 90 | `PriorityCurrentChapter` | `current_chapter` | 当前编辑章节正文 |
-| 85 | `PrioritySkillRef` | `skill_reference` | 技能参考资料（关键词命中，单技能上限 4000 字符） |
-| 80 | `PriorityExplicitRef` | `ref_chapter` / `ref_doc` / `ref_summary` / `ref_prompt` | @引用章节 / @引用文档全文 / @引用章节摘要 / @引用提示词档案 |
+| 100 | `PriorityCurrentChapter` | `current_chapter` | 当前编辑章节正文 |
+| 90 | `PriorityExplicitRef` | `ref_chapter` / `ref_doc` / `ref_summary` / `ref_prompt` | @引用章节 / @引用文档全文 / @引用章节摘要 / @引用提示词 |
+| 85 | `PriorityToolResult` | `tool_result` | 本轮工具执行结果 |
 | 70 | `PriorityRAG` | `rag` | 知识库召回切片 |
 | 60 | `PriorityChapterSummary` | `chapter_summary` | 相邻章节梗概 |
 | 50 | `PriorityCharacter` | `character` / `lore` | 角色卡 / 设定条目（`note` 排除） |
-| 40 | `PriorityHistory` | `history` | 注入的会话历史 |
+
+历史不进上下文块：它以原生角色消息追加到消息序列，两处同时注入会让模型看到两份对话。
 
 ### 3.3 装配规则
 
@@ -149,12 +154,13 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `current_chapter` | `【当前章节】{名}\n{正文}` |
 | `ref_chapter` | `【引用章节】{名}\n{正文}` |
 | `ref_doc` | `【引用文档】{名}\n{全文}` |
+| `ref_summary` | `【引用章节摘要】\n` + 摘要换行拼接 |
+| `ref_prompt` | `【引用提示词】\n` + 正文以空行拼接 |
 | `rag` | `【知识库召回】` + 每条 `\n《{文档名}》{切片}` |
 | `chapter_summary` | `【章节梗概】\n` + 梗概换行拼接 |
 | `character` | `【角色卡】` + 每条 `\n姓名：{名}｜性格：{性格}｜背景：{背景}` |
 | `lore` | `【设定条目】` + 每条 `\n设定名：{名}｜内容：{内容}` |
-| `history` | `【对话历史】` + 每条 `\n{用户\|助手}：{正文}` |
-| `skill_reference` | `【技能参考资料】\n` + 资料以空行拼接 |
+| `tool_result` | `【工具结果】\n` + 结果以空行拼接 |
 
 ### 3.4 单项截断
 
@@ -167,16 +173,18 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 `service.truncateRunes` 超长时追加省略号；`ai.truncateRunes` 不追加，仅用于探测回显。
 
-### 3.5 技能块渲染
+### 3.5 指令提示词渲染
 
-`buildContextBlocks` 在 `SkillTemplate != ""` 时：
+命中指令提示词后（`ChatService.Send`）：
 
-1. 先用 `ai.AssembleContext` 装配其余块得到 `context` 占位符值。
-2. `chapter_content` = 引用章节正文按「当前章在前」拼接后按预算截断。
+1. `chapter_content` = 引用章节正文按「当前章在前」拼接后按 `ContextBudgetChars` 截断。
+2. `context` = `ai.AssembleContext` 装配出的上下文文本（与独立系统级上下文消息同源）。
 3. `user_input` = 去掉斜杠命令后的用户正文。
-4. 渲染结果作为 `skill` 块（优先级 100）置于列表首位，同时作为最终指令文本。
+4. `prompt_code` = 命中的编码。
+5. 渲染结果作为独立**系统级**消息（`CommandText`），位置在上下文消息之后、历史之前。
 
-因此 `{{context}}` 的内容会同时出现在技能块与独立块中，属于有意设计：技能模板需要就近上下文，独立块保证装配顺序与丢弃统计仍可解释。
+因此 `{{context}}` 的内容会同时出现在指令提示词与独立上下文消息中，属于有意设计：
+指令提示词需要就近上下文，独立消息保证装配顺序与丢弃统计仍可解释。
 
 ### 3.6 历史选取
 
@@ -188,98 +196,118 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 ## 4. 消息序列
 
-`buildChatMessages(systemPromptText, styleText, contextText, instructionText, historyList)`：
+`buildChatMessages(chatMessageInput)`：
 
 | 顺序 | 角色 | 内容 |
 | --- | --- | --- |
-| 1 | `system` | `ai.ComposeSystemPrompt(systemPromptText, styleText)`：档案正文 + 项目文风约束 |
-| 2 | `user` | `【上下文】\n{contextText}`，`contextText` 为空时整条省略 |
-| 3… | 按历史顺序 | 逐条历史，`chatRoleOf` 映射角色 |
-| 末 | `user` | 最终指令（自由对话为用户正文，命中技能为渲染结果） |
+| 1 | `system` | `ai.ComposeSystemPrompt(systemPromptText, styleText)`：身份提示词 + 项目文风约束 |
+| 2 | `system` | `【上下文】\n{contextText}`，为空时整条省略 |
+| 3 | `system` | 指令提示词渲染结果，为空时整条省略 |
+| 4… | 按历史顺序 | 逐条历史，`chatRoleOf` 映射角色 |
+| 末 | `user` | 用户输入（去命令后的正文） |
+
+关键约束：**注入内容一律是系统级消息，用户输入一律是用户级消息**。这让"约束"与"要求"在模型侧与界面侧都可区分，
+也避免了旧版把上下文塞进 `user` 消息、与真实用户输入混淆的问题。
 
 `chatRoleOf`：`assistant` → `Assistant`；`system` → `System`；其余（含未知值）→ `User`。
 
-## 5. 技能
+## 5. 提示词
 
 ### 5.1 数据模型
 
-技能 = 作用域 + 提示词模板 + 变量声明 + 参考资料，落两张表：
+提示词 = 作用域 + 种类 + 正文，落一张表：
 
-| 表 | 关键列 | 说明 |
-| --- | --- | --- |
-| `skills` | `skill_ulid`(`SKL_`)、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`、`description_text`、`prompt_template`、`variable_spec_json`、`enabled_flag`、`builtin_flag`、`sort_order` | 作用域 `global` / `project`；同编码项目技能覆盖全局 |
-| `skill_references` | `ref_ulid`(`SKR_`)、`skill_ulid`、`ref_name`、`ref_text`、`keyword_list`、`sort_order` | 关键词为空表示总是注入 |
+| 列 | 说明 |
+| --- | --- |
+| `prompt_ulid`(`PRM_`) | 主键 |
+| `prompt_code` | 编码（对话中以 `/code` 触发），同作用域内唯一 |
+| `prompt_name` | 名称 |
+| `prompt_kind_code` | `system`（身份）/ `command`（指令） |
+| `scope_code` / `project_ulid` | `global` / `project`；同编码项目提示词覆盖全局 |
+| `domain_code` | 流程域编码（内置资产按域分组展示） |
+| `category_code` | `write` / `revise` / `outline` / `setting` / `review` / `other` |
+| `description_text` | 一句话说明 |
+| `prompt_text` | 提示词正文（可含 `{{占位符}}`） |
+| `enabled_flag` / `builtin_flag` | 启停与内置标记 |
+| `asset_hash_text` / `customized_flag` | 出厂指纹与作者改动标记 |
+| `sort_order` | 排序号 |
 
-### 5.2 内置技能（24 个 / 12 个流程域）
+旧版的 `skills` + `skill_references` + `prompt_profiles` 三张表已被 `prompts` 一张表取代：
+技能与提示词本是同一种东西（一段可编辑的提示词），拆成两张表只会让"哪一段真的生效"变得难查。
+技能参考资料（关键词命中的长资料）随技能一并删除，改为 `@` 引用提示词——作者显式挑选，链路更短、行为更可预期。
 
-由 `ai.BuiltinSkills()` 汇总 12 个流程域（`backend/internal/ai/domain_<域>.go`，一个域一个文件），
-`SkillService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种并做指纹升级。
-完整矩阵见 [skills.md](skills.md)，此处只列编码与用途：
+### 5.2 内置提示词（12 份身份 + 24 份指令）
 
-| code | 名称 | 分类 | 所属域 | 用途 |
+由 `ai.BuiltinDomains()` 汇总 12 个流程域（`backend/internal/ai/domain_<域>.go`，一个域一个文件），
+`PromptService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种并做指纹升级。
+完整矩阵见 [prompts.md](prompts.md)，此处只列编码与用途：
+
+| code | 种类 | 名称 | 所属域 | 用途 |
 | --- | --- | --- | --- | --- |
-| `continue` | 续写正文 | write | draft | 承接当前章节往下写：衔接、具体、推进、章末留钩 |
-| `conflict` | 冲突加码 | write | draft | 目标互斥 + 代价递增 + 不可逆选择的重写 |
-| `outline` | 搭建大纲 | outline | architect | 卖点 / 世界观 / 主线 / 人物 / 分卷 / 章纲六层，附结构风险 |
-| `worldrule` | 世界观规则卡 | setting | architect | 规则 / 边界 / 代价 / 破例四栏 + 冲突检查 |
-| `polish` | 润色文字 | revise | style | 只改「怎么说」：去翻译腔、去重复、把定性换成现场 |
-| `dialogue` | 对白打磨 | revise | style | 每句台词争夺信息、权力或关系；去寒暄留潜台词 |
-| `deai` | 去 AI 味 | revise | deai | 词面 / 语义 / 统计三层扫描 + 定档 + 改写 |
-| `humanness` | 活人感改写 | revise | deai | 材料 / 位置 / 语气三关，写成具体的人在说话 |
-| `review` | 章节质检 | review | review | 六道检查出 P0-P2 与可发结论 |
-| `hitscan` | 量化门禁 | review | review | 字数 / 句长 / 段落均匀 / ban 词 / 钩子十项给数字 |
-| `foreshadow` | 伏笔台账 | setting | continuity | 伏笔表格（类型 / 埋设 / 回收 / 状态 / 风险）与遗忘项 |
-| `ledger` | 连续性台账 | setting | continuity | 主线锚点 / 知识状态 / 时间线 / 未收悬念四表核对 |
-| `summary` | 章节梗概 | outline | finalize | 一句话总述 + 三句分述，供连续性看板入库 |
-| `finalcheck` | 终审对账 | review | finalize | 首读反馈 + 设定台账逐项不符项 + 可发布判断 |
-| `golden3` | 开篇体检 | review | operation | 五维打分 + 五项硬指标 + 三个必改问题 |
-| `platform` | 平台适配 | outline | operation | 按平台形态给切章、标题简介、标签与发布清单 |
-| `pitch` | 立项评估 | outline | pitch | 十二维打分 + 否决项 + 最弱两维补法 |
-| `deconstruct` | 拆书 | review | pitch | 一句话核心 / 开篇账 / 节奏 / 钩子链 / 可复用做法 |
-| `screenplay` | 剧本拆场 | revise | adapt | 小说场景化改写：动作化对白、场面调度与镜头提示 |
-| `voiceover` | 有声旁白 | revise | adapt | 旁白口语化与停顿设计，兼顾听觉信息密度 |
-| `title` | 标题封面 | outline | publish | 标题候选打分、封面一句话与关键词标签 |
-| `blurb` | 上架文案 | outline | publish | 简介、卖点句与平台外导流文案 |
-| `shortdraft` | 短篇起稿 | write | short | 短篇形态路由与开篇工程，按篇幅选结构 |
-| `ending` | 结尾余震 | revise | short | 结尾余震设计与代价回收，收束不平淡 |
+| `continue` | command | 续写正文 | draft | 承接当前章节往下写：衔接、具体、推进、章末留钩 |
+| `conflict` | command | 冲突加码 | draft | 目标互斥 + 代价递增 + 不可逆选择的重写 |
+| `outline` | command | 搭建大纲 | architect | 卖点 / 世界观 / 主线 / 人物 / 分卷 / 章纲六层，附结构风险 |
+| `worldrule` | command | 世界观规则卡 | architect | 规则 / 边界 / 代价 / 例外四栏 + 一致性检查 |
+| `polish` | command | 润色文字 | style | 只改「怎么说」：去翻译腔、去重复、把定性换成现场 |
+| `dialogue` | command | 对白打磨 | style | 每句台词争夺信息、权力或关系；去寒暄留潜台词 |
+| `deai` | command | 去 AI 味 | deai | 五层对抗诊断 + 改写全文 + 改动说明 |
+| `humanness` | command | 活人感改写 | deai | 材料 / 位置 / 语气 / 不完美四步 |
+| `review` | command | 章节质检 | review | 六道检查出 P0-P2 与可发结论 |
+| `hitscan` | command | 量化门禁 | review | 八项硬指标给实测值与最小修复 |
+| `foreshadow` | command | 伏笔台账 | continuity | 伏笔台账六列 + 悬空与过期预警 |
+| `ledger` | command | 连续性台账 | continuity | 五本台账 + 冲突清单 + 三种收敛方案 |
+| `summary` | command | 章节梗概 | finalize | 四段式事实条目，供上下文注入 |
+| `finalcheck` | command | 终审对账 | finalize | 六维对账 + 不一致清单 + 待补项 |
+| `golden3` | command | 开篇体检 | operation | 八项字位指标 + 三个最贵问题 |
+| `platform` | command | 平台适配 | operation | 调性对齐 / 开篇改造 / 节奏排布 / 包装四组结论 |
+| `pitch` | command | 立项评估 | pitch | 十二维打分 + 总分门槛 + 最弱两维补法 |
+| `deconstruct` | command | 拆书 | pitch | 前三百字逐句 / 章节卡 / 可迁移配方 |
+| `screenplay` | command | 剧本拆场 | adapt | 场次表 + 可读剧本 + 改编标注 |
+| `voiceover` | command | 有声旁白 | adapt | 去视觉依赖、补听觉线索、控口播节奏 |
+| `title` | command | 标题封面 | publish | 书名候选 + 点击力排序 + 避雷检查 |
+| `blurb` | command | 上架文案 | publish | 四句简介 + 标签三组 + 合规申报 |
+| `shortdraft` | command | 短篇起稿 | short | 形态判定 + 情绪曲线 + 一次成稿 |
+| `ending` | command | 结尾余震 | short | 结尾问题判定 + 余震改写 |
+| `pitch_analyst` | system | 选题策划 | pitch | 立项判断的身份与纪律 |
+| `architect` | system | 故事架构师 | architect | 分层结构的身份与纪律 |
+| `novelist` | system | 长篇连载作者 | draft | 默认身份：只交稿不解释 |
+| `stylist` | system | 文字打磨师 | style | 只改说法不改事实 |
+| `deai_editor` | system | 去 AI 味修订 | deai | 改变生成分布而非删词 |
+| `editor` | system | 连载责任编辑 | review | 先判后改、分级给改法 |
+| `continuity` | system | 设定守门人 | continuity | 只依据给定上下文作答 |
+| `final_editor` | system | 定稿编辑 | finalize | 只归档对账不改稿 |
+| `serial_editor` | system | 连载平台主编 | operation | 按平台口径判断留存 |
+| `platform_operator` | system | 平台运营 | publish | 只对点击负责 |
+| `short_story_author` | system | 短篇作者 | short | 一次完整呼吸 |
+| `screenwriter` | system | 改编编剧 | adapt | 可见优先、标注改编 |
 
-技能判据均可核对：卖点必须能填满「一个什么人，因为什么事，必须做到什么，否则失去什么」；世界观只认「规则 / 边界 / 代价」三栏；质检每条判定必须引原句，给不出原句的判定删掉；去 AI 味只看可机检指标（句长分布、套话密度、情绪直给次数），不做主观评价。
+判据均可核对：卖点必须能填满「一个什么人，因为什么事，必须做到什么，否则失去什么」；世界观只认「规则 / 边界 / 代价」三栏；质检每条判定必须引原句，给不出原句的判定删掉；去 AI 味只看可机检指标（句长分布、套话密度、情绪直给次数），不做主观评价。
 
-**指纹升级**：内置技能属于产品资产，但允许作者改。每行存 `asset_hash_text`（出厂内容指纹）与 `customized_flag`。
+**指纹升级**：内置提示词属于产品资产，但允许作者改。每行存 `asset_hash_text`（出厂内容指纹）与 `customized_flag`。
 启动时按「不存在→插入 / 已自改→不动 / 指纹一致→不动 / 其余→覆盖并写新指纹」处理，
 所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/ai_chain_test.go` 断言域形状、编码唯一、占位符合法与指纹长度。
 
 ### 5.3 解析与覆盖
 
-1. 请求体 `skill_code` 非空 → 直接按编码解析。
-2. 否则 `parseSlashToken` 解析正文首 token：trim 后以 `/` 开头，取到首个空白符为止；命中启用技能则剥离命令，未命中（编码不存在、已停用、非首 token）则正文原样保留并按自由对话处理。
-3. `resolveByCode`：先查 `(project, code)` 且启用，再回退 `(global, code)`；都未命中返回「技能不存在或已停用」。
+1. 请求体 `prompt_code` 非空 → 直接按编码解析。
+2. 否则 `parseSlashToken` 解析正文首 token：trim 后以 `/` 开头，取到首个空白符为止；命中启用提示词则剥离命令，未命中（编码不存在、已停用、非首 token）则正文原样保留并按自由对话处理。
+3. `resolveByCode`：先查 `(project, code)` 且启用，再回退 `(global, code)`；都未命中返回「提示词不存在或已停用」。
+4. 列表页用 `isOverriddenGlobalPrompt` 给被项目版覆盖的全局提示词打 `overridden_flag`，避免"改了半天不生效"。
 
-### 5.4 变量
+### 5.4 占位符
 
-- 声明存 `variable_spec_json`（`SkillVariableDO` 数组）：`variable_name`、`variable_label`、`default_value`、`required_flag`、`description_text`。
-- 取值优先级：显式传入（非空）> 声明缺省值 > 空串；`required_flag` 且无值进入 `missing_list`（排序后返回）。
-- 恒注入 `skill_code` 与 `user_input` 两个隐含变量。
-- 保存时 `validateSkillTemplate` 用 `ai.TemplatePlaceholders` 校验：模板占位符必须是 `user_input` / `chapter_content` / `context` / `skill_code` 或已声明变量，否则 `ERR_INVALID_PARAM`。
-- `Resolve` 返回的 `missing_list` 由前端在发送前提示补全，避免把空值发给模型。
+- 内置白名单（`ai.BuiltinPlaceholders`）：`user_input`、`chapter_content`、`context`、`prompt_code`，装配时自动注入。
+- 保存时 `validatePromptPlaceholders` 用 `ai.TemplatePlaceholders` 校验：出现白名单外的占位符直接 `ERR_INVALID_PARAM`。
+  未登记的占位符会被渲染成空串，等于静默丢上下文，因此必须在保存期拦下。
+- 作者要注入长资料时，用 `@` 引用提示词，而不是把资料塞进正文模板。
 
-### 5.5 参考资料
+### 5.5 生命周期
 
-`selectSkillReferences`（纯函数）：
-
-1. 按 `sort_order` 遍历该技能全部参考资料。
-2. 关键词列表为空 → 总是命中；否则任一关键词出现在任一 haystack（原始正文、去掉命令后的正文）即命中。
-3. 命中后按 `【资料名】\n正文` 拼接，累计字符超过 `skillReferenceBudgetChars = 4000` 即停止。
-4. 结果作为 `skill_reference` 块进入装配（优先级 85）。
-
-### 5.6 生命周期
-
-- `SeedDefaults` 幂等 + 指纹升级：按 `(global, "", skill_code)` 查到行后，`customized_flag=true` 或指纹一致则跳过，否则用代码资产覆盖名称/说明/模板/排序号。
-- 已下线编码：`dropRetiredBuiltins` 用 `ai.BuiltinSkillCodeSet()` 比对库中 `builtin_flag=true` 的全局技能，把清单外的连同参考资料一并删除。
-- 内置技能不可删除（`Delete` 返回「内置技能不允许删除，可停用」），可停用、可改模板/变量/参考资料；`skill_code` 与 `scope_code` 不可改。
+- `SeedDefaults` 幂等 + 指纹升级：按 `(global, "", prompt_code)` 查到行后，`customized_flag=true` 或指纹一致则跳过，否则用代码资产覆盖名称/说明/正文/域/分类/排序号。
+- 已下线编码：`dropRetiredBuiltins` 用「指令编码集合 ∪ 身份编码集合」比对库中 `builtin_flag=true` 的全局提示词，把清单外的删除。
+- 内置提示词不可删除（`Delete` 返回「内置提示词不允许删除，可停用」），可停用、可改正文；`prompt_code`、`scope_code`、`prompt_kind_code` 不可改。
 - 保存时若提交内容与其出厂指纹不同，`customized_flag` 置 `true`，后续代码升级不再覆盖这一行；改回出厂内容会重新置回 `false`。
-- 删除技能级联清理参考资料（`DeleteReferencesBySkill`）。
-- 同作用域内编码唯一由服务层查重保证。
+- 同作用域内编码唯一由服务层查重保证（先查后写）。
 
 ## 6. 无向量检索
 
@@ -417,7 +445,7 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 
 | 情况 | 表现 |
 | --- | --- |
-| 流开始前失败（鉴权、技能解析、会话校验、历史读取、上下文装配、供应商不可用） | 响应头未提交 → JSON 错误包络 |
+| 流开始前失败（鉴权、提示词解析、会话校验、历史读取、上下文装配、供应商不可用） | 响应头未提交 → JSON 错误包络 |
 | 流开始后失败 | HTTP 已是 200 → 只能下发 `error` 事件并记服务端日志 |
 
 `ChatService.Send` 约定一致：流前失败返回 error，流后失败返回 nil（只发事件）。

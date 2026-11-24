@@ -28,7 +28,7 @@ type ChatMessageDO struct {
 	RefChapterJSON string `json:"ref_chapter_json" gorm:"type:text"`                          // @引用章节 ULID 列表（JSON 数组）
 	RefMessageJSON string `json:"ref_message_json" gorm:"type:text"`                          // 显式引用的历史消息 ULID 列表（JSON 数组）
 	RefSummaryJSON string `json:"ref_summary_json" gorm:"type:text"`                          // @引用章节摘要 ULID 列表（JSON 数组）
-	RefPromptJSON  string `json:"ref_prompt_json" gorm:"type:text"`                           // @引用提示词档案 ULID 列表（JSON 数组）
+	RefPromptJSON  string `json:"ref_prompt_json" gorm:"type:text"`                           // @引用提示词 ULID 列表（JSON 数组）
 	TokenUsedCount int    `json:"token_used_count"`                                           // 本条消耗的估算 token
 }
 

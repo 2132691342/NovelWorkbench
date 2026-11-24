@@ -1,4 +1,4 @@
-<!-- 档案编辑抽屉：维护系统提示词正文与作用域。 -->
+<!-- 提示词编辑抽屉：维护提示词种类、作用域、正文与启停。 -->
 <script setup lang="ts">
   import { computed, reactive, ref } from 'vue'
   import {
@@ -16,8 +16,8 @@
     type FormInstance,
     type FormRules
   } from 'element-plus'
-  import { savePromptProfile, type NWPromptProfileSaveReqVo } from '@/api/prompt'
-  import type { NWProjectVo, NWPromptProfileVo } from '@/api/contracts'
+  import { savePrompt, type NWPromptSaveReqVo } from '@/api/prompt'
+  import type { NWProjectVo, NWPromptVo } from '@/api/contracts'
 
   const props = defineProps<{ projects: NWProjectVo[] }>()
   const emit = defineEmits<{ saved: [] }>()
@@ -25,45 +25,49 @@
   const visible = ref(false)
   const saving = ref(false)
   const formRef = ref<FormInstance>()
-  const editing = ref<NWPromptProfileVo | null>(null)
+  const editing = ref<NWPromptVo | null>(null)
 
   const form = reactive({
-    prompt_profile_code: '',
-    prompt_profile_name: '',
+    prompt_code: '',
+    prompt_name: '',
+    prompt_kind_code: 'command',
     scope_code: 'global',
     project_ulid: '',
+    category_code: 'other',
     description_text: '',
-    system_prompt_text: '',
+    prompt_text: '',
     sort_order: 0,
     enabled_flag: true
   })
 
-  const title = computed(() => (editing.value ? '编辑提示词档案' : '新建提示词档案'))
+  const title = computed(() => (editing.value ? '编辑提示词' : '新建提示词'))
   const isBuiltin = computed(() => editing.value?.builtin_flag === true)
 
   const rules: FormRules = {
-    prompt_profile_code: [
-      { required: true, message: '请填写档案编码', trigger: 'blur' },
+    prompt_code: [
+      { required: true, message: '请填写提示词编码', trigger: 'blur' },
       { pattern: /^[a-z0-9_-]{2,32}$/, message: '2-32 位小写字母、数字、下划线或连字符', trigger: 'blur' }
     ],
-    prompt_profile_name: [{ required: true, message: '请填写档案名', trigger: 'blur' }],
-    system_prompt_text: [
-      { required: true, message: '请填写系统提示词', trigger: 'blur' },
-      { min: 10, message: '系统提示词至少 10 个字符', trigger: 'blur' }
+    prompt_name: [{ required: true, message: '请填写提示词名称', trigger: 'blur' }],
+    prompt_text: [
+      { required: true, message: '请填写提示词正文', trigger: 'blur' },
+      { min: 10, message: '提示词正文至少 10 个字符', trigger: 'blur' }
     ]
   }
 
-  /** 打开抽屉：传档案为编辑，不传为新建 */
-  const open = (profile?: NWPromptProfileVo, defaultProjectUlid = '') => {
-    editing.value = profile ?? null
-    form.prompt_profile_code = profile?.prompt_profile_code ?? ''
-    form.prompt_profile_name = profile?.prompt_profile_name ?? ''
-    form.scope_code = profile?.scope_code ?? 'global'
-    form.project_ulid = profile?.project_ulid || defaultProjectUlid
-    form.description_text = profile?.description_text ?? ''
-    form.system_prompt_text = profile?.system_prompt_text ?? ''
-    form.sort_order = profile?.sort_order ?? 0
-    form.enabled_flag = profile?.enabled_flag ?? true
+  /** 打开抽屉：传提示词为编辑，不传为新建 */
+  const open = (prompt?: NWPromptVo, defaultProjectUlid = '') => {
+    editing.value = prompt ?? null
+    form.prompt_code = prompt?.prompt_code ?? ''
+    form.prompt_name = prompt?.prompt_name ?? ''
+    form.prompt_kind_code = prompt?.prompt_kind_code ?? 'command'
+    form.scope_code = prompt?.scope_code ?? 'global'
+    form.project_ulid = prompt?.project_ulid || defaultProjectUlid
+    form.category_code = prompt?.category_code || 'other'
+    form.description_text = prompt?.description_text ?? ''
+    form.prompt_text = prompt?.prompt_text ?? ''
+    form.sort_order = prompt?.sort_order ?? 0
+    form.enabled_flag = prompt?.enabled_flag ?? true
     visible.value = true
   }
 
@@ -71,26 +75,28 @@
     const valid = await formRef.value?.validate().catch(() => false)
     if (!valid) return
     if (form.scope_code === 'project' && !form.project_ulid) {
-      ElMessage.warning('项目档案必须选择所属项目')
+      ElMessage.warning('项目提示词必须选择所属项目')
       return
     }
 
-    const req: NWPromptProfileSaveReqVo = {
-      prompt_profile_ulid: editing.value?.prompt_profile_ulid,
-      prompt_profile_code: form.prompt_profile_code,
-      prompt_profile_name: form.prompt_profile_name,
+    const req: NWPromptSaveReqVo = {
+      prompt_ulid: editing.value?.prompt_ulid,
+      prompt_code: form.prompt_code,
+      prompt_name: form.prompt_name,
+      prompt_kind_code: form.prompt_kind_code,
       scope_code: form.scope_code,
       project_ulid: form.scope_code === 'project' ? form.project_ulid : undefined,
+      category_code: form.category_code,
       description_text: form.description_text,
-      system_prompt_text: form.system_prompt_text,
+      prompt_text: form.prompt_text,
       enabled_flag: form.enabled_flag,
       sort_order: form.sort_order
     }
 
     saving.value = true
     try {
-      await savePromptProfile(req)
-      ElMessage.success('提示词档案已保存')
+      await savePrompt(req)
+      ElMessage.success('提示词已保存')
       visible.value = false
       emit('saved')
     } finally {
@@ -102,19 +108,38 @@
 </script>
 
 <template>
-  <ElDrawer v-model="visible" :title="title" size="680px" append-to-body destroy-on-close>
+  <ElDrawer v-model="visible" :title="title" size="720px" append-to-body destroy-on-close>
     <ElForm ref="formRef" :model="form" :rules="rules" label-position="top">
       <div class="prompt-form__row">
-        <ElFormItem label="档案编码" prop="prompt_profile_code">
+        <ElFormItem label="提示词编码" prop="prompt_code">
           <ElInput
-            v-model="form.prompt_profile_code"
+            v-model="form.prompt_code"
             :disabled="isBuiltin"
             maxlength="32"
-            placeholder="例如：default"
+            placeholder="例如：continue"
           />
         </ElFormItem>
-        <ElFormItem label="档案名" prop="prompt_profile_name">
-          <ElInput v-model="form.prompt_profile_name" maxlength="64" placeholder="例如：通用写作助手" />
+        <ElFormItem label="提示词名称" prop="prompt_name">
+          <ElInput v-model="form.prompt_name" maxlength="64" placeholder="例如：续写正文" />
+        </ElFormItem>
+      </div>
+
+      <div class="prompt-form__row">
+        <ElFormItem label="种类">
+          <ElSelect v-model="form.prompt_kind_code" :disabled="isBuiltin" class="prompt-form__select">
+            <ElOption label="身份提示词（会话常驻，系统级）" value="system" />
+            <ElOption label="指令提示词（/ 触发，系统级）" value="command" />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="分类">
+          <ElSelect v-model="form.category_code" class="prompt-form__select">
+            <ElOption label="写作" value="write" />
+            <ElOption label="修订" value="revise" />
+            <ElOption label="规划" value="outline" />
+            <ElOption label="设定" value="setting" />
+            <ElOption label="审稿" value="review" />
+            <ElOption label="其他" value="other" />
+          </ElSelect>
         </ElFormItem>
       </div>
 
@@ -149,21 +174,21 @@
         <ElInput v-model="form.description_text" maxlength="256" show-word-limit />
       </ElFormItem>
 
-      <ElFormItem label="系统提示词" prop="system_prompt_text">
+      <ElFormItem label="提示词正文" prop="prompt_text">
         <ElInput
-          v-model="form.system_prompt_text"
+          v-model="form.prompt_text"
           type="textarea"
-          :rows="16"
-          maxlength="8000"
+          :rows="18"
+          maxlength="12000"
           show-word-limit
-          placeholder="定义 AI 的身份、语气、写作底线与输出约束"
+          placeholder="写清身份与底线，或写清这一单活怎么做、按什么格式交付。可用 {{context}}、{{chapter_content}}、{{user_input}} 占位符。"
         />
       </ElFormItem>
 
       <ElFormItem label="启用">
         <div class="prompt-form__enabled">
           <ElSwitch v-model="form.enabled_flag" />
-          <ElTag v-if="isBuiltin" size="small" type="info" effect="plain">内置档案</ElTag>
+          <ElTag v-if="isBuiltin" size="small" type="info" effect="plain">内置提示词</ElTag>
           <ElTag v-if="editing?.customized_flag" size="small" type="warning" effect="plain">
             已自定义
           </ElTag>

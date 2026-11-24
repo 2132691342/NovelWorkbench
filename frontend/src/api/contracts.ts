@@ -56,7 +56,6 @@ export interface NWSettingItemVo {
   setting_desc: string
 }
 
-/** 技能变量声明（字段对齐后端 SkillVariableDO） */
 export interface NWSkillVariableVo {
   variable_name: string
   variable_label: string
@@ -299,7 +298,7 @@ export interface NWChatMessageVo {
   role_code: string
   content_text: string
   reasoning_text: string
-  skill_code: string
+  prompt_code: string
   tool_code_list: string[]
   ref_doc_ulid_list: string[]
   ref_chapter_ulid_list: string[]
@@ -396,7 +395,7 @@ export interface NWChatSendReqVo {
   session_ulid?: string
   project_ulid: string
   content_text: string
-  skill_code?: string
+  prompt_code?: string
   tool_code_list?: string[]
   ref_doc_ulid_list?: string[]
   ref_chapter_ulid_list?: string[]
@@ -405,7 +404,7 @@ export interface NWChatSendReqVo {
   ref_message_ulid_list?: string[]
   history_count?: number
   model_ulid?: string
-  prompt_profile_ulid?: string
+  system_prompt_code?: string
 }
 
 /** 创建 AI 会话请求 */

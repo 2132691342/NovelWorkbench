@@ -193,7 +193,7 @@ flowchart LR
 | 2 | `infra.LoadConfig("")`：读 YAML、应用 `NW_*`、`validate()` | 致命，退出码 1，日志「加载配置失败」 |
 | 3 | `signal.NotifyContext(SIGINT, SIGTERM)` | — |
 | 4 | `infra.NewPostgres`：DSN 连接 + 连接池 + `Ping` | 致命，退出码 1，日志「Postgres 连接失败」 |
-| 5 | `db.AutoMigrate` 建表 35 张（`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`、`PromptProfileDO`、`ToolDO`、`ModelUserGrantDO`） | 致命，退出码 1，日志「数据库迁移失败」 |
+| 5 | `db.AutoMigrate` 建表 33 张（`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`、`PromptProfileDO`、`ToolDO`、`ModelUserGrantDO`） | 致命，退出码 1，日志「数据库迁移失败」 |
 | 6 | `infra.NewRedis`：构造客户端 + 5s `Ping` | 地址为空返回 `nil` 客户端 → 致命「Redis 配置无效」；Ping 失败 → 告警「令牌吊销降级」并继续 |
 | 7 | `infra.NewRabbitMQ` | 告警「异步任务降级」 |
 | 8 | `infra.NewMinIO`：构造客户端 + `BucketExists`，桶不存在则 `MakeBucket`；随后 `main` 再校验一次桶是否存在 | 告警「MinIO 初始化失败 / 桶健康检查失败 / 桶不存在，对象存储降级」 |
@@ -201,7 +201,7 @@ flowchart LR
 | 10 | `pkg.NewJWTSigner(cfg.JWT.Secret, cfg.JWTExpireTTL())` | 致命，退出码 1 |
 | 11 | 装配 repo / service / `ai.NewClient`，`providerService.SeedDefault` 播种出厂供应商 | 播种失败 → 告警「默认模型供应商播种失败，可在页面手工添加」 |
 | 12 | `providerService.MigrateLegacyModels` 补齐模型目录 | 告警，不阻断 |
-| 13 | `skillService.SeedDefaults`（24 个内置技能）、`promptProfileService.SeedDefaults`（12 份提示词档案）与 `toolService.SeedDefaults`（6 个内置工具） | 致命，退出码 1 |
+| 13 | `promptService.SeedDefaults`（24 份内置指令 + 12 份内置身份）、`toolService.SeedDefaults`（6 个内置工具）与 `menuService.SeedDefaults`（含已下线菜单清理） | 致命，退出码 1 |
 | 14 | `settingService.SeedDefaults`（默认应用配置） | 致命，退出码 1 |
 | 15 | `roleService.SeedDefaults`（内置角色与权限） | 致命，退出码 1 |
 | 16 | `menuService.SeedDefaults`（内置菜单与权限登记） | 致命，退出码 1 |

@@ -63,7 +63,7 @@ CORS 放行 `Origin`、`Content-Type`、`Authorization`、`X-Request-ID`，暴�
 | `ERR_FORBIDDEN` | 403 | 无权限 | 缺少权限码、非资源归属人、模型未授权 |
 | `ERR_NOT_FOUND` | 404 | 资源不存在 | ULID 查不到 |
 | `ERR_CONFLICT` | 409 | 资源冲突 | 重名、邮箱重复、重复提交 |
-| `ERR_BIZ_FAILED` | 400 | 通用业务失败 | 删除默认模型、删除含模型的供应商、内置技能删除 |
+| `ERR_BIZ_FAILED` | 400 | 通用业务失败 | 删除默认模型、删除含模型的供应商、内置提示词删除 |
 | `ERR_AI_PROVIDER` | 502 | AI 调用失败 | 无可用模型、供应商停用、上游报错 |
 | `ERR_STORAGE` | 503 | 基础设施异常 | MinIO / Manticore / RabbitMQ 失败、`/ready` 依赖未就绪 |
 | `ERR_INTERNAL` | 500 | 服务内部错误 | 未归类 error、panic 恢复、权限判定报错 |
@@ -120,7 +120,7 @@ flowchart LR
 | `/api/v1/chat/send` | 高频流式调用，不落审计 |
 
 
-审计规则（`pkg/access_middleware.go`）：只记录 `POST`；`action_code` 取路径去掉 `/api/v1/` 前缀；所有 POST 都会读取 body 提取目标（键白名单覆盖 user / role / menu / project / chapter / document / skill / tool / model / provider / prompt_profile / chat_session / notification），body 采样上限 32KB、`multipart` 不采样且读后还原，凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）脱敏为 `***`；响应体缓冲前 8KB 用于解析包络得到 `resp_code` / `resp_message`，并按 HTTP 状态推导 `log_level_code`（`info` / `warn` / `error`），`trace_id` 取请求链路 ID；落库失败只记 `audit_record_failed` 告警。
+审计规则（`pkg/access_middleware.go`）：只记录 `POST`；`action_code` 取路径去掉 `/api/v1/` 前缀；所有 POST 都会读取 body 提取目标（键白名单覆盖 user / role / menu / project / chapter / document / prompt / tool / model / provider / chat_session / notification），body 采样上限 32KB、`multipart` 不采样且读后还原，凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）脱敏为 `***`；响应体缓冲前 8KB 用于解析包络得到 `resp_code` / `resp_message`，并按 HTTP 状态推导 `log_level_code`（`info` / `warn` / `error`），`trace_id` 取请求链路 ID；落库失败只记 `audit_record_failed` 告警。
 
 ## 5. 权限码
 
@@ -140,14 +140,13 @@ flowchart LR
 | `system:status:read` | `PermSystemRead` | `/system/status` |
 | `system:setting:manage` | `PermSettingManage` | `/setting/update` |
 | `system:job:manage` | `PermJobManage` | `/admin/job/list`、`/admin/job/stats`、`/admin/job/retry` |
-| `skill:manage` | `PermSkillManage` | `/skill/save`、`/skill/delete`、`/skill/reference/save`、`/skill/reference/delete` |
-| `prompt:manage` | `PermPromptManage` | `/prompt/profile/save`、`/prompt/profile/delete` |
+| `prompt:manage` | `PermPromptManage` | `/prompt/save`、`/prompt/delete` |
 | `tool:manage` | `PermToolManage` | `/tool/save`、`/tool/delete` |
 
 
 未列入上表的其余 `/api/v1` 路由均为「登录用户即可访问」，数据范围由归属校验收窄。
 
-权限目录（`GET /menu/permission/catalog`）由菜单表汇总而来：`service/menu_service.go` 的 `buildPermCatalog` 先登记 `*`，再按菜单行的 `perm_code` 逐条登记（同一码只登记一次），按权限码首段分组（当前实际使用 `system` / `skill` / `tool` / `prompt`，`project` 分组已预留但暂无权限码）并升序返回。因此新增权限码只需在菜单管理里登记一行，无需改代码。
+权限目录（`GET /menu/permission/catalog`）由菜单表汇总而来：`service/menu_service.go` 的 `buildPermCatalog` 先登记 `*`，再按菜单行的 `perm_code` 逐条登记（同一码只登记一次），按权限码首段分组（当前实际使用 `system` / `prompt` / `tool`）并升序返回。因此新增权限码只需在菜单管理里登记一行，无需改代码。
 
 ## 6. 探针
 
@@ -214,18 +213,11 @@ flowchart LR
 | 知识库 | GET | `/knowledge/chunk/list/:DocULID` | query：`page_num`、`page_size` | `PageDTO<KnowledgeChunkVO>` | `KnowledgeAPI.ChunkList` |
 | 知识库 | GET | `/knowledge/content/:DocULID` | 路径变量 | 原始字节，非包络（见 §8.2） | `KnowledgeAPI.Content` |
 | 知识库 | GET | `/knowledge/stats/:ProjectULID` | 路径变量 | `KnowledgeStatsVO` | `KnowledgeAPI.Stats` |
-| 技能与提示词档案 | GET | `/skill/list` | query：`scope_code`、`project_ulid`、`category_code`、`keyword_text`、`enabled_only` | `[]SkillVO` | `SkillAPI.List` |
-| 技能与提示词档案 | GET | `/skill/detail/:SkillULID` | 路径变量 | `SkillVO` | `SkillAPI.Detail` |
-| 技能与提示词档案 | POST | `/skill/resolve` | `SkillResolveREQ` | `SkillResolveDTO` | `SkillAPI.Resolve` |
-| 技能与提示词档案 | GET | `/skill/reference/list` | query：`skill_ulid` | `[]SkillReferenceVO` | `SkillAPI.ReferenceList` |
-| 技能与提示词档案 | POST | `/skill/save` | `SkillREQ` | `SkillVO` | `SkillAPI.Save` |
-| 技能与提示词档案 | POST | `/skill/delete` | `SkillDeleteREQ` | `null` | `SkillAPI.Delete` |
-| 技能与提示词档案 | POST | `/skill/reference/save` | `SkillReferenceREQ` | `SkillReferenceVO` | `SkillAPI.ReferenceSave` |
-| 技能与提示词档案 | POST | `/skill/reference/delete` | `SkillReferenceDeleteREQ` | `null` | `SkillAPI.ReferenceDelete` |
-| 技能与提示词档案 | POST | `/prompt/profile/list` | `PromptProfileListREQ`（`project_ulid`、`enabled_only`） | `[]PromptProfileVO` | `PromptProfileAPI.List` |
-| 技能与提示词档案 | GET | `/prompt/profile/detail/:PromptProfileULID` | 路径变量 | `PromptProfileVO` | `PromptProfileAPI.Detail` |
-| 技能与提示词档案 | POST | `/prompt/profile/save` | `PromptProfileREQ` | `PromptProfileVO` | `PromptProfileAPI.Save` |
-| 技能与提示词档案 | POST | `/prompt/profile/delete` | `PromptProfileDeleteREQ` | `null` | `PromptProfileAPI.Delete` |
+| 提示词 | GET | `/prompt/list` | query：`scope_code`、`project_ulid`、`prompt_kind_code`、`category_code`、`keyword_text`、`enabled_only` | `[]PromptVO` | `PromptAPI.List` |
+| 提示词 | GET | `/prompt/detail/:PromptULID` | 路径变量 | `PromptVO` | `PromptAPI.Detail` |
+| 提示词 | POST | `/prompt/resolve` | `PromptResolveREQ` | `PromptResolveDTO`（`/动作` 原样返回正文，不报未找到） | `PromptAPI.Resolve` |
+| 提示词 | POST | `/prompt/save` | `PromptREQ` | `PromptVO` | `PromptAPI.Save` |
+| 提示词 | POST | `/prompt/delete` | `PromptDeleteREQ` | `null` | `PromptAPI.Delete` |
 | 工具 | GET | `/tool/list` | query：`keyword_text`、`enabled_only` | `[]ToolVO` | `ToolAPI.List` |
 | 工具 | POST | `/tool/invoke` | `ToolInvokeREQ`（`project_ulid`、`tool_code`、`chapter_ulid`、`content_text`、`param_value`） | `ToolInvokeDTO`（`result_text`、`metric_map`、`latency_ms`） | `ToolAPI.Invoke` |
 | 工具 | POST | `/tool/save` | `ToolREQ` | `ToolVO` | `ToolAPI.Save` |
@@ -317,8 +309,8 @@ flowchart LR
 **知识库**
 `KnowledgeUploadREQ`（表单字段）：`project_ulid`（必填）、`doc_name`（必填，≤128）；文件字段名固定 `file`。仅接受 `txt` / `md` / `docx` / `pdf`，其他后缀返回 `ERR_INVALID_PARAM`；超过 `NW_APP_UPLOAD_MAX_MB` 上限同样返回 `ERR_INVALID_PARAM`。上传成功即写入 MinIO 原文、落库 `pending` 并投递 `doc_index` 任务；`KnowledgeListREQ`：分页字段 + `project_ulid`（必填）+ `doc_status_code`（`pending` / `indexing` / `indexed` / `failed`）；`KnowledgeSearchREQ`：`project_ulid`（必填）、`keyword_text`（≤512，去空白后为空返回 `ERR_INVALID_PARAM`）、`search_mode`（仅 `hybrid` 走双通道，其余值一律按 `keyword`）、`top_k_count`（1–20，缺省取应用配置 `rag_top_k`，再退回全局配置）、`doc_ulid_list`（限定文档范围，空为全部）；`KnowledgeSearchDTO`：`result_list`（`KnowledgeChunkVO`，含 `chunk_ulid`、`doc_ulid`、`doc_name`、`chunk_index`、`chunk_text`、`score_value`、`source_mode`）+ `trace`（`query_terms`、`query_expr`、`candidate_count`、`reranked`、`rerank_note`、`selected_ids`、`source_mode`）。重排失败为 fail-open，保留原顺序并在 `rerank_note` 说明；`KnowledgeReindexREQ.doc_ulid`：仅 `indexed` / `failed` 状态可重投，否则返回 `ERR_BIZ_FAILED`；重投把文档置回 `pending` 并投递 `doc_reindex`；`KnowledgeStatsVO`：`total_count`、`indexed_count`、`pending_count`（含 `indexing`）、`failed_count`、`chunk_count`。
 
-**技能与提示词档案**
-作用域：`global` 全局可用，`project` 仅所属项目可用；同编码的项目技能覆盖全局技能（`SkillVO.overridden_flag` 标记被覆盖项）；`SkillVO`：`skill_ulid`、`skill_code`、`skill_name`、`scope_code`、`project_ulid`、`category_code`（`write` / `revise` / `outline` / `setting` / `review` / `other`）、`description_text`、`prompt_template`、`variable_list`、`ref_count`、`enabled_flag`、`builtin_flag`、`customized_flag`（作者改过出厂内容）、`overridden_flag`、`domain_code` / `domain_name`（内置技能的流程域）、`sort_order`、`created_at`、`updated_at`；`SkillResolveREQ`：`project_ulid`、`content_text`（≤20000）、`skill_code`（显式指定优先）、`variable_value`。`SkillResolveDTO`：`skill_ulid`、`skill_code`、`skill_name`、`remainder_text`、`variable_map`、`missing_list`、`ref_text_list`；`missing_list` 非空表示必填变量缺失；变量取值优先级：显式传值 > 声明缺省值 > 必填缺失记入 `missing_list`（`resolveSkillVariables`）；模板占位符只允许内置占位符（`user_input` / `chapter_content` / `context` / `skill_code`）与已声明变量，出现未声明占位符时保存返回 `ERR_INVALID_PARAM`（`validateSkillTemplate`）；内置技能 `builtin_flag=true`：不可删除（返回 `ERR_BIZ_FAILED`），可停用或改提示词；`scope_code` 与 `skill_code` 不可改。保存内容与出厂指纹不同时 `customized_flag` 置 `true`，此后代码升级不再覆盖该行；改回出厂内容会置回 `false`；`PromptProfileVO`：`prompt_profile_ulid`、`prompt_profile_code`、`prompt_profile_name`、`scope_code`、`project_ulid`、`description_text`、`system_prompt_text`、`builtin_flag`、`enabled_flag`、`customized_flag`、`domain_code` / `domain_name`、`sort_order`、`updated_at`。作用域规则与技能一致；项目档案的归属校验比技能更严（`mustOwnProject`，校验创建者）。内置档案不可删、编码不可改，可改正文与名称。
+**提示词**
+作用域：`global` 全局可用，`project` 仅所属项目可用；同编码的项目提示词覆盖全局提示词（`PromptVO.overridden_flag` 标记被覆盖项）；`PromptVO`：`prompt_ulid`、`prompt_code`、`prompt_name`、`prompt_kind_code`（`system` 身份 / `command` 指令）、`scope_code`、`project_ulid`、`domain_code` / `domain_name`（内置提示词的流程域）、`category_code`（`write` / `revise` / `outline` / `setting` / `review` / `other`）、`description_text`、`prompt_text`、`enabled_flag`、`builtin_flag`、`customized_flag`（作者改过出厂内容）、`overridden_flag`、`sort_order`、`created_at`、`updated_at`；`PromptResolveREQ`：`project_ulid`、`content_text`（≤20000）、`prompt_code`（显式指定优先）；`PromptResolveDTO`：`prompt_ulid`、`prompt_code`、`prompt_name`、`prompt_text`、`remainder_text`。编码解析：请求体 `prompt_code` 优先，否则只解析正文**首个 token** 的 `/code`，命中启用提示词则剥离命令，未命中按自由对话处理。模板占位符只允许内置白名单（`user_input` / `chapter_content` / `context` / `prompt_code`），出现其他占位符保存返回 `ERR_INVALID_PARAM`（`validatePromptPlaceholders`）。内置提示词 `builtin_flag=true`：不可删除（返回 `ERR_BIZ_FAILED`），可停用或改正文；`prompt_code`、`scope_code`、`prompt_kind_code` 不可改。保存内容与出厂指纹不同时 `customized_flag` 置 `true`，此后代码升级不再覆盖该行；改回出厂内容会置回 `false`。
 
 **工具**
 内置 6 个工具：`chapter_check`（章节体检）、`deai_scan`（去 AI 味扫描）、`chapter_digest`（章节摘要）、`character_scan`（角色出场统计）、`foreshadow_scan`（伏笔回收检查）、`lore_lookup`（设定检索）。内置工具不可删、不可改编码；`customized_flag` 由名称/说明/关键词/参数的改动推导，改过后代码升级不再覆盖；`/tool/invoke` 按登录用户执行归属校验（`project_ulid` 必须属于本人），结果只读、不写项目数据；`content_text` 为空时回落到 `chapter_ulid` 的库内正文；对话期自动触发不看权限码，只看工具 `enabled_flag` 与正文是否命中 `trigger_keywords`，显式点名上限 3 个、单轮总数上限 3 个。
@@ -333,7 +325,7 @@ flowchart LR
 `StatsOverviewVO`：`project_count`、`total_word_count`、`today_word_delta`、`ai_word_total`、`trend_list`（近 30 天 `WordStatVO`：`stat_date`、`word_delta`、`ai_word_delta`）。
 
 **AI 对话**
-`ChatSendREQ`： | 字段 | 类型 | 说明 | `ChatHistoryREQ`：`session_ulid`（必填）+ 分页字段；结果按 `created_at` 升序；`ChatSessionCreateREQ`：`project_ulid`、`session_name`（空则取首条消息前 20 字）。`ChatSessionVO`：`session_ulid`、`project_ulid`、`session_name`、`message_count`、`updated_at`；`ChatMessageVO`：`message_ulid`、`session_ulid`、`role_code`（`user` / `assistant` / `system`）、`content_text`、`reasoning_text`、`skill_code`、`tool_code_list`（本轮执行的工具编码）、`ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_summary_ulid_list`、`ref_prompt_ulid_list`、`ref_message_ulid_list`、`token_used_count`、`created_at`；所选模型未授权给当前账号返回 `ERR_FORBIDDEN`；账号无任何可用模型返回 `ERR_AI_PROVIDER`。
+`ChatSendREQ`：`session_ulid`（空则自动建会话）、`project_ulid`（必填）、`content_text`（必填，≤8000）、`prompt_code`（显式指令提示词，正文首 token 的 `/code` 亦可）、`tool_code_list`（显式工具，正文 `#code` 亦可，上限 3）、`ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_message_ulid_list`、`ref_summary_ulid_list`、`ref_prompt_ulid_list`、`history_count`（0–50，0 用应用配置）、`model_ulid`、`system_prompt_code`（身份提示词编码，空用全局默认）。`ChatHistoryREQ`：`session_ulid`（必填）+ 分页字段；结果按 `created_at` 升序；`ChatSessionCreateREQ`：`project_ulid`、`session_name`（空则取首条消息前 20 字）。`ChatSessionVO`：`session_ulid`、`project_ulid`、`session_name`、`message_count`、`updated_at`；`ChatMessageVO`：`message_ulid`、`session_ulid`、`role_code`（`user` / `assistant` / `system`）、`content_text`、`reasoning_text`、`prompt_code`、`tool_code_list`（本轮执行的工具编码）、`ref_doc_ulid_list`、`ref_chapter_ulid_list`、`ref_summary_ulid_list`、`ref_prompt_ulid_list`、`ref_message_ulid_list`、`token_used_count`、`created_at`；所选模型未授权给当前账号返回 `ERR_FORBIDDEN`；账号无任何可用模型返回 `ERR_AI_PROVIDER`。
 
 **创作规划**
 `OutlineNodeREQ`：`outline_ulid`（空为新建）、`project_ulid`、`parent_outline_ulid`（根节点留空）、`node_type_code`（`volume` / `arc` / `storyBlock` / `chapter`）、`title_text`、`summary_text`、`node_status_code`（`draft` / `planning` / `ready` / `done`）、`sort_order`（0 表示追加到末尾）；`OutlineNodeVO.children` 递归承载子树，按 `sort_order` 升序；`DetailedSceneREQ`：`scene_ulid`、`project_ulid`、`outline_ulid`（必填）、`character_ulid_list`、`location_text`、`conflict_text`、`pace_code`（`slow` / `medium` / `fast` / `climax`）、`estimated_words`、`entry_state_text`、`goal_text`、`key_choice_text`、`outcome_text`、`exit_state_text`、`sort_order`；`DetailedSceneListREQ.outline_ulid` 留空表示项目下全部场景。
@@ -437,7 +429,7 @@ stateDiagram-v2
 | `POST /admin/job/list` | JSON body |
 
 
-返回普通数组、全量不翻页的端点：`/chapter/snapshot/list/:ChapterULID`、`/character/list`、`/lore/list`、`/skill/list`、`/skill/reference/list`、`/outline/list`、`/outline/scene/list`、`/continuity/fact/list`、`/continuity/hook/list`、`/continuity/summary/list`、`/chat/session/list`、`/model/provider/list`、`/model/catalog/list`、`/prompt/profile/list`、`/menu/list`、`/setting/list`、`/menu/permission/catalog`。
+返回普通数组、全量不翻页的端点：`/chapter/snapshot/list/:ChapterULID`、`/character/list`、`/lore/list`、`/prompt/list`、`/outline/list`、`/outline/scene/list`、`/continuity/fact/list`、`/continuity/hook/list`、`/continuity/summary/list`、`/chat/session/list`、`/model/provider/list`、`/model/catalog/list`、`/prompt/list`、`/menu/list`、`/setting/list`、`/menu/permission/catalog`。
 
 ## 10. 前端消费规则
 

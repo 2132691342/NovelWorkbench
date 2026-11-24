@@ -31,6 +31,18 @@
   const levelLabel = (levelCode: string) =>
     levelCode === 'block' ? '阻断' : levelCode === 'warn' ? '警示' : '建议'
 
+  /** 只有「命中次数」类问题才显示「N 处」：字数与段落均匀度里的数字是统计量，不是命中数 */
+  const COUNT_ISSUE_CODE_SET = new Set([
+    'dash',
+    'banned_word',
+    'warn_word',
+    'emotion_named',
+    'bare_tag'
+  ])
+
+  const showHitCount = (issueCode: string, hitCount: number) =>
+    hitCount > 0 && COUNT_ISSUE_CODE_SET.has(issueCode)
+
   const run = async () => {
     loading.value = true
     try {
@@ -116,7 +128,9 @@
               {{ levelLabel(issue.level_code) }}
             </ElTag>
             <span class="chapter-check__issue-title">{{ issue.title_text }}</span>
-            <span v-if="issue.hit_count" class="chapter-check__issue-count">{{ issue.hit_count }} 处</span>
+            <span v-if="showHitCount(issue.issue_code, issue.hit_count)" class="chapter-check__issue-count">
+              {{ issue.hit_count }} 处
+            </span>
           </div>
           <p class="chapter-check__issue-detail">{{ issue.detail_text }}</p>
           <p v-if="issue.sample_text" class="chapter-check__issue-sample">示例：{{ issue.sample_text }}</p>

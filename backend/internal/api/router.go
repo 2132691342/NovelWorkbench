@@ -80,9 +80,9 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	registerKnowledgeRoutes(v1, deps.KnowledgeAPI)
 	registerOutlineRoutes(v1, deps.OutlineAPI)
 	registerContinuityRoutes(v1, deps.ContinuityAPI)
-	registerSkillRoutes(v1, deps)
+
 	registerToolRoutes(v1, deps)
-	registerPromptProfileRoutes(v1, deps)
+	registerPromptRoutes(v1, deps)
 	registerSettingRoutes(v1, deps)
 	registerStatsRoutes(v1, deps.StatsAPI)
 	registerChatRoutes(v1, deps.ChatAPI)
@@ -259,20 +259,17 @@ func registerKnowledgeRoutes(rg *gin.RouterGroup, handler *KnowledgeAPI) {
 	rg.GET("/knowledge/stats/:ProjectULID", handler.Stats)
 }
 
-// registerSkillRoutes 注册技能路由（读对所有登录用户开放，写收口到 skill:manage）。
-func registerSkillRoutes(rg *gin.RouterGroup, deps RouterDeps) {
-	skillGroup := rg.Group("/skill")
-	skillGroup.GET("/list", deps.SkillAPI.List)
-	skillGroup.GET("/detail/:SkillULID", deps.SkillAPI.Detail)
-	skillGroup.POST("/resolve", deps.SkillAPI.Resolve)
-	skillGroup.GET("/reference/list", deps.SkillAPI.ReferenceList)
-	skillWrite := skillGroup.Group("")
-	skillWrite.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermSkillManage))
+// registerPromptRoutes 注册提示词路由（读对所有登录用户开放，写收口到 prompt:manage）。
+func registerPromptRoutes(rg *gin.RouterGroup, deps RouterDeps) {
+	promptGroup := rg.Group("/prompt")
+	promptGroup.GET("/list", deps.PromptAPI.List)
+	promptGroup.GET("/detail/:PromptULID", deps.PromptAPI.Detail)
+	promptGroup.POST("/resolve", deps.PromptAPI.Resolve)
+	promptWrite := promptGroup.Group("")
+	promptWrite.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermPromptManage))
 	{
-		skillWrite.POST("/save", deps.SkillAPI.Save)
-		skillWrite.POST("/delete", deps.SkillAPI.Delete)
-		skillWrite.POST("/reference/save", deps.SkillAPI.ReferenceSave)
-		skillWrite.POST("/reference/delete", deps.SkillAPI.ReferenceDelete)
+		promptWrite.POST("/save", deps.PromptAPI.Save)
+		promptWrite.POST("/delete", deps.PromptAPI.Delete)
 	}
 }
 
@@ -286,19 +283,6 @@ func registerToolRoutes(rg *gin.RouterGroup, deps RouterDeps) {
 	{
 		toolWrite.POST("/save", deps.ToolAPI.Save)
 		toolWrite.POST("/delete", deps.ToolAPI.Delete)
-	}
-}
-
-// registerPromptProfileRoutes 注册提示词档案路由（读对所有登录用户开放，写收口到 prompt:manage）。
-func registerPromptProfileRoutes(rg *gin.RouterGroup, deps RouterDeps) {
-	profileGroup := rg.Group("/prompt/profile")
-	profileGroup.POST("/list", deps.PromptProfileAPI.List)
-	profileGroup.GET("/detail/:PromptProfileULID", deps.PromptProfileAPI.Detail)
-	profileWrite := profileGroup.Group("")
-	profileWrite.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermPromptManage))
-	{
-		profileWrite.POST("/save", deps.PromptProfileAPI.Save)
-		profileWrite.POST("/delete", deps.PromptProfileAPI.Delete)
 	}
 }
 

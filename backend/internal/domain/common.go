@@ -19,8 +19,7 @@ const (
 	IDPrefixChunk           = "CHK_" // 知识库切片
 	IDPrefixSession         = "SES_" // 会话
 	IDPrefixMessage         = "MSG_" // 消息
-	IDPrefixSkill           = "SKL_" // 技能
-	IDPrefixSkillReference  = "SKR_" // 技能参考资料
+	IDPrefixPrompt          = "PRM_" // 提示词
 	IDPrefixMenu            = "MNU_" // 菜单
 	IDPrefixJob             = "JOB_" // 异步任务
 	IDPrefixSetting         = "SET_" // 应用配置
@@ -36,7 +35,6 @@ const (
 	IDPrefixModelUsage      = "MUS_" // 模型用量统计
 	IDPrefixNotification    = "NTF_" // 站内通知
 	IDPrefixLoginLog        = "LGL_" // 登录日志
-	IDPrefixPromptProfile   = "PMP_" // 系统提示词档案
 )
 
 // 业务响应码（字符串，与 HTTP 状态码 int 区分）：SUCCESS 与 ERR_ 前缀族。

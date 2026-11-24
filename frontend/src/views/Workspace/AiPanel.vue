@@ -21,6 +21,7 @@
   } from '@/api/contracts'
   import { useSSE } from '@/composables/useSSE'
   import { applyStreamEvent } from './chatStream'
+  import { COMPOSER_ACTION_LIST } from './composerCommands'
   import ChatComposer from './ChatComposer.vue'
   import ChatMessage from './ChatMessage.vue'
   import type { ChatDisplayMessage, ChatSendPayload } from './types'
@@ -35,6 +36,8 @@
   const emit = defineEmits<{
     'insert-to-chapter': [contentText: string]
     'replace-chapter': [contentText: string]
+    /** 写作台级斜杠动作（体检/专注/快照）交由外层执行 */
+    action: [actionCode: string]
   }>()
 
   const { streamingFlag, startStream, stopStream } = useSSE()
@@ -112,7 +115,7 @@
         role_code: message.role_code,
         content_text: message.content_text,
         reasoning_text: message.reasoning_text ?? '',
-        skill_code: message.skill_code,
+        prompt_code: message.prompt_code,
         tool_code_list: message.tool_code_list ?? [],
         created_at: message.created_at,
         reference_list: [],
@@ -174,9 +177,9 @@
       content_text: payload.content_text,
       history_count: payload.history_count
     }
-    if (payload.skill_code) request.skill_code = payload.skill_code
+    if (payload.prompt_code) request.prompt_code = payload.prompt_code
     if (payload.tool_code_list.length > 0) request.tool_code_list = payload.tool_code_list
-    if (payload.prompt_profile_ulid) request.prompt_profile_ulid = payload.prompt_profile_ulid
+    if (payload.system_prompt_code) request.system_prompt_code = payload.system_prompt_code
     if (selectedModelUlid.value) request.model_ulid = selectedModelUlid.value
 
     const chapterRefs = [...payload.ref_chapter_ulid_list]
@@ -256,7 +259,7 @@
         role_code: 'user',
         content_text: payload.content_text,
         reasoning_text: '',
-        skill_code: payload.skill_code,
+        prompt_code: payload.prompt_code,
         tool_code_list: [...payload.tool_code_list],
         created_at: createdAtText,
         reference_list: [],
@@ -270,7 +273,7 @@
         role_code: 'assistant',
         content_text: '',
         reasoning_text: '',
-        skill_code: '',
+        prompt_code: '',
         tool_code_list: [...payload.tool_code_list],
         created_at: createdAtText,
         reference_list: [],
@@ -296,15 +299,82 @@
     ElMessage.success('已停止生成')
   }
 
+  /** 上一条 AI 回复正文（/copy 用） */
+  const lastAssistantText = (): string => {
+    for (let i = messageList.value.length - 1; i >= 0; i--) {
+      const message = messageList.value[i]
+      if (message.role_code === 'assistant' && message.content_text) return message.content_text
+    }
+    return ''
+  }
+
+  /** 命令速查：把当前可用的三类触发符与提示词清单摊开给用户看 */
+  const showCommandHelp = async () => {
+    const actionRows = COMPOSER_ACTION_LIST.map(
+      (action) => `<li><code>/${action.action_code}</code> ${action.action_name} — ${action.action_desc}</li>`
+    ).join('')
+    const promptRows = commandPromptList.value
+      .map(
+        (prompt) =>
+          `<li><code>/${prompt.prompt_code}</code> ${prompt.prompt_name} — ${prompt.description_text}</li>`
+      )
+      .join('')
+    const toolRows = toolList.value
+      .map(
+        (tool) => `<li><code>#${tool.tool_code}</code> ${tool.tool_name} — ${tool.description_text}</li>`
+      )
+      .join('')
+    await ElMessageBox.alert(
+      `<div class="command-help">
+        <p><b>/ 本地动作</b>（立即执行，不消耗模型）</p>
+        <ul>${actionRows}</ul>
+        <p><b>/ 指令提示词</b>（以系统级消息注入本轮）</p>
+        <ul>${promptRows || '<li>暂无启用的指令提示词</li>'}</ul>
+        <p><b># 工具</b>（服务端确定性执行，结果注入上下文）</p>
+        <ul>${toolRows || '<li>暂无启用的工具</li>'}</ul>
+        <p><b>@ 引用</b>：文档 / 章节 / 摘要 / 提示词 / 历史消息；@ 弹层内 ← → 切页签，↑ ↓ 选择，Enter 确认。</p>
+        <p>键盘：<code>Ctrl/⌘ + Enter</code> 发送，<code>Esc</code> 关闭弹层，输入框为空时 <code>Backspace</code> 逐个撤销命令徽标。</p>
+      </div>`,
+      '命令速查',
+      { dangerouslyUseHTMLString: true, confirmButtonText: '知道了' }
+    ).catch(() => undefined)
+  }
+
+  /** 斜杠动作分发：面板级就地处理，写作台级交给外层 */
+  const handleAction = (actionCode: string) => {
+    if (actionCode === 'new') {
+      void createSession()
+      return
+    }
+    if (actionCode === 'attach') {
+      attachChapter.value = !attachChapter.value
+      ElMessage.success(attachChapter.value ? '已附带当前章节' : '已取消附带当前章节')
+      return
+    }
+    if (actionCode === 'copy') {
+      const contentText = lastAssistantText()
+      if (!contentText) {
+        ElMessage.warning('还没有可复制的 AI 回复')
+        return
+      }
+      void navigator.clipboard.writeText(contentText).then(() => ElMessage.success('已复制上一条回复'))
+      return
+    }
+    if (actionCode === 'help') {
+      void showCommandHelp()
+      return
+    }
+    emit('action', actionCode)
+  }
+
   watch(
     () => props.projectUlid,
     () => {
       currentSessionUlid.value = ''
       messageList.value = []
       void loadSessions()
-      void loadSkills()
+      void loadPrompts()
       void loadTools()
-      void loadProfiles()
     },
     { immediate: true }
   )
@@ -315,8 +385,8 @@
   onBeforeUnmount(stopWaitTimer)
 
   defineExpose({
-    presetSkill: (skillCode: string, chapterUlidList: string[]) =>
-      composerRef.value?.presetSkill(skillCode, chapterUlidList),
+    presetPrompt: (promptCode: string, chapterUlidList: string[]) =>
+      composerRef.value?.presetPrompt(promptCode, chapterUlidList),
     presetText: (promptText: string) => composerRef.value?.setInputText(promptText)
   })
 </script>
@@ -368,9 +438,9 @@
       <div v-if="messageList.length === 0 && !historyLoading" class="ai-panel__welcome">
         <p class="ai-panel__welcome-title">开始一次创作对话</p>
         <ul class="ai-panel__tips">
-          <li>输入 <code>/</code> 唤起技能（续写、润色、质检…）</li>
-          <li>输入 <code>@</code> 引用文档、章节、摘要、档案或历史消息</li>
-          <li><code>Ctrl/⌘ + Enter</code> 发送</li>
+          <li>输入 <code>/</code> 选命令：本地动作立即执行，提示词以系统级消息注入</li>
+          <li>输入 <code>#</code> 选工具，<code>@</code> 引用文档、章节、摘要、档案或历史消息</li>
+          <li><code>Ctrl/⌘ + Enter</code> 发送，<code>/help</code> 看全部命令</li>
         </ul>
       </div>
 
@@ -389,13 +459,14 @@
       :project-ulid="projectUlid"
       :chapter-list="chapterList"
       :message-list="messageList"
-      :skill-list="skillList"
+      :prompt-list="commandPromptList"
       :tool-list="toolList"
-      :profile-list="profileList"
+      :system-prompt-list="systemPromptList"
       :streaming="streamingFlag"
       :can-send="canSend"
       @send="send"
       @stop="stop"
+      @action="handleAction"
     />
   </section>
 </template>
@@ -450,6 +521,37 @@
       font-size: 12px;
       line-height: 1.9;
       color: var(--el-text-color-secondary);
+    }
+  }
+</style>
+
+<style lang="less">
+  /* 命令速查渲染在 body 下的消息框里，作用域样式够不到，只能全局给 */
+  .command-help {
+    font-size: 12.5px;
+    line-height: 1.85;
+    color: var(--el-text-color-regular);
+
+    p {
+      margin: 8px 0 2px;
+      color: var(--nw-ink);
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 16px;
+    }
+
+    li {
+      list-style: none;
+    }
+
+    code {
+      padding: 0 4px;
+      font-size: 11.5px;
+      color: var(--el-color-primary);
+      background: var(--nw-primary-soft);
+      border-radius: 4px;
     }
   }
 </style>

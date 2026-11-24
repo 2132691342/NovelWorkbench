@@ -1,4 +1,4 @@
-// 本文件实现 AI 对话业务：会话管理、上下文装配、流式生成与消息落库。
+// 本文件实现 AI 对话业务：会话管理、提示词解析、上下文装配、流式生成与消息落库。
 
 package service
 
@@ -23,7 +23,7 @@ const (
 	settingKeyRAGTopK          = "rag_top_k"          // 应用配置键：知识库默认召回条数
 	globalDocProjectID         = "0"                  // 全局知识库文档的项目标识
 	chatPingInterval           = 15 * time.Second     // 流式无输出心跳间隔
-	chatStreamIdleTimeout      = 6 * time.Minute      // 流式连续无分片的上限：超时判定网关已断，报错而非无限等待
+	chatStreamIdleTimeout      = 6 * time.Minute      // 流式连续无分片的上限：超时判定网关已断
 	docFullTextPageSize        = 200                  // 文档切片全量拼接分页大小
 )
 
@@ -85,8 +85,7 @@ type ChatService struct {
 	knowledgeRepo    *repo.KnowledgeRepo   // 知识库仓储
 	continuityRepo   *repo.ContinuityRepo  // 章节摘要仓储（@引用摘要）
 	settingRepo      *repo.SettingRepo     // 应用配置仓储
-	skillService     *SkillService         // 技能服务（解析、变量与参考资料）
-	promptProfileSvc *PromptProfileService // 提示词档案服务（系统提示词解析）
+	promptSvc        *PromptService        // 提示词服务（身份提示词与斜杠指令解析）
 	knowledgeService *KnowledgeService     // 知识库服务（RAG 召回）
 	toolService      *ToolService          // 工具服务（关键词自动触发与执行）
 	providerSvc      *ModelProviderService // 供应商服务（模型选择）
@@ -97,15 +96,15 @@ type ChatService struct {
 
 // NewChatService 构造对话服务。
 func NewChatService(chatRepo *repo.ChatRepo, projectRepo *repo.ProjectRepo, chapterRepo *repo.ChapterRepo,
-	characterRepo *repo.CharacterRepo, knowledgeRepo *repo.KnowledgeRepo, continuityRepo *repo.ContinuityRepo, settingRepo *repo.SettingRepo,
-	skillService *SkillService, promptProfileSvc *PromptProfileService, knowledgeService *KnowledgeService, toolService *ToolService, providerSvc *ModelProviderService,
-	aiClient *ai.Client, db *gorm.DB, config ChatConfig) *ChatService {
+	characterRepo *repo.CharacterRepo, knowledgeRepo *repo.KnowledgeRepo, continuityRepo *repo.ContinuityRepo,
+	settingRepo *repo.SettingRepo, promptSvc *PromptService, knowledgeService *KnowledgeService,
+	toolService *ToolService, providerSvc *ModelProviderService, aiClient *ai.Client, db *gorm.DB,
+	config ChatConfig) *ChatService {
 	return &ChatService{
 		chatRepo: chatRepo, projectRepo: projectRepo, chapterRepo: chapterRepo,
-		characterRepo: characterRepo, knowledgeRepo: knowledgeRepo, continuityRepo: continuityRepo, settingRepo: settingRepo,
-		skillService: skillService, promptProfileSvc: promptProfileSvc, knowledgeService: knowledgeService,
-		toolService: toolService, providerSvc: providerSvc, aiClient: aiClient,
-		db: db, config: config,
+		characterRepo: characterRepo, knowledgeRepo: knowledgeRepo, continuityRepo: continuityRepo,
+		settingRepo: settingRepo, promptSvc: promptSvc, knowledgeService: knowledgeService,
+		toolService: toolService, providerSvc: providerSvc, aiClient: aiClient, db: db, config: config,
 	}
 }
 
@@ -174,18 +173,18 @@ func (s *ChatService) History(ctx context.Context, userULID string, req *domain.
 	return domain.PageDTO[domain.ChatMessageVO]{Total: int64(len(items)), PageNum: 1, PageSize: len(items), Items: items}, nil
 }
 
-// Send 流式对话主链路：技能解析 → 上下文装配 → 流式生成 → 落库与统计。
+// Send 流式对话主链路：提示词解析 → 上下文装配 → 流式生成 → 落库与统计。
 // 流开始前的失败返回 error（api 输出 JSON 包络）；流开始后失败经 SSE error 事件下发并返回 nil。
 func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.ChatSendREQ, writer ChatStreamWriter) error {
 	project, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID)
 	if err != nil {
 		return err
 	}
-	skill, err := s.resolveSkill(ctx, req)
+	prompt, err := s.resolvePrompt(ctx, req)
 	if err != nil {
 		return err
 	}
-	skillCode, skillTemplate, userInput := skill.SkillCode, skill.PromptTemplate, skill.RemainderText
+	promptCode, promptText, userInput := prompt.PromptCode, prompt.PromptText, prompt.RemainderText
 	// 正文里的 #code 触发词在进入上下文前剥离，避免模型把命令当正文读
 	if _, strippedText := parseHashToolCodes(userInput); strippedText != userInput {
 		userInput = strippedText
@@ -207,27 +206,32 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	if err != nil {
 		return err
 	}
-	contextInput.SkillTemplate = skillTemplate
-	contextInput.SkillVariable = skill.VariableMap
-	contextInput.SkillRefList = skill.RefTextList
-	contextInput.UserInput = userInput
-	contextInput.HistoryList = historyList
 	toolResultList, toolCodeList, err := s.runTools(ctx, userULID, req, contextInput)
 	if err != nil {
 		return err
 	}
+	contextInput.UserInput = userInput
 	contextInput.ToolResultList = toolResultList
-	blocks, instructionText := buildContextBlocks(contextInput)
+	blocks := buildContextBlocks(contextInput)
 	assembledText, droppedKeys := ai.AssembleContext(blocks, ai.ContextBudgetChars)
 	if len(droppedKeys) > 0 {
 		pkg.SLogger().Warnw("上下文块超出预算被丢弃", "session_ulid", session.SessionULID, "dropped_keys", droppedKeys)
+	}
+	commandText := ""
+	if promptText != "" {
+		commandText = ai.RenderPrompt(promptText, map[string]string{
+			"user_input":      userInput,
+			"chapter_content": truncateRunes(joinChapterContent(contextInput.ChapterList), ai.ContextBudgetChars),
+			"context":         assembledText,
+			"prompt_code":     promptCode,
+		})
 	}
 	userMessage := &domain.ChatMessageDO{
 		MessageULID:    pkg.NewULID(domain.IDPrefixMessage),
 		SessionULID:    session.SessionULID,
 		RoleCode:       domain.ChatRoleUser,
 		ContentText:    req.ContentText,
-		SkillCode:      skillCode,
+		PromptCode:     promptCode,
 		ToolCodeJSON:   encodeStringList(toolCodeList),
 		RefDocJSON:     encodeStringList(req.RefDocULIDList),
 		RefChapterJSON: encodeStringList(req.RefChapterULIDList),
@@ -244,8 +248,15 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 			pkg.SLogger().Warnw("会话名回填失败", "session_ulid", session.SessionULID, "error", err)
 		}
 	}
-	systemPromptText := s.promptProfileSvc.SystemPromptOf(ctx, req.ProjectULID, req.PromptProfileULID)
-	messages := buildChatMessages(systemPromptText, project.StyleText, assembledText, instructionText, historyList)
+	systemPromptText := s.promptSvc.SystemPromptOf(ctx, req.ProjectULID, req.SystemPromptCode)
+	messages := buildChatMessages(chatMessageInput{
+		SystemPromptText: systemPromptText,
+		StyleText:        project.StyleText,
+		ContextText:      assembledText,
+		CommandText:      commandText,
+		HistoryList:      historyList,
+		UserText:         userInput,
+	})
 	providerSpec, err := s.providerSvc.ChatSpecOf(ctx, userULID, req.ModelULID)
 	if err != nil {
 		return err // 供应商不可用：流未开始，api 层输出 JSON 包络
@@ -266,7 +277,7 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		RoleCode:       domain.ChatRoleAssistant,
 		ContentText:    replyText,
 		ReasoningText:  reasoningText,
-		SkillCode:      skillCode,
+		PromptCode:     promptCode,
 		ToolCodeJSON:   encodeStringList(toolCodeList),
 		RefDocJSON:     encodeStringList(req.RefDocULIDList),
 		RefChapterJSON: encodeStringList(req.RefChapterULIDList),
@@ -291,42 +302,29 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	return nil
 }
 
-// chatSkill 对话链路的技能解析结果（模板与变量分离，供上下文装配渲染）。
-type chatSkill struct {
-	SkillCode      string            // 技能编码（空为自由对话）
-	PromptTemplate string            // 提示词模板（保留 {{context}} 等内置占位符）
-	VariableMap    map[string]string // 声明的变量取值
-	RefTextList    []string          // 命中的参考资料正文
-	RemainderText  string            // 去掉斜杠命令后的用户正文
+// chatPrompt 对话链路的提示词解析结果（正文保留占位符，装配时再渲染）。
+type chatPrompt struct {
+	PromptCode    string // 提示词编码（空为自由对话）
+	PromptText    string // 提示词正文（含 {{context}} 等占位符）
+	RemainderText string // 去掉斜杠命令后的用户正文
 }
 
-// resolveSkill 解析技能与用户正文：skill_code 优先，否则解析正文首 token 的 /code；
-// 项目技能覆盖同编码全局技能，未命中技能时按自由对话处理。
-func (s *ChatService) resolveSkill(ctx context.Context, req *domain.ChatSendREQ) (chatSkill, error) {
-	resolved, err := s.skillService.Resolve(ctx, &domain.SkillResolveREQ{
-		ProjectULID:   req.ProjectULID,
-		ContentText:   req.ContentText,
-		SkillCode:     req.SkillCode,
-		VariableValue: req.SkillVariableMap,
+// resolvePrompt 解析提示词与用户正文：prompt_code 优先，否则解析正文首 token 的 /code；
+// 项目提示词覆盖同编码全局提示词，未命中提示词时按自由对话处理。
+func (s *ChatService) resolvePrompt(ctx context.Context, req *domain.ChatSendREQ) (chatPrompt, error) {
+	resolved, err := s.promptSvc.Resolve(ctx, &domain.PromptResolveREQ{
+		ProjectULID: req.ProjectULID,
+		ContentText: req.ContentText,
+		PromptCode:  req.PromptCode,
 	})
 	if err != nil {
-		return chatSkill{}, err
+		return chatPrompt{}, err
 	}
-	result := chatSkill{
-		SkillCode:     resolved.SkillCode,
+	return chatPrompt{
+		PromptCode:    resolved.PromptCode,
+		PromptText:    resolved.PromptText,
 		RemainderText: resolved.RemainderText,
-		VariableMap:   resolved.VariableMap,
-		RefTextList:   resolved.RefTextList,
-	}
-	if resolved.SkillCode == "" {
-		return result, nil
-	}
-	skill, err := s.skillService.SkillTemplate(ctx, req.ProjectULID, resolved.SkillCode)
-	if err != nil {
-		return chatSkill{}, err
-	}
-	result.PromptTemplate = skill.PromptTemplate
-	return result, nil
+	}, nil
 }
 
 // resolveSession 解析会话：session_ulid 为空自动创建，否则校验归属与项目匹配。
