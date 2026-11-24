@@ -184,10 +184,10 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 
 - 组件解析：`import.meta.glob('../views/**/*.{vue,tsx}')` 构建期收集，`component_path`（如 `views/Workspace/index`）按字符串取懒加载函数；
   找不到组件时路由仍注册但页面显示 404，管理端改错路径不会让整个前端白屏。
-- 路径拼接：`pathResolve()` 会合并重复斜杠并去掉**结尾斜杠**。路由表是 `strict: true`，`/workspace/PRJ_x/` 与 `/workspace/PRJ_x` 不匹配同一个记录，尾斜杠会让任何菜单点击都落到 Fallback（回归用例：`src/utils/routerHelper.test.ts`）。
+- 路径拼接：`pathResolve()` 会合并重复斜杠并去掉**结尾斜杠**。路由表是 `strict: true`，`/workspace/PRJ_x/` 与 `/workspace/PRJ_x` 不匹配同一个记录，尾斜杠会让任何菜单点击都落到 Fallback（回归用例：`src/utils/routerChain.test.ts`）。
 - 分组节点（`menu_type_code=group`）只生成 children 与 `redirect`，不渲染自身页面。
 - 新增页面：写 `.vue` → 在「菜单管理」登记 `component_path` → 刷新即生效，**不需要前端发版**。
-- 顶栏入口（如「个人中心」）也必须登记菜单行并置 `visible_flag=false`：菜单即路由，未登记就没有路由，点击只会 404（回归用例：`backend/internal/service/menu_seed_test.go`）。
+- 顶栏入口（如「个人中心」）也必须登记菜单行并置 `visible_flag=false`：菜单即路由，未登记就没有路由，点击只会 404（回归用例：`backend/internal/service/navigation_chain_test.go`）。
 
 ### 4.2 唯一全局守卫
 

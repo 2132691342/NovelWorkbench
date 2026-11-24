@@ -6,7 +6,7 @@
 
 应用只由两个容器组成，中间件不在应用镜像内，部署时二选一：本地用 `infra` profile 拉起，或云主机直连既有实例。
 
-``mermaid
+```mermaid
 flowchart LR
   U["Browser"] -->|"宿主 14399"| FE["nw-frontend (nginx:80)"]
   FE -->|"/api/ 反代"| BE["nw-backend :8080"]
@@ -20,7 +20,7 @@ flowchart LR
   W --> PG
   W --> MI
   W --> MC
-``
+```
 
 | 容器 | 镜像 | 监听 | 宿主端口 | 职责 |
 | --- | --- | --- | --- | --- |
@@ -217,7 +217,7 @@ flowchart LR
 
 前置条件：Docker + Compose 插件。
 
-``bash
+```bash
 cp .env.example .env            # 填入密钥与地址，.env 不入库
 docker compose up -d --build                          # 仅应用容器
 docker compose --profile infra up -d --build          # 额外拉起五个中间件
@@ -226,7 +226,7 @@ docker compose exec backend wget -qO- http://127.0.0.1:8080/health
 docker compose exec backend wget -qO- http://127.0.0.1:8080/ready
 docker compose logs -f backend
 docker compose down             # 加 -v 会删除 infra 数据卷
-``
+```
 
 `infra` profile 的中间件容器与应用容器读同一份 `.env`：
 
@@ -258,7 +258,7 @@ docker compose down             # 加 -v 会删除 infra 数据卷
 
 ### 8.2 开发机准备产物
 
-``bash
+```bash
 cd backend
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
   -tags "netgo osusergo" -ldflags="-s -w" \
@@ -266,19 +266,19 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 
 cd ../frontend
 corepack enable && pnpm install --frozen-lockfile && pnpm build
-``
+```
 
 上传后路径需与脚本期望一致：`backend/build/nw-server-linux-amd64`、`frontend/dist/index.html`、`frontend/nginx.conf.template`、`backend/configs/config.yaml`。
 
 ### 8.3 `deploy.sh` 流程
 
-``bash
+```bash
 cd /opt/novelworkbench/deploy/podman
 cp .env.example .env     # 填密钥；按 podman network ls 设置 NW_INFRA_NETWORK
 bash deploy.sh
-``
+```
 
-``mermaid
+```mermaid
 flowchart TD
   A["预检产物与 .env"] -->|"缺项"| X["die 退出非 0"]
   A --> B["导出 .env 为环境变量"]
@@ -290,7 +290,7 @@ flowchart TD
   F --> G["轮询 /health /ready /healthz"]
   G -->|"通过"| H["打印 podman ps 并退出 0"]
   G -->|"30 次超时"| X
-``
+```
 
 | 步骤 | 行为 | 失败处理 |
 | --- | --- | --- |
@@ -345,9 +345,9 @@ CI 关键设置：
 
 GHCR 要求镜像仓库名全小写，GitHub 仓库名允许大写。`release.yml` 的 `Normalize image prefix` 步骤：
 
-``bash
+```bash
 echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-``
+```
 
 `${GITHUB_REPOSITORY,,}` 为 bash 小写展开，例如 `2132691342/NovelWorkbench` → `ghcr.io/2132691342/novelworkbench`。两个构建步骤共用该输出：
 
@@ -372,10 +372,10 @@ echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
 ### 9.4 发布与回滚
 
-``bash
+```bash
 git tag v1.0.0 && git push origin v1.0.0     # 触发 Release，产出 GHCR 镜像
 docker compose pull && docker compose up -d  # 使用 GHCR 镜像的主机滚动更新
-``
+```
 
 Podman 主机不拉 GHCR，由 `deploy.sh` 从预构建产物本地构建。回滚方式：切回上一版本镜像 tag 后重建容器（`podman-compose up -d --force-recreate` 或 `docker compose up -d`）；`AutoMigrate` 只做增量建表，回滚旧二进制前需确认新增表不被旧代码依赖。
 
@@ -401,7 +401,7 @@ Podman 主机不拉 GHCR，由 `deploy.sh` 从预构建产物本地构建。回�
 
 值班命令（后端不映射宿主端口，探活一律进容器；中间件容器名按实际栈调整——`infra` profile 为 `nw-postgres` / `nw-redis` / `nw-rabbitmq`，云主机既有栈为宿主上的既有名称）：
 
-``bash
+```bash
 podman ps --format '{{.Names}} | {{.Status}} | {{.Ports}}'
 curl -fsS http://127.0.0.1:14399/healthz
 podman exec nw-backend wget -qO- http://127.0.0.1:8080/health
@@ -411,7 +411,7 @@ podman exec nw-rabbitmq rabbitmqctl list_queues name messages consumers
 podman exec nw-redis redis-cli -a "$NW_REDIS_PASSWORD" ping
 podman exec nw-postgres psql -U postgres -c 'select count(*) from users;'
 curl -sS 'http://127.0.0.1:9308/sql?mode=raw&query=SHOW+TABLES'
-``
+```
 
 ### 10.3 常见故障
 
@@ -436,10 +436,10 @@ curl -sS 'http://127.0.0.1:9308/sql?mode=raw&query=SHOW+TABLES'
 | Manticore | 无需备份 | — | 索引可由 PostgreSQL 切片重建（`ensureManticoreSchema` + `rebuildManticoreIndex`） |
 | `.env` | 密码管理器 / 加密备份 | 变更时 | 含全部凭据与封存材料来源 |
 
-``bash
+```bash
 podman exec nw-postgres pg_dump -U postgres -Fc postgres > nw-$(date +%F).dump
 mc mirror --overwrite local/novelworkbench backup/novelworkbench
-``
+```
 
 恢复顺序：停止后端 → `pg_restore` 恢复数据库 → `mc mirror` 恢复桶 → 启动后端（`AutoMigrate` 补齐表结构）→ 任务中心重试失败任务 → 登录验证项目、章节、知识库与通知。
 

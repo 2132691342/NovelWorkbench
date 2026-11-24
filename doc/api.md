@@ -147,7 +147,7 @@ flowchart LR
 
 未列入上表的其余 `/api/v1` 路由均为「登录用户即可访问」，数据范围由归属校验收窄。
 
-权限目录（`GET /menu/permission/catalog`）由菜单表汇总而来：`service/menu_service.go` 的 `buildPermCatalog` 先登记 `*`，再按菜单行的 `perm_code` 逐条登记（同一码只登记一次），按权限码首段分组（`system` / `skill` / `project` / `all`）并升序返回。因此新增权限码只需在菜单管理里登记一行，无需改代码。
+权限目录（`GET /menu/permission/catalog`）由菜单表汇总而来：`service/menu_service.go` 的 `buildPermCatalog` 先登记 `*`，再按菜单行的 `perm_code` 逐条登记（同一码只登记一次），按权限码首段分组（当前实际使用 `system` / `skill` / `tool` / `prompt`，`project` 分组已预留但暂无权限码）并升序返回。因此新增权限码只需在菜单管理里登记一行，无需改代码。
 
 ## 6. 探针
 
@@ -163,7 +163,7 @@ flowchart LR
 
 约定：`POST` 请求体为 JSON（`/knowledge/upload` 除外），`GET` 参数为 query 或路径变量；权限门禁见第 5 节——未列入该节权限码表的路由均为「登录用户即可访问」，数据范围由归属校验收窄。
 
-### 7.1 接口总表（117 条）
+### 7.1 接口总表（119 条）
 
 | 模块 | 方法 | 路径 | 请求 | 响应 data | Handler |
 | --- | --- | --- | --- | --- | --- |

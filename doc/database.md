@@ -161,15 +161,15 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ### 3.4 知识库（2 张）
 
-**knowledge_documents** — `doc_ulid`(PK) · `project_ulid`(IDX) · `doc_name`(v256) · `doc_type_code`(v16，`txt`/`md`/`docx`/`pdf`，由扩展名白名单推导) · `doc_status_code`(v16，`pending`/`indexing`/`indexed`/`failed`) · `object_key`(v128，MinIO 对象键，同 `doc_ulid`) · `file_size`(bigint) · `chunk_count`(int) · `token_count`(bigint) · `error_message`(v512，失败原因截断到 500 字符)
+**knowledge_documents** — `doc_ulid`(PK) · `project_ulid`(IDX) · `doc_name`(v256) · `doc_type_code`(v16，`txt`/`md`/`docx`/`pdf`，由扩展名白名单推导) · `object_key`(v128，MinIO 对象键，同 `doc_ulid`) · `doc_status_code`(v16，`pending`/`indexing`/`indexed`/`failed`) · `chunk_count`(int) · `total_token_count`(bigint) · `error_message`(v512，失败原因)
 
 **knowledge_chunks** — `chunk_ulid`(PK) · `doc_ulid`(IDX) · `project_ulid`(IDX) · `chunk_index`(int，片内序号) · `chunk_text`(text) · `token_count`(int) · `content_hash`(v64，切片内容指纹，用于增量重建时复用 ULID)
 
 ### 3.5 对话与 AI 资产（6 张）
 
-**chat_sessions** — `session_ulid`(PK) · `project_ulid`(IDX) · `user_ulid`(IDX) · `session_name`(v128，缺省取首条消息前 20 字) · `model_ulid`(v40) · `skill_code`(v32) · `last_active_at`(timestamptz) · `message_count`(int)
+**chat_sessions** — `session_ulid`(PK) · `project_ulid`(IDX) · `user_ulid`(IDX) · `session_name`(v128，缺省取首条消息前 20 字)
 
-**chat_messages** — `message_ulid`(PK) · `session_ulid`(IDX) · `role_code`(v16，`user`/`assistant`/`system`) · `content_text`(text) · `reasoning_text`(text，完整思考过程) · `skill_code`(v32) · `tool_code_json`(text，本轮执行的工具编码 JSON 数组) · `ref_doc_json` / `ref_chapter_json` / `ref_message_json` / `ref_summary_json` / `ref_prompt_json`(text，各自的引用 ULID 数组) · `reference_list_json`(text，RAG 召回依据) · `token_used_count`(int)
+**chat_messages** — `message_ulid`(PK) · `session_ulid`(IDX) · `role_code`(v16，`user`/`assistant`/`system`) · `content_text`(text) · `reasoning_text`(text，完整思考过程) · `skill_code`(v32) · `tool_code_json`(text，本轮执行的工具编码 JSON 数组) · `ref_doc_json` / `ref_chapter_json` / `ref_message_json` / `ref_summary_json` / `ref_prompt_json`(text，各自的引用 ULID 数组) · `token_used_count`(int)
 
 **skills** — `skill_ulid`(PK) · `skill_code`(IDX,v32，对话中以 `/code` 触发) · `skill_name`(v64) · `scope_code`(IDX,v16，`global`/`project`) · `project_ulid`(IDX，全局为空) · `category_code`(v16，`write`/`revise`/`outline`/`setting`/`review`/`other`) · `description_text`(v256) · `prompt_template`(text，`{{占位符}}`) · `variable_spec_json`(text，变量声明 JSON 数组) · `enabled_flag`(bool) · `builtin_flag`(bool，内置不可删) · `asset_hash_text`(v64，出厂指纹) · `customized_flag`(bool，作者是否改过，改过则代码升级不覆盖) · `sort_order`(int)
 
@@ -181,9 +181,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ### 3.6 模型生态（5 张）
 
-**model_providers** — `provider_ulid`(PK) · `provider_name`(v64) · `protocol_code`(v16，`openai`/`anthropic`) · `base_url`(v256) · `api_key_cipher`(text，AES-256-GCM 封存) · `enabled_flag`(bool) · `sort_order`(int) · `remark_text`(v256) · `last_test_status_code`(v16，`untested`/`success`/`failed`) · `last_test_message`(v512，探测结果说明) · `last_test_at`(bigint，毫秒时间戳)
+**model_providers** — `provider_ulid`(PK) · `provider_name`(v64) · `protocol_code`(v16，`openai`/`anthropic`) · `base_url`(v256) · `api_key_cipher`(text，AES-256-GCM 封存) · `enabled_flag`(bool) · `sort_order`(int) · `remark_text`(v256) · `last_test_status_code`(v16，`untested`/`success`/`failed`) · `last_test_message`(v512，探测结果说明) · `last_test_at`(timestamptz，最近测试时间)
 
-**model_catalogs** — `model_ulid`(PK) · `provider_ulid`(IDX) · `model_name`(v128) · `model_label`(v64) · `temperature`(float64) · `max_tokens`(int) · `context_window_count`(int) · `enabled_flag`(bool) · `default_flag`(bool，全局唯一默认模型) · `sort_order`(int) · `remark_text`(v256) · `last_test_status_code`(v16) · `last_test_message`(v512) · `last_test_at`(bigint)
+**model_catalogs** — `model_ulid`(PK) · `provider_ulid`(IDX) · `model_name`(v128) · `model_label`(v64) · `temperature`(float64) · `max_tokens`(int) · `context_window_count`(int) · `enabled_flag`(bool) · `default_flag`(bool，全局唯一默认模型) · `sort_order`(int) · `remark_text`(v256) · `last_test_status_code`(v16) · `last_test_message`(v512) · `last_test_at`(timestamptz)
 
 **model_role_grants** — `grant_ulid`(PK，`MGR_`) · `model_ulid`(IDX) · `role_ulid`(IDX)
 
@@ -197,7 +197,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ### 3.7 运维（3 张）
 
-**jobs** — `job_ulid`(PK) · `job_type_code`(v16，`doc_index`/`doc_reindex`) · `job_status_code`(v16，`queued`/`running`/`success`/`failed`) · `project_ulid`(IDX) · `doc_ulid`(IDX) · `payload_json`(text) · `retry_count`(int) · `error_message`(v512) · `started_at` / `finished_at`(timestamptz)
+**jobs** — `job_ulid`(PK) · `job_type_code`(v16，`doc_index`/`doc_reindex`) · `job_status_code`(v16，`queued`/`running`/`success`/`failed`) · `payload_json`(text，任务载荷 `{"doc_ulid":"DOC_…"}`) · `retry_count`(int) · `error_message`(v512)
 
 **app_settings** — `setting_ulid`(PK) · `setting_key`(UQ,v64，白名单) · `setting_value`(v512，正整数字符串) · `setting_desc`(v256，启动时与内置说明同步)
 
@@ -399,7 +399,7 @@ ORDER BY score DESC LIMIT <topK>
 | 内置工具 | 6 个（`ToolService.SeedDefaults`）：`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`；全局、启用、带触发关键词与参数声明 |
 | 应用配置 | `chat_history_count=5`、`rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
 | 内置角色 | `admin`（`perm_codes_json=["*"]`）、`user`（`perm_codes_json="[]"`），`builtin_flag=true`，已存在不覆盖 |
-| 内置菜单 | 来源 `menuSeedList`，共 30 行：3 个分组（创作 / 平台 / 系统）、26 个页面、1 个动作权限（`action_model_write`）。`material` 是素材库唯一入口；`character`、`lore`、`knowledge`、`notes` 标记 `HiddenFlag`，仍注册路由但不进导航 |
+| 内置菜单 | 来源 `menuSeedList`，共 29 行：3 个分组（创作 / AI 资产 / 系统）、25 个页面、1 个动作权限（`action_model_write`）。`material` 是素材库唯一入口；`character`、`lore`、`knowledge`、`notes` 标记 `HiddenFlag`（已被素材库合并取代），`profile` 从顶栏用户菜单进入同样隐藏，五者仍注册路由但不进导航 |
 | 管理员 | 登录名 `admin`，邮箱 `admin@novelworkbench.local`，密码取 `app.admin_password`（缺省 `Admin@123456`），挂载 `admin` 角色 |
 
 ## 7. 事务与一致性
