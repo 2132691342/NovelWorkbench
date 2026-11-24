@@ -3,8 +3,14 @@
   import { computed, ref, watch } from 'vue'
   import type { NWPromptProfileVo, NWSkillVo } from '@/api/contracts'
   import type { NWToolVo } from '@/api/tool'
-  import type { ChatRefItem, ChatRefTabCode, ChatSendPayload } from './types'
+  import type {
+    ChatCommandOption,
+    ChatRefItem,
+    ChatRefTabCode,
+    ChatSendPayload
+  } from './types'
   import { useChatRefs } from './useChatRefs'
+  import ComposerPopup from './ComposerPopup.vue'
   import type { NWChapterBriefVo } from '@/api/contracts'
   import type { ChatDisplayMessage } from './types'
 
@@ -64,15 +70,7 @@
     profileList: () => props.profileList
   })
 
-  /** 命令弹层的候选项（技能或工具，统一成同一形状供模板渲染） */
-  interface CommandOption {
-    code: string
-    title: string
-    desc: string
-    active: boolean
-  }
-
-  const commandOptionList = computed<CommandOption[]>(() => {
+  const commandOptionList = computed<ChatCommandOption[]>(() => {
     const filterText = commandFilter.value.toLowerCase()
     if (commandKind.value === 'slash') {
       return props.skillList
@@ -158,7 +156,7 @@
     }
   }
 
-  const selectCommand = (option: CommandOption) => {
+  const selectCommand = (option: ChatCommandOption) => {
     if (commandKind.value === 'slash') {
       skillCode.value = option.code
     } else if (!toolCodeList.value.includes(option.code)) {
@@ -290,54 +288,20 @@
     </div>
 
     <div class="composer__input-wrap">
-      <div v-if="commandKind" class="composer__popup">
-        <p class="composer__popup-title">
-          {{ commandKind === 'slash' ? '技能' : '工具（服务端确定性执行，不消耗模型）' }}
-        </p>
-        <button
-          v-for="(option, index) in commandOptionList"
-          :key="option.code"
-          type="button"
-          :class="[
-            'composer__item',
-            { 'is-active': index === commandActiveIndex, 'is-picked': option.active }
-          ]"
-          @mouseenter="commandActiveIndex = index"
-          @click="selectCommand(option)"
-        >
-          <strong>{{ commandKind === 'slash' ? '/' : '#' }}{{ option.code }}</strong>
-          <span>{{ option.title }}</span>
-          <small>{{ option.desc }}</small>
-        </button>
-        <p v-if="commandOptionList.length === 0" class="composer__empty">
-          {{ commandKind === 'slash' ? '没有匹配的技能' : '没有匹配的工具' }}
-        </p>
-      </div>
-
-      <div v-if="refPickerVisible" class="composer__popup">
-        <div class="composer__tabs">
-          <button
-            v-for="tab in refTabs"
-            :key="tab.code"
-            type="button"
-            :class="['composer__tab', { 'is-active': refPickerTab === tab.code }]"
-            @click="switchTab(tab.code)"
-          >
-            {{ tab.label }}
-          </button>
-        </div>
-        <button
-          v-for="item in refCandidateList"
-          :key="item.ref_ulid"
-          type="button"
-          :class="['composer__item', { 'is-active': refSelectedUlidList.includes(item.ref_ulid) }]"
-          @click="selectRef(item)"
-        >
-          <strong>{{ item.ref_name }}</strong>
-          <small>{{ item.ref_desc }}</small>
-        </button>
-        <p v-if="refCandidateList.length === 0" class="composer__empty">暂无可引用内容</p>
-      </div>
+      <ComposerPopup
+        :command-kind="commandKind"
+        :command-option-list="commandOptionList"
+        :command-active-index="commandActiveIndex"
+        :ref-picker-visible="refPickerVisible"
+        :ref-tabs="refTabs"
+        :ref-picker-tab="refPickerTab"
+        :ref-candidate-list="refCandidateList"
+        :ref-selected-ulid-list="refSelectedUlidList"
+        @select-command="selectCommand"
+        @hover-command="commandActiveIndex = $event"
+        @switch-tab="switchTab"
+        @select-ref="selectRef"
+      />
 
       <textarea
         ref="inputRef"
@@ -418,97 +382,6 @@
       &:focus {
         border-color: var(--el-color-primary);
         box-shadow: 0 0 0 3px var(--nw-primary-soft);
-      }
-    }
-
-    &__popup {
-      position: absolute;
-      right: 0;
-      bottom: calc(100% + 6px);
-      left: 0;
-      z-index: 20;
-      max-height: 260px;
-      padding: 6px;
-      overflow-y: auto;
-      background: var(--el-bg-color-overlay);
-      border: 1px solid var(--nw-border);
-      border-radius: var(--nw-radius-lg);
-      box-shadow: 0 14px 36px rgb(15 23 42 / 14%);
-    }
-
-    &__popup-title {
-      padding: 4px 8px 6px;
-      font-size: 11px;
-      color: var(--el-text-color-placeholder);
-      border-bottom: 1px solid var(--nw-border-soft);
-    }
-
-    &__item {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      width: 100%;
-      padding: 7px 9px;
-      text-align: left;
-      cursor: pointer;
-      background: transparent;
-      border: 0;
-      border-radius: var(--nw-radius-base);
-
-      strong {
-        font-size: 12.5px;
-        color: var(--nw-ink);
-      }
-
-      span {
-        font-size: 12px;
-        color: var(--el-text-color-regular);
-      }
-
-      small {
-        overflow: hidden;
-        font-size: 11px;
-        color: var(--el-text-color-placeholder);
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      &:hover,
-      &.is-active {
-        background: var(--nw-primary-soft);
-      }
-
-      &.is-picked strong {
-        color: var(--el-color-primary);
-      }
-    }
-
-    &__empty {
-      padding: 10px;
-      font-size: 12px;
-      color: var(--el-text-color-placeholder);
-      text-align: center;
-    }
-
-    &__tabs {
-      display: flex;
-      gap: 4px;
-      padding: 2px 2px 6px;
-      border-bottom: 1px solid var(--nw-border-soft);
-    }
-
-    &__tab {
-      padding: 3px 9px;
-      font-size: 12px;
-      color: var(--el-text-color-secondary);
-      cursor: pointer;
-      background: transparent;
-      border: 0;
-      border-radius: 999px;
-
-      &.is-active {
-        color: var(--el-color-primary);
-        background: var(--nw-primary-soft);
       }
     }
 
