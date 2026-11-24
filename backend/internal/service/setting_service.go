@@ -13,14 +13,15 @@ import (
 
 // settingDefaultList 启动播种的默认配置（键白名单与其默认值、说明的唯一来源）。
 var settingDefaultList = []domain.AppSettingDO{
-	{SettingKey: "chat_history_count", SettingValue: "5", SettingDesc: "AI 对话历史注入条数（0-50）"},
 	{SettingKey: "rag_top_k", SettingValue: "6", SettingDesc: "知识库检索默认召回条数（1-20）"},
 	{SettingKey: "daily_word_goal", SettingValue: "2000", SettingDesc: "每日写作目标字数（100-100000）"},
 }
 
+// settingKeyRetiredChatHistory 已下线的配置键：历史改为全量注入后不再有注入条数概念。
+const settingKeyRetiredChatHistory = "chat_history_count"
+
 // settingRangeMap 配置值合法区间（最小、最大）。
 var settingRangeMap = map[string][2]int{
-	"chat_history_count": {0, 50},
 	"rag_top_k":          {1, 20},
 	"daily_word_goal":    {100, 100000},
 }
@@ -60,7 +61,8 @@ func (s *SettingService) SeedDefaults(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	// 已下线的内置配置项：历史改用全量注入后，chat_history_count 不再被任何代码读取
+	return s.settingRepo.DeleteByKey(ctx, settingKeyRetiredChatHistory)
 }
 
 // List 查询全部配置。

@@ -3,7 +3,6 @@
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import {
-    compactChatSession,
     createChatSession,
     deleteChatSession,
     getChatHistory,
@@ -159,8 +158,7 @@
     const request: NWChatSendReqVo = {
       session_ulid: currentSessionUlid.value || undefined,
       project_ulid: props.projectUlid,
-      content_text: payload.content_text,
-      history_count: payload.history_count
+      content_text: payload.content_text
     }
     if (payload.prompt_code) request.prompt_code = payload.prompt_code
     if (payload.system_prompt_code) request.system_prompt_code = payload.system_prompt_code
@@ -319,29 +317,6 @@
     ).catch(() => undefined)
   }
 
-  /** /compact：把较早的对话折叠成摘要存到会话上，本地完成不耗模型 */
-  const compactSession = async () => {
-    if (!currentSessionUlid.value) {
-      ElMessage.warning('当前没有会话可压缩')
-      return
-    }
-    try {
-      const result = await compactChatSession(currentSessionUlid.value)
-      if (!result.compacted) {
-        ElMessage.info('历史还短，不需要压缩')
-        return
-      }
-      const droppedText = result.dropped_count > 0 ? `，另有 ${result.dropped_count} 条超出预算` : ''
-      ElMessage.success(
-        `已折叠 ${result.folded_count} 条${droppedText}，保留最近 ${result.kept_count} 条原文`
-      )
-      await loadSessions()
-    } catch {
-      ElMessage.error('压缩失败，请稍后重试')
-    }
-  }
-
-  /** 斜杠动作分发：面板级就地处理，写作台级交给外层 */
   const handleAction = (actionCode: string) => {
     if (actionCode === 'new') {
       void createSession()
@@ -363,10 +338,6 @@
     }
     if (actionCode === 'help') {
       void showCommandHelp()
-      return
-    }
-    if (actionCode === 'compact') {
-      void compactSession()
       return
     }
     emit('action', actionCode)
@@ -444,7 +415,7 @@
         <ul class="ai-panel__tips">
           <li>输入 <code>/</code> 选命令：本地动作立即执行，提示词以系统级消息注入</li>
           <li>输入 <code>@</code> 引用素材：角色、设定、章节、摘要、文档与历史会话</li>
-          <li>工具无需点名，模型会在需要时自己调用；<code>/compact</code> 压缩长历史</li>
+          <li>工具无需点名，模型会在需要时自己调用；历史全量注入，超长单条保留首尾</li>
           <li><code>Ctrl/⌘ + Enter</code> 发送，<code>/help</code> 看全部命令</li>
         </ul>
       </div>

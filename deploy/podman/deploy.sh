@@ -30,6 +30,30 @@ set -a
 . "./$ENV_FILE"
 set +a
 
+
+# ---- 端口映射自愈：rootless podman 重建容器后可能只留容器侧规则链、丢失 CNI-HOSTPORT-DNAT 跳转 ----
+# 症状：容器 healthy、容器内 wget 通，宿主端口却超时。这里按当前容器 IP 补齐跳转并从链首插入，
+# 避免旧容器残留的同类跳转抢先匹配（清理必须在容器重建之后，且不能指望 podman 自动重建）。
+repair_port_dnat() {
+  local port="$1" container="$2"
+  command -v iptables >/dev/null 2>&1 || return 0
+  local ip chain_list chain line_no
+  ip="$(podman inspect "$container" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null || true)"
+  [ -n "$ip" ] || return 0
+  # 删掉该端口名下的全部旧跳转（无论指向哪个容器 IP），随后只为当前 IP 插一条到链首。
+  while :; do
+    line_no="$(iptables -t nat -L CNI-HOSTPORT-DNAT --line-numbers -n 2>/dev/null \
+      | awk -v port="$port" '$0 ~ ("dpt:" port "$") {print $1; exit}')"
+    [ -n "$line_no" ] || break
+    iptables -t nat -D CNI-HOSTPORT-DNAT "$line_no" || break
+  done
+  chain_list="$(iptables -t nat -S 2>/dev/null | grep -- "-j DNAT --to-destination ${ip}:80" \
+    | sed -n 's/^-A \(CNI-DN-[^ ]*\).*/\1/p' | sort -u || true)"
+  for chain in $chain_list; do
+    iptables -t nat -I CNI-HOSTPORT-DNAT 1 -p tcp -m multiport --dports "$port" \
+      -m comment --comment "nw-deploy repair ${container}" -j "$chain" && break
+  done
+}
 # ---- rootless podman 重建容器后遗留的陈旧 DNAT 规则会导致宿主端口不可达，先行清理 ----
 # cleanup_port_dnat 删除指定宿主端口的全部 CNI DNAT 跳转规则（容器重建前调用）；
 # 容器启动时 podman 会为新容器重新写入唯一规则，避免旧容器 IP 抢占端口。
@@ -88,7 +112,7 @@ if ! podman-compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --force-recreate >
   tail -40 "$COMPOSE_LOG"
   die "podman-compose up 失败"
 fi
-cleanup_port_dnat "${NW_PUBLIC_PORT:-14399}"
+repair_port_dnat "${NW_PUBLIC_PORT:-14399}" nw-frontend
 
 # ---- 健康自检：/health（存活）+ /ready（依赖就绪）+ 首页 ----
 PUBLIC_PORT="${NW_PUBLIC_PORT:-14399}"

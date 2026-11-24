@@ -7,10 +7,7 @@
   import { useChatRefs, REF_TAB_LIST } from './useChatRefs'
   import ComposerPopup from './ComposerPopup.vue'
   import {
-    HISTORY_COUNT_STEPS,
-    cycleHistoryCount,
     filterActions,
-    historyCountLabel,
     matchActionByCode,
     parseLeadingSlashToken
   } from './composerCommands'
@@ -35,7 +32,6 @@
 
   const inputText = ref('')
   const promptCode = ref('')
-  const historyCount = ref(0)
   const systemPromptCode = ref('')
   const inputRef = ref<HTMLTextAreaElement | null>(null)
   const commandVisible = ref(false)
@@ -170,10 +166,6 @@
       clearComposer()
       return
     }
-    if (actionCode === 'history') {
-      historyCount.value = cycleHistoryCount(historyCount.value)
-      return
-    }
     emit('action', actionCode)
   }
 
@@ -212,10 +204,9 @@
       prompt_code: promptCode.value,
       tool_code_list: [],
       ...toRefPayload(),
-      history_count: historyCount.value,
       system_prompt_code: systemPromptCode.value
     })
-    // 发送后只清正文与引用，身份提示词、历史档位与模型是会话级偏好，保持不变
+    // 发送后只清正文与引用，身份提示词与模型是会话级偏好，保持不变
     inputText.value = ''
     promptCode.value = ''
     commandVisible.value = false
@@ -391,14 +382,6 @@
           :key="item.prompt_code"
           :label="item.prompt_name"
           :value="item.prompt_code"
-        />
-      </ElSelect>
-      <ElSelect v-model="historyCount" size="small" class="composer__history">
-        <ElOption
-          v-for="step in HISTORY_COUNT_STEPS"
-          :key="step"
-          :value="step"
-          :label="historyCountLabel(step)"
         />
       </ElSelect>
       <ElButton size="small" plain @click="togglePicker">@ 引用</ElButton>

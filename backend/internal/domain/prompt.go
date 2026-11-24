@@ -30,7 +30,7 @@ const (
 // 动作在客户端就地执行、不经过模型，因此不能被提示词占用，否则 /help 之类的输入
 // 到底是「执行动作」还是「注入提示词」将取决于实现顺序，作者无法预期。
 var reservedActionCodeList = []string{
-	"help", "clear", "history", "new", "attach", "copy", "check", "focus", "snapshot", "compact",
+	"help", "clear", "new", "attach", "copy", "check", "focus", "snapshot",
 }
 
 // IsReservedActionCode 判断编码是否为保留的斜杠动作编码。

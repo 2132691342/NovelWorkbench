@@ -81,6 +81,13 @@ func main() {
 		pkg.SLogger().Errorw("数据库迁移失败", "error", err)
 		os.Exit(1)
 	}
+	// 已下线的会话摘要列：历史改为全量注入后不再有「压缩摘要」概念，留着只会成为死数据
+	if err := db.Migrator().DropColumn(&domain.ChatSessionDO{}, "summary_text"); err != nil {
+		pkg.SLogger().Warnw("清理会话摘要列失败", "error", err)
+	}
+	if err := db.Migrator().DropColumn(&domain.ChatSessionDO{}, "compact_at"); err != nil {
+		pkg.SLogger().Warnw("清理会话压缩时间列失败", "error", err)
+	}
 
 	// 其余基础设施 Ping 失败仅降级告警，不阻断启动（PG 失败已在上面退出）。
 	rdb, err := infra.NewRedis(&cfg.Redis)
@@ -207,7 +214,7 @@ func main() {
 		settingRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, loreRepo,
 		knowledgeRepo, continuityRepo, settingRepo, promptService, knowledgeService, toolService,
-		providerService, aiClient, db, service.ChatConfig{HistoryCount: cfg.AI.HistoryCount})
+		providerService, aiClient, db)
 
 	// 内置资产与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
 	if err := toolService.SeedDefaults(ctx); err != nil {

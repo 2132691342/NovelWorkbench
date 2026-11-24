@@ -31,13 +31,6 @@ export const COMPOSER_ACTION_LIST: ComposerAction[] = [
     action_scope: 'composer'
   },
   {
-    action_code: 'history',
-    action_name: '历史条数',
-    action_desc: '循环切换注入历史：默认 → 3 → 5 → 10 条',
-    action_icon: 'mdi:history',
-    action_scope: 'composer'
-  },
-  {
     action_code: 'new',
     action_name: '新会话',
     action_desc: '开一个空会话，旧会话保留可切回',
@@ -71,25 +64,8 @@ export const COMPOSER_ACTION_LIST: ComposerAction[] = [
     action_desc: '收起目录树与 AI 面板，只留正文',
     action_icon: 'mdi:book-open-variant',
     action_scope: 'workspace'
-  },
-  {
-    action_code: 'compact',
-    action_name: '压缩历史',
-    action_desc: '把较早的对话折叠成摘要，本地即时完成，不耗模型',
-    action_icon: 'mdi:archive-arrow-down-outline',
-    action_scope: 'panel'
-  },
-  {
-    action_code: 'snapshot',
-    action_name: '章节快照',
-    action_desc: '保存或恢复当前章的历史版本',
-    action_icon: 'mdi:camera-outline',
-    action_scope: 'workspace'
   }
 ]
-
-/** 历史条数的循环档位（0 表示用应用配置的默认值） */
-export const HISTORY_COUNT_STEPS: number[] = [0, 3, 5, 10]
 
 /** 首 token 斜杠命令：仅匹配 [a-z0-9_]{2,32}，且后面必须是空白或行尾。
  * 与后端 parseSlashToken 同一口径，避免前端把「/ 符号」这类正文当成命令。 */
@@ -124,18 +100,6 @@ export function filterActions(keywordText: string): ComposerAction[] {
       action.action_name.toLowerCase().includes(keyword) ||
       action.action_desc.toLowerCase().includes(keyword)
   )
-}
-
-/** 循环到下一档历史条数 */
-export function cycleHistoryCount(currentCount: number): number {
-  const currentIndex = HISTORY_COUNT_STEPS.indexOf(currentCount)
-  if (currentIndex < 0) return HISTORY_COUNT_STEPS[0]
-  return HISTORY_COUNT_STEPS[(currentIndex + 1) % HISTORY_COUNT_STEPS.length]
-}
-
-/** 历史条数的展示文案 */
-export function historyCountLabel(count: number): string {
-  return count > 0 ? `历史：${count} 条` : '历史：默认'
 }
 
 /** 动作编码集合（供冲突自检与文档生成） */

@@ -4,7 +4,6 @@ package service
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -21,7 +20,6 @@ import (
 
 // 对话链路常量。
 const (
-	settingKeyChatHistoryCount = "chat_history_count" // 应用配置键：历史注入条数
 	settingKeyRAGTopK          = "rag_top_k"          // 应用配置键：知识库默认召回条数
 	globalDocProjectID         = "0"                  // 全局知识库文档的项目标识
 	chatPingInterval           = 15 * time.Second     // 流式无输出心跳间隔
@@ -80,11 +78,6 @@ func (e *chatEventWriter) emitWithReasoning(eventType, contentText, reasoningTex
 	})
 }
 
-// ChatConfig 对话链路参数（infra 配置的标量子集，避免 service 依赖配置类型）。
-type ChatConfig struct {
-	HistoryCount int // 历史注入默认条数（应用配置未命中时兜底）
-}
-
 // ChatService AI 对话业务：会话管理、上下文装配、流式生成与消息落库。
 type ChatService struct {
 	chatRepo         *repo.ChatRepo        // 会话与消息仓储
@@ -101,7 +94,6 @@ type ChatService struct {
 	providerSvc      *ModelProviderService // 供应商服务（模型选择）
 	aiClient         *ai.Client            // 模型网关（流式调用与用量上报）
 	db               *gorm.DB              // 事务入口
-	config           ChatConfig            // 对话链路参数
 }
 
 // NewChatService 构造对话服务。
@@ -109,13 +101,13 @@ func NewChatService(chatRepo *repo.ChatRepo, projectRepo *repo.ProjectRepo, chap
 	characterRepo *repo.CharacterRepo, loreRepo *repo.LoreRepo, knowledgeRepo *repo.KnowledgeRepo,
 	continuityRepo *repo.ContinuityRepo, settingRepo *repo.SettingRepo, promptSvc *PromptService,
 	knowledgeService *KnowledgeService, toolService *ToolService, providerSvc *ModelProviderService,
-	aiClient *ai.Client, db *gorm.DB, config ChatConfig) *ChatService {
+	aiClient *ai.Client, db *gorm.DB) *ChatService {
 	return &ChatService{
 		chatRepo: chatRepo, projectRepo: projectRepo, chapterRepo: chapterRepo,
 		characterRepo: characterRepo, loreRepo: loreRepo,
 		knowledgeRepo: knowledgeRepo, continuityRepo: continuityRepo,
 		settingRepo: settingRepo, promptSvc: promptSvc, knowledgeService: knowledgeService,
-		toolService: toolService, providerSvc: providerSvc, aiClient: aiClient, db: db, config: config,
+		toolService: toolService, providerSvc: providerSvc, aiClient: aiClient, db: db,
 	}
 }
 
@@ -184,50 +176,6 @@ func (s *ChatService) History(ctx context.Context, userULID string, req *domain.
 	return domain.PageDTO[domain.ChatMessageVO]{Total: int64(len(items)), PageNum: 1, PageSize: len(items), Items: items}, nil
 }
 
-// SessionCompact 压缩会话历史：把除最近若干条之外的消息折叠成摘要存到会话上（/compact 的持久压缩点）。
-// 本地实现，不调用模型；历史太短时不动摘要，只回报未压缩。
-func (s *ChatService) SessionCompact(ctx context.Context, userULID string, req *domain.ChatCompactREQ) (domain.ChatCompactDTO, error) {
-	session, err := s.mustOwnSession(ctx, userULID, req.SessionULID)
-	if err != nil {
-		return domain.ChatCompactDTO{}, err
-	}
-	messages, err := s.chatRepo.ListMessagesBySession(ctx, session.SessionULID)
-	if err != nil {
-		return domain.ChatCompactDTO{}, pkg.WrapBizError(domain.RespCodeStorageError, "会话历史读取失败", err)
-	}
-	compactList := make([]ai.CompactMessage, 0, len(messages))
-	for i := range messages {
-		compactList = append(compactList, ai.CompactMessage{
-			RoleCode:    messages[i].RoleCode,
-			ContentText: messages[i].ContentText,
-		})
-	}
-	result := ai.CompactHistory(compactList, ai.DefaultCompactConfig())
-	if !result.Compacted {
-		return domain.ChatCompactDTO{
-			SessionULID: session.SessionULID,
-			KeptCount:   len(messages),
-			SummaryText: session.SummaryText,
-			CompactAt:   session.CompactAt,
-			Compacted:   false,
-		}, nil
-	}
-	summaryText := ai.JoinDigest(session.SummaryText, result.DigestText)
-	compactAt := pkg.FormatTime(time.Now())
-	if err := s.chatRepo.UpdateSessionCompact(ctx, session.SessionULID, summaryText, compactAt); err != nil {
-		return domain.ChatCompactDTO{}, pkg.WrapBizError(domain.RespCodeStorageError, "会话压缩保存失败", err)
-	}
-	return domain.ChatCompactDTO{
-		SessionULID:  session.SessionULID,
-		FoldedCount:  result.FoldedCount,
-		DroppedCount: result.DroppedCount,
-		KeptCount:    len(result.KeptList),
-		SummaryText:  summaryText,
-		CompactAt:    compactAt,
-		Compacted:    true,
-	}, nil
-}
-
 // Send 流式对话主链路：提示词解析 → 上下文装配 → 历史压缩 → 流式生成（含工具往返）→ 落库与统计。
 // 流开始前的失败返回 error（api 输出 JSON 包络）；流开始后失败经 SSE error 事件下发并返回 nil。
 func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.ChatSendREQ, writer ChatStreamWriter) error {
@@ -248,22 +196,26 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	if err != nil {
 		return pkg.WrapBizError(domain.RespCodeStorageError, "会话历史读取失败", err)
 	}
-	historyList, digestText := s.selectHistory(ctx, session, sessionMessages, req.HistoryCount)
+	historyList, condensedCount := condenseHistory(sessionMessages)
+	if condensedCount > 0 {
+		pkg.SLogger().Infow("历史中超长正文已保留首尾", "session_ulid", session.SessionULID,
+			"message_count", len(sessionMessages), "condensed_count", condensedCount)
+	}
 	contextInput, err := s.loadContextInput(ctx, userULID, req, userInput)
 	if err != nil {
 		return err
 	}
 	contextInput.UserInput = userInput
 	blocks := buildContextBlocks(contextInput)
-	assembledText, droppedKeys := ai.AssembleContext(blocks, ai.ContextBudgetChars)
-	if len(droppedKeys) > 0 {
-		pkg.SLogger().Warnw("上下文块超出预算被丢弃", "session_ulid", session.SessionULID, "dropped_keys", droppedKeys)
+	assembledText, condensedKeys := ai.AssembleContext(blocks)
+	if len(condensedKeys) > 0 {
+		pkg.SLogger().Infow("上下文块超长已保留首尾", "session_ulid", session.SessionULID, "condensed_keys", condensedKeys)
 	}
 	commandText := ""
 	if promptText != "" {
 		commandText = ai.RenderPrompt(promptText, map[string]string{
 			"user_input":      userInput,
-			"chapter_content": truncateRunes(joinChapterContent(contextInput.ChapterList), ai.ContextBudgetChars),
+			"chapter_content": joinChapterContent(contextInput.ChapterList),
 			"context":         assembledText,
 			"prompt_code":     promptCode,
 		})
@@ -297,7 +249,6 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		SystemPromptText: systemPromptText,
 		StyleText:        project.StyleText,
 		ContextText:      assembledText,
-		DigestText:       digestText,
 		CommandText:      commandText,
 		HistoryList:      historyList,
 		UserText:         userInput,
@@ -475,20 +426,3 @@ func firstNonEmpty(valueList ...string) string {
 	}
 	return ""
 }
-
-// resolveHistoryLimit 历史注入条数：请求值 > 应用配置 chat_history_count > 全局配置。
-func (s *ChatService) resolveHistoryLimit(ctx context.Context, reqCount int) int {
-	if reqCount > 0 {
-		return reqCount
-	}
-	setting, err := s.settingRepo.GetByKey(ctx, settingKeyChatHistoryCount)
-	if err != nil {
-		pkg.SLogger().Warnw("读取历史条数配置失败，回退全局配置", "error", err)
-	} else if setting != nil {
-		if value, convErr := strconv.Atoi(setting.SettingValue); convErr == nil && value > 0 {
-			return value
-		}
-	}
-	return s.config.HistoryCount
-}
-

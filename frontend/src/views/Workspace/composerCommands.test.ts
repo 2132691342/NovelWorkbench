@@ -3,11 +3,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   COMPOSER_ACTION_LIST,
-  HISTORY_COUNT_STEPS,
   actionCodeSet,
-  cycleHistoryCount,
   filterActions,
-  historyCountLabel,
   matchActionByCode,
   parseLeadingSlashToken
 } from './composerCommands'
@@ -60,20 +57,9 @@ describe('action registry', () => {
     expect(filterActions('不存在的东西')).toHaveLength(0)
   })
 
-  it('历史档位循环回到起点', () => {
-    let count = HISTORY_COUNT_STEPS[0]
-    const visited: number[] = [count]
-    for (let step = 1; step < HISTORY_COUNT_STEPS.length; step++) {
-      count = cycleHistoryCount(count)
-      visited.push(count)
-    }
-    expect(visited).toEqual(HISTORY_COUNT_STEPS)
-    expect(cycleHistoryCount(count)).toBe(HISTORY_COUNT_STEPS[0])
-    expect(cycleHistoryCount(7)).toBe(HISTORY_COUNT_STEPS[0])
-  })
-
-  it('历史档位文案区分默认与指定条数', () => {
-    expect(historyCountLabel(0)).toBe('历史：默认')
-    expect(historyCountLabel(5)).toBe('历史：5 条')
+  it('已移除历史条数与压缩动作：历史改为全量注入', () => {
+    const codeList = COMPOSER_ACTION_LIST.map((action) => action.action_code)
+    expect(codeList).not.toContain('compact')
+    expect(codeList).not.toContain('history')
   })
 })

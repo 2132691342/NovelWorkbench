@@ -1,10 +1,11 @@
 // AI 对话链路的场景回归：斜杠命令解析 → 提示词作用域 → 上下文装配 → 消息序列成型 → 工具触发 → 流式契约。
 // 这些环节是同一次请求的上下游，拆开测会漏掉环节间的因果（作用域覆盖影响谁、
-// 预算裁剪丢哪些块、提示词进入哪一级消息、事件顺序影响前端展示），因此按链路组织。
+// 单块收敛只保留首尾、提示词进入哪一级消息、事件顺序影响前端展示），因此按链路组织。
 
 package service
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -170,13 +171,13 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatal("未引用摘要/会话时不应产生对应块")
 	}
 
-	// 步骤3：预算裁剪。同优先级保持输入顺序；超预算按优先级丢块；历史不重复注入。
+	// 步骤3：装配不丢块。同优先级保持输入顺序；所有块都进上下文，超长只在块内保留首尾。
 	blocks = buildContextBlocks(chatContextInput{
 		UserInput:     "提问",
 		CharacterList: []domain.CharacterDO{{CharacterName: "林澈"}},
 		LoreList:      []domain.LoreDO{{LoreName: "灵力体系", LoreTypeCode: "rule", ContentText: "设定内容正文"}},
 	})
-	assembled, _ := ai.AssembleContext(blocks, ai.ContextBudgetChars)
+	assembled, _ := ai.AssembleContext(blocks)
 	if strings.Index(assembled, "林澈") > strings.Index(assembled, "灵力体系") {
 		t.Fatalf("同优先级应保持输入顺序: %q", assembled)
 	}
@@ -187,22 +188,21 @@ func TestChatContextChain(t *testing.T) {
 		SummaryList: []string{strings.Repeat("s", 100)},
 		LoreList:    []domain.LoreDO{{LoreName: "L", ContentText: strings.Repeat("l", 100)}},
 	})
-	assembled, dropped := ai.AssembleContext(blocks, 300)
-	droppedText := strings.Join(dropped, ",")
-	if !strings.Contains(droppedText, "chapter_summary") || !strings.Contains(droppedText, "lore") {
-		t.Fatalf("应丢弃 chapter_summary 与 lore: %v", dropped)
+	assembled, condensed := ai.AssembleContext(blocks)
+	if len(condensed) != 0 {
+		t.Fatalf("未超单块上限时不应收敛任何块: %v", condensed)
 	}
-	if strings.Contains(droppedText, "ref_doc") || strings.Contains(droppedText, "rag") {
-		t.Fatalf("高优先级块不应被丢弃: %v", dropped)
-	}
-	if !strings.Contains(assembled, strings.Repeat("d", 100)) || strings.Contains(assembled, strings.Repeat("s", 100)) {
-		t.Fatalf("装配文本应只保留高优先级块: %q", assembled)
+	for _, want := range []string{strings.Repeat("d", 100), strings.Repeat("r", 100),
+		strings.Repeat("s", 100), strings.Repeat("l", 100)} {
+		if !strings.Contains(assembled, want) {
+			t.Fatalf("所有块都应进上下文，缺少 %q: %q", want[:1], assembled)
+		}
 	}
 	if strings.Contains(assembled, "【对话历史】") {
 		t.Fatalf("历史不应注入上下文块: %q", assembled)
 	}
 
-	// 步骤4：历史选取。最近 N 条旧到新返回；N 为 0 表示不注入常规历史。
+	// 步骤4：历史全量注入。条数一条不删，短正文原样返回。
 	messages := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),
@@ -210,18 +210,37 @@ func TestChatContextChain(t *testing.T) {
 		chatMessageOf("MSG_4", domain.ChatRoleAssistant, "四"),
 		chatMessageOf("MSG_5", domain.ChatRoleUser, "五"),
 	}
-	if got := selectHistoryMessages(messages, 2); len(got) != 2 ||
-		got[0].MessageULID != "MSG_4" || got[1].MessageULID != "MSG_5" {
-		t.Fatalf("最近 N 条应旧到新返回: %v", got)
+	injected, condensedCount := condenseHistory(messages)
+	if len(injected) != len(messages) || injected[0].MessageULID != "MSG_1" ||
+		injected[4].MessageULID != "MSG_5" {
+		t.Fatalf("历史应全量旧到新注入: %v", injected)
 	}
-	if got := selectHistoryMessages(messages, 0); len(got) != 0 {
-		t.Fatalf("N 为 0 不应注入常规历史: %v", got)
-	}
-	if got := selectHistoryMessages(messages, 10); len(got) != len(messages) {
-		t.Fatalf("N 大于总数时应返回全部: %v", got)
+	if condensedCount != 0 || injected[0].ContentText != "一" {
+		t.Fatalf("短正文不应被改写: %+v", injected[0])
 	}
 
-	// 步骤5：消息序列成型。身份（系统）→ 上下文（系统）→ 历史摘要（系统）→ 指令提示词（系统）→ 历史 role 映射 → 用户输入（用户）。
+	// 步骤4.1：单条超长只保留首尾，条数仍然一条不删，并标注省略字数。
+	longList := []domain.ChatMessageDO{
+		chatMessageOf("MSG_L1", domain.ChatRoleUser, strings.Repeat("甲", 5000)),
+		chatMessageOf("MSG_L2", domain.ChatRoleAssistant, "短回复"),
+	}
+	injected, condensedCount = condenseHistory(longList)
+	if len(injected) != 2 || condensedCount != 1 {
+		t.Fatalf("只应收敛超长的那一条: %d, %d", len(injected), condensedCount)
+	}
+	if !strings.HasPrefix(injected[0].ContentText, "甲甲") ||
+		!strings.Contains(injected[0].ContentText, "此处省略") ||
+		!strings.HasSuffix(injected[0].ContentText, "甲甲") {
+		t.Fatalf("超长正文应保留首尾并标注省略: %q", injected[0].ContentText)
+	}
+	if injected[1].ContentText != "短回复" {
+		t.Fatalf("短正文必须原样保留: %q", injected[1].ContentText)
+	}
+	if longList[0].ContentText != strings.Repeat("甲", 5000) {
+		t.Fatal("收敛不得改写原消息")
+	}
+
+	// 步骤5：消息序列成型。身份（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史 role 映射 → 用户输入（用户）。
 	history := []domain.ChatMessageDO{
 		chatMessageOf("MSG_1", domain.ChatRoleUser, "历史问"),
 		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "历史答"),
@@ -230,13 +249,12 @@ func TestChatContextChain(t *testing.T) {
 		SystemPromptText: "你是连载作者",
 		StyleText:        "文风约束",
 		ContextText:      "装配文本",
-		DigestText:       "【历史摘要（本地压缩）】\n用户: 早先的问题",
 		CommandText:      "续写指令",
 		HistoryList:      history,
 		UserText:         "写下去",
 	})
-	if len(out) != 7 {
-		t.Fatalf("len = %d, want 7", len(out))
+	if len(out) != 6 {
+		t.Fatalf("len = %d, want 6", len(out))
 	}
 	if out[0].Role != "system" || !strings.Contains(out[0].Content, "文风约束") ||
 		!strings.Contains(out[0].Content, "你是连载作者") {
@@ -246,19 +264,15 @@ func TestChatContextChain(t *testing.T) {
 		!strings.Contains(out[1].Content, "装配文本") {
 		t.Fatalf("第二条应为系统级上下文: %+v", out[1])
 	}
-	// 摘要必须在指令提示词之前：它描述已发生的事实，指令描述本次要求
-	if out[2].Role != "system" || !strings.Contains(out[2].Content, "历史摘要") {
-		t.Fatalf("第三条应为系统级历史摘要: %+v", out[2])
+	if out[2].Role != "system" || out[2].Content != "续写指令" {
+		t.Fatalf("第三条应为系统级指令提示词: %+v", out[2])
 	}
-	if out[3].Role != "system" || out[3].Content != "续写指令" {
-		t.Fatalf("第四条应为系统级指令提示词: %+v", out[3])
+	if out[3].Role != "user" || out[3].Content != "历史问" ||
+		out[4].Role != "assistant" || out[4].Content != "历史答" {
+		t.Fatalf("历史 role 映射错误: %+v", out[3:5])
 	}
-	if out[4].Role != "user" || out[4].Content != "历史问" ||
-		out[5].Role != "assistant" || out[5].Content != "历史答" {
-		t.Fatalf("历史 role 映射错误: %+v", out[4:6])
-	}
-	if out[6].Role != "user" || out[6].Content != "写下去" {
-		t.Fatalf("末条应为用户输入: %+v", out[6])
+	if out[5].Role != "user" || out[5].Content != "写下去" {
+		t.Fatalf("末条应为用户输入: %+v", out[5])
 	}
 	if out = buildChatMessages(chatMessageInput{
 		SystemPromptText: "你是连载作者", UserText: "自由提问",
@@ -336,70 +350,76 @@ func TestToolSelectionChain(t *testing.T) {
 		t.Fatalf("第二个调用不应串到第一个的参数: %+v", mergedCalls[1])
 	}
 }
-
-// TestHistoryCompactChain 覆盖历史压缩链路：门槛判定 → 折叠规则 → 预算裁剪 → 与既有摘要拼接。
-// 压缩必须完全本地完成（不调用模型），且同一输入必然得到同一输出。
-func TestHistoryCompactChain(t *testing.T) {
-	// 环节1：短历史不压缩。总字符未过门槛时原样返回，避免小题大做丢细节。
-	shortList := []ai.CompactMessage{
-		{RoleCode: "user", ContentText: "短问题"},
-		{RoleCode: "assistant", ContentText: "短回答"},
-	}
-	shortResult := ai.CompactHistory(shortList, ai.DefaultCompactConfig())
-	if shortResult.Compacted || len(shortResult.KeptList) != 2 || shortResult.DigestText != "" {
-		t.Fatalf("短历史不应压缩: %+v", shortResult)
+// TestHistoryArchiveChain 覆盖历史归档链路：全量保留 → 单条首尾收敛 → 逐条编号 → 确定性。
+// 归档必须完全本地完成（不调用模型），不按条数截取、不按总量丢弃。
+func TestHistoryArchiveChain(t *testing.T) {
+	// 环节1：短正文原样。收敛只针对超长单条，短消息一个字符都不改。
+	shortText := "短问题"
+	if got := ai.CondenseText(shortText); got != shortText {
+		t.Fatalf("短正文不应改写: %q", got)
 	}
 
-	// 环节2：长历史折叠。最近 KeepRecentCount 条保留原文，更早的折成「角色: 内容」单行。
-	longText := strings.Repeat("这是一段足够长的历史正文。", 100)
-	longList := make([]ai.CompactMessage, 0, 14)
-	for i := range 12 {
+	// 环节2：超长正文保留首尾并标注省略字数，中间省略量可核对。
+	longText := strings.Repeat("甲", 5000)
+	condensed := ai.CondenseText(longText)
+	if !strings.Contains(condensed, "此处省略") || !strings.Contains(condensed, "字") {
+		t.Fatalf("超长正文应标注省略字数: %q", condensed)
+	}
+	if !strings.HasPrefix(condensed, "甲甲") || !strings.HasSuffix(condensed, "甲甲") {
+		t.Fatalf("应保留首尾: %q", condensed)
+	}
+
+	// 环节3：归档全量。条数一条不删，逐条带序号与角色标签。
+	archiveList := make([]ai.ArchiveMessage, 0, 6)
+	for i := range 6 {
 		roleCode := "user"
 		if i%2 == 1 {
 			roleCode = "assistant"
 		}
-		longList = append(longList, ai.CompactMessage{RoleCode: roleCode, ContentText: longText})
+		archiveList = append(archiveList, ai.ArchiveMessage{
+			Seq: i + 1, RoleCode: roleCode, ContentText: "第" + strconv.Itoa(i+1) + "条内容",
+			ToolCodeCSV: "chapter_check", CreatedAt: "2026-11-25T10:00:00+08:00",
+		})
 	}
-	longResult := ai.CompactHistory(longList, ai.CompactConfig{
-		KeepRecentCount: 4, PerMessageRunes: 20, BudgetChars: 4000, MinTotalChars: 100,
-	})
-	if !longResult.Compacted {
-		t.Fatal("长历史必须压缩")
+	archiveText := ai.ArchiveHistory(archiveList, ai.ArchiveConfig{WithHeader: true})
+	if !strings.Contains(archiveText, "共 6 条") {
+		t.Fatalf("归档应标明总条数: %q", archiveText)
 	}
-	if len(longResult.KeptList) != 4 {
-		t.Fatalf("应保留最近 4 条，实际 %d", len(longResult.KeptList))
+	for i := range 6 {
+		marker := strconv.Itoa(i+1) + ". "
+		if !strings.Contains(archiveText, marker) {
+			t.Fatalf("归档应逐条编号，缺少 %q: %q", marker, archiveText)
+		}
 	}
-	if !strings.Contains(longResult.DigestText, "用户: ") || !strings.Contains(longResult.DigestText, "AI: ") {
-		t.Fatalf("摘要应带角色标签: %q", longResult.DigestText)
+	if !strings.Contains(archiveText, "作者") || !strings.Contains(archiveText, "AI") {
+		t.Fatalf("归档应带角色标签: %q", archiveText)
 	}
-	if strings.Count(longResult.DigestText, "\n") < 4 {
-		t.Fatalf("每条折叠消息应占一行: %q", longResult.DigestText)
+	if !strings.Contains(archiveText, "［工具：chapter_check］") {
+		t.Fatalf("归档应保留工具标签: %q", archiveText)
 	}
-
-	// 环节3：预算裁剪。摘要超预算时从最旧一条开始丢弃，保留离当前更近的历史。
-	tightResult := ai.CompactHistory(longList, ai.CompactConfig{
-		KeepRecentCount: 4, PerMessageRunes: 60, BudgetChars: 120, MinTotalChars: 100,
-	})
-	if tightResult.DroppedCount == 0 {
-		t.Fatalf("预算 120 字符下必然丢弃旧摘要: %+v", tightResult)
-	}
-	if tightResult.FoldedCount+tightResult.DroppedCount != len(longList)-4 {
-		t.Fatalf("折叠数+丢弃数应等于被折叠总数: %+v", tightResult)
+	if !strings.Contains(archiveText, "2026-11-25T10:00:00+08:00") {
+		t.Fatalf("归档应保留时间: %q", archiveText)
 	}
 
-	// 环节4：确定性。同一输入两次压缩结果必须逐字节相同（否则缓存与落库会漂移）。
-	if again := ai.CompactHistory(longList, ai.DefaultCompactConfig()); again.DigestText !=
-		ai.CompactHistory(longList, ai.DefaultCompactConfig()).DigestText {
-		t.Fatal("压缩结果必须确定")
+	// 环节4：确定性。同一输入两次归档必须逐字节相同（否则落库会漂移）。
+	if again := ai.ArchiveHistory(archiveList, ai.ArchiveConfig{WithHeader: true}); again != archiveText {
+		t.Fatal("归档结果必须确定")
 	}
 
-	// 环节5：与既有摘要拼接。会话已有压缩点时新摘要接在其后，不覆盖旧结论。
-	joined := ai.JoinDigest("【历史摘要（本地压缩）】\n用户: 早期结论", "用户: 本轮新增")
-	if !strings.Contains(joined, "早期结论") || !strings.HasSuffix(joined, "本轮新增") {
-		t.Fatalf("拼接顺序错误: %q", joined)
+	// 环节5：单条超长只收敛那一条，其余条数与内容不变。
+	mixedList := []ai.ArchiveMessage{
+		{Seq: 1, RoleCode: "user", ContentText: strings.Repeat("乙", 6000)},
+		{Seq: 2, RoleCode: "assistant", ContentText: "短回答"},
 	}
-	if ai.JoinDigest("", "只有新的") != "只有新的" || ai.JoinDigest("只有旧的", "") != "只有旧的" {
-		t.Fatal("空串应自动忽略")
+	mixedText := ai.ArchiveHistory(mixedList, ai.ArchiveConfig{})
+	if strings.Count(mixedText, "1. 作者") != 1 || strings.Count(mixedText, "2. AI") != 1 {
+		t.Fatalf("归档不得丢条: %q", mixedText)
+	}
+	if !strings.Contains(mixedText, "短回答") || !strings.Contains(mixedText, "此处省略") {
+		t.Fatalf("应保留短正文并收敛超长正文: %q", mixedText)
+	}
+	if ai.ArchiveHistory(nil, ai.ArchiveConfig{}) != "" {
+		t.Fatal("空历史应返回空串")
 	}
 }
 
@@ -456,7 +476,7 @@ func TestSlashNamespaceChain(t *testing.T) {
 	}
 
 	// 环节2：保留编码能被识别（大小写敏感，/Help 不是动作）。
-	for _, actionCode := range []string{"help", "clear", "history", "new", "attach", "copy", "check", "focus", "snapshot", "compact"} {
+	for _, actionCode := range []string{"help", "clear", "new", "attach", "copy", "check", "focus", "snapshot"} {
 		if !domain.IsReservedActionCode(actionCode) {
 			t.Fatalf("动作编码 %s 未登记", actionCode)
 		}

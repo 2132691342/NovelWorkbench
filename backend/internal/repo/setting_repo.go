@@ -71,3 +71,11 @@ func (r *SettingRepo) UpdateDescription(ctx context.Context, settingKey, setting
 	}
 	return nil
 }
+
+// DeleteByKey 删除一条配置（下线内置配置项时使用，幂等：不存在即返回）。
+func (r *SettingRepo) DeleteByKey(ctx context.Context, settingKey string) error {
+	if err := r.db.WithContext(ctx).Where("setting_key = ?", settingKey).Delete(&domain.AppSettingDO{}).Error; err != nil {
+		return fmt.Errorf("delete setting: %w", err)
+	}
+	return nil
+}

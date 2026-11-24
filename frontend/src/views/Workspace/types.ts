@@ -33,7 +33,6 @@ export interface ChatSendPayload {
   ref_summary_ulid_list: string[]
   ref_doc_ulid_list: string[]
   ref_session_ulid_list: string[]
-  history_count: number
   system_prompt_code: string
 }
 

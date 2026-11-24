@@ -1,4 +1,4 @@
-// 本文件定义 AI 上下文的优先级体系与装配规则：上下文块、字符预算裁剪与提示词渲染。
+// 本文件定义 AI 上下文的优先级体系与装配规则：上下文块、单块收敛与提示词渲染。
 
 package ai
 
@@ -8,47 +8,60 @@ import (
 	"strings"
 )
 
-// 上下文块优先级常量：数值越大越先获得预算（当前章节与指令提示词不可丢弃）。
+// 上下文块优先级常量：数值越大越靠前（当前章节与显式引用永远完整保留）。
 const (
 	PriorityCurrentChapter = 100 // 当前编辑章节正文
-	PriorityExplicitRef    = 90  // @显式引用的文档/章节/摘要/提示词
-	PriorityToolResult     = 85  // 工具执行结果
+	PriorityExplicitRef    = 90  // @显式引用的文档/章节/摘要/角色/设定/会话
 	PriorityRAG            = 70  // 知识库召回片段
 	PriorityChapterSummary = 60  // 前文章节梗概
-	PriorityCharacter      = 50  // 相关角色卡与设定
+	PriorityCharacter      = 50  // 项目角色卡与设定全量
 )
-
-// ContextBudgetChars 上下文装配的字符预算（约 8k token 输入侧，宁少勿超保证稳定）。
-const ContextBudgetChars = 12000
 
 // ContextBlock 待注入的上下文块。
 type ContextBlock struct {
-	BlockKey    string // 块标识（如 rag/chapter_summary），用于丢弃统计
+	BlockKey    string // 块标识（如 rag/chapter_summary），用于收敛统计
 	Priority    int    // 优先级（见常量）
 	ContentText string // 块内容
 }
 
-// AssembleContext 按优先级从高到低装配上下文，超出预算的块被丢弃并返回其标识。
+// AssembleContext 按优先级从高到低拼接全部上下文块，返回装配文本与被收敛的块标识。
+// 不按总预算丢弃：作者引用的素材一律进上下文，只在单块过长时保留首尾（见 CondenseBlock）。
 // 同优先级按输入顺序保留，保证输出确定性。
-func AssembleContext(blocks []ContextBlock, budgetChars int) (string, []string) {
+func AssembleContext(blocks []ContextBlock) (string, []string) {
 	sorted := make([]ContextBlock, len(blocks))
 	copy(sorted, blocks)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Priority > sorted[j].Priority })
 
 	var builder strings.Builder
-	droppedKeys := make([]string, 0)
+	condensedKeys := make([]string, 0)
 	for _, block := range sorted {
-		if block.ContentText == "" {
+		if strings.TrimSpace(block.ContentText) == "" {
 			continue // 空块直接跳过
 		}
-		if builder.Len()+len(block.ContentText) > budgetChars {
-			droppedKeys = append(droppedKeys, block.BlockKey)
-			continue
+		contentText := CondenseBlock(block.ContentText, block.Priority)
+		if contentText != block.ContentText {
+			condensedKeys = append(condensedKeys, block.BlockKey)
 		}
-		builder.WriteString(block.ContentText)
+		builder.WriteString(contentText)
 		builder.WriteString("\n\n")
 	}
-	return strings.TrimSpace(builder.String()), droppedKeys
+	return strings.TrimSpace(builder.String()), condensedKeys
+}
+
+// 单块收敛上限（rune）：显式引用给足原文，背景类素材收紧一些。
+// 数值刻意宽松：宁可上下文长，也不把成段素材压成摘要句。
+const (
+	blockRunesExplicit  = 20000 // 当前章与显式引用
+	blockRunesDefault   = 6000  // 召回、梗概、角色与设定
+)
+
+// CondenseBlock 按块优先级收敛单块正文：未超上限原样返回，超长保留首尾并标注省略字数。
+func CondenseBlock(contentText string, priority int) string {
+	limit := blockRunesDefault
+	if priority >= PriorityExplicitRef {
+		limit = blockRunesExplicit
+	}
+	return CondenseRunes(contentText, limit*3/5, limit*2/5)
 }
 
 // placeholderPattern 匹配 {{占位符}} 模板变量（包级预编译，避免热路径重复编译）。
@@ -71,14 +84,21 @@ func RenderPrompt(template string, valueMap map[string]string) string {
 // TemplatePlaceholders 返回模板中未登记在 known 里的占位符（去重、按出现顺序）。
 func TemplatePlaceholders(template string, known map[string]bool) []string {
 	unknown := make([]string, 0, 4)
-	seen := make(map[string]bool, 4)
 	for _, match := range placeholderPattern.FindAllStringSubmatch(template, -1) {
 		key := match[1]
-		if known[key] || seen[key] {
+		if known[key] {
 			continue
 		}
-		seen[key] = true
-		unknown = append(unknown, key)
+		duplicated := false
+		for _, existing := range unknown {
+			if existing == key {
+				duplicated = true
+				break
+			}
+		}
+		if !duplicated {
+			unknown = append(unknown, key)
+		}
 	}
 	return unknown
 }

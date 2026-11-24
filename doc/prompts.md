@@ -153,7 +153,7 @@
   同理，已下线的内置菜单（如合并掉的「技能管理」）在启动时按 `retiredMenuCodeList` 清理，避免导航指向不存在的页面。
 - **编码不可变**：内置提示词的 `prompt_code`、`scope_code`、`prompt_kind_code` 均不允许修改，
   因为它们同时是 `/命令` 与前端契约的一部分。
-- **编码命名空间**：`/` 触发词由写作台本地动作与指令提示词共享，动作编码（`help`/`clear`/`history`/`new`/`attach`/`copy`/`check`/`focus`/`snapshot`）
+- **编码命名空间**：`/` 触发词由写作台本地动作与指令提示词共享，动作编码（`help`/`clear`/`new`/`attach`/`copy`/`check`/`focus`/`snapshot`）
   在 `domain.IsReservedActionCode` 里保留，保存同编码指令提示词会被拒绝。
   本地动作不进入模型调用，只改界面或写作台状态；指令提示词以系统级消息注入。
   两者在弹层里按来源分组并标注「本地 / 注入」，作者不必猜哪条会消耗额度。

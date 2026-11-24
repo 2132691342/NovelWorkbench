@@ -51,7 +51,6 @@ ai:
   temperature: 0.7          # NW_AI_TEMPERATURE
   max_tokens: 2048          # NW_AI_MAX_TOKENS
   timeout_sec: 120          # NW_AI_TIMEOUT_SEC
-  history_count: 5          # NW_AI_HISTORY_COUNT：@历史引用默认条数（可被请求覆盖）
 
 app:
   upload_max_mb: 20         # NW_APP_UPLOAD_MAX_MB

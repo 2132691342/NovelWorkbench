@@ -89,7 +89,6 @@ type AIConfig struct {
 	Temperature  float64 `yaml:"temperature" mapstructure:"temperature"`     // 采样温度
 	MaxTokens    int     `yaml:"max_tokens" mapstructure:"max_tokens"`       // 单次输出上限
 	TimeoutSec   int     `yaml:"timeout_sec" mapstructure:"timeout_sec"`     // 调用超时（秒）
-	HistoryCount int     `yaml:"history_count" mapstructure:"history_count"` // 历史消息注入默认条数
 }
 
 // AppConfig 业务参数配置。
@@ -146,9 +145,6 @@ func (c *Config) validate() error {
 	}
 	if c.Server.Port == 0 {
 		c.Server.Port = 8080 // 默认端口
-	}
-	if c.AI.HistoryCount <= 0 {
-		c.AI.HistoryCount = 5 // 默认注入最近 5 条历史
 	}
 	if c.App.RAGTopK <= 0 {
 		c.App.RAGTopK = 6 // 默认召回 6 条

@@ -212,47 +212,21 @@ func formatLoreBlock(lores []domain.LoreDO) string {
 	return builder.String()
 }
 
-// selectHistory 选取注入历史并做本地压缩（不调用模型，O(n) 单趟）。
-// 规则：请求条数与配置给出取用上限 → 超出上限的旧消息折叠为摘要 → 会话已有持久摘要时与新摘要拼接。
-// 返回（原样保留的最近消息，历史摘要文本）。压缩阈值内不做任何改写，短会话不受影响。
-func (s *ChatService) selectHistory(ctx context.Context, session *domain.ChatSessionDO,
-	messages []domain.ChatMessageDO, reqCount int) ([]domain.ChatMessageDO, string) {
-	selected := selectHistoryMessages(messages, s.resolveHistoryLimit(ctx, reqCount))
-	if len(selected) == 0 {
-		return selected, strings.TrimSpace(session.SummaryText)
-	}
-	compactList := make([]ai.CompactMessage, 0, len(selected))
-	for i := range selected {
-		compactList = append(compactList, ai.CompactMessage{
-			RoleCode:    selected[i].RoleCode,
-			ContentText: selected[i].ContentText,
-		})
-	}
-	result := ai.CompactHistory(compactList, ai.DefaultCompactConfig())
-	keptList := make([]domain.ChatMessageDO, 0, len(result.KeptList))
-	// 压缩只改写正文载荷：其余字段（引用、提示词编码）随原消息保留，前端展示不受影响
-	keptIndex := len(selected) - len(result.KeptList)
-	for i := range result.KeptList {
-		original := selected[keptIndex+i]
-		if original.ContentText != result.KeptList[i].ContentText {
-			original.ContentText = result.KeptList[i].ContentText
+// condenseHistory 把会话历史全部注入，只收敛单条超长正文。
+// 不按条数截取、不设总量预算：作者要的是完整脉络，过长的是单条而不是整段对话。
+// 返回（注入历史，被收敛正文的消息条数）；纯函数，同输入同输出。
+func condenseHistory(messages []domain.ChatMessageDO) ([]domain.ChatMessageDO, int) {
+	injected := make([]domain.ChatMessageDO, len(messages))
+	copy(injected, messages)
+	condensed := 0
+	for i := range injected {
+		shortened := ai.CondenseText(injected[i].ContentText)
+		if shortened != injected[i].ContentText {
+			injected[i].ContentText = shortened
+			condensed++
 		}
-		keptList = append(keptList, original)
 	}
-	digestText := ai.JoinDigest(session.SummaryText, result.DigestText)
-	return keptList, digestText
-}
-
-// selectHistoryMessages 选取注入历史（纯函数）：取最近 n 条（旧→新，n<=0 不注入常规历史）。
-func selectHistoryMessages(messages []domain.ChatMessageDO, n int) []domain.ChatMessageDO {
-	if n <= 0 {
-		return nil
-	}
-	mainStart := 0
-	if len(messages) > n {
-		mainStart = len(messages) - n
-	}
-	return append(make([]domain.ChatMessageDO, 0, len(messages)-mainStart), messages[mainStart:]...)
+	return injected, condensed
 }
 
 // chatMessageInput 消息序列装配输入（纯数据，便于单测）。
@@ -260,27 +234,23 @@ type chatMessageInput struct {
 	SystemPromptText string                 // 身份提示词正文（空则用内置兜底）
 	StyleText        string                 // 项目文风约束
 	ContextText      string                 // 装配后的上下文文本（空则省略）
-	DigestText       string                 // 被压缩折叠的历史摘要（空则省略）
 	CommandText      string                 // 命中的指令提示词渲染文本（空则省略）
 	HistoryList      []domain.ChatMessageDO // 注入历史（旧→新）
 	UserText         string                 // 用户输入
 }
 
 // buildChatMessages 构造发往模型的消息序列（纯函数）：
-// 身份提示词（系统）→ 上下文（系统）→ 历史摘要（系统）→ 指令提示词（系统）→ 历史（原生角色）→ 用户输入（用户）。
+// 身份提示词（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史（原生角色）→ 用户输入（用户）。
+// 历史全量按原生角色注入，不做条数截取也不做摘要替代：模型看到的就是作者说过的话。
 // 注入内容全部是系统级消息，用户输入始终是用户级消息，二者在消息列表里可区分。
 func buildChatMessages(input chatMessageInput) []*schema.Message {
-	messages := make([]*schema.Message, 0, len(input.HistoryList)+5)
+	messages := make([]*schema.Message, 0, len(input.HistoryList)+4)
 	messages = append(messages, &schema.Message{
 		Role:    schema.System,
 		Content: ai.ComposeSystemPrompt(input.SystemPromptText, input.StyleText),
 	})
 	if input.ContextText != "" {
 		messages = append(messages, &schema.Message{Role: schema.System, Content: "【上下文】\n" + input.ContextText})
-	}
-	// 历史摘要放在指令提示词之前：它是「之前说过什么」的事实，指令是「这次要做什么」的约束
-	if input.DigestText != "" {
-		messages = append(messages, &schema.Message{Role: schema.System, Content: input.DigestText})
 	}
 	if input.CommandText != "" {
 		messages = append(messages, &schema.Message{Role: schema.System, Content: input.CommandText})
@@ -426,7 +396,7 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 		if sessionULID == req.SessionULID {
 			return input, pkg.NewBizError(domain.RespCodeInvalidParam, "不能引用当前会话自身")
 		}
-		source, err := s.loadSessionDigest(ctx, userULID, sessionULID)
+		source, err := s.loadSessionArchive(ctx, userULID, sessionULID)
 		if err != nil {
 			return input, err
 		}
@@ -458,9 +428,9 @@ func (s *ChatService) loadContextInput(ctx context.Context, userULID string, req
 	return input, nil
 }
 
-// loadSessionDigest 读取被 @ 的历史会话并本地压缩成摘要。
-// 归属校验与当前会话同口径：只能引用自己名下的会话；压缩不调用模型，长会话也只花一次遍历。
-func (s *ChatService) loadSessionDigest(ctx context.Context, userULID, sessionULID string) (sessionSource, error) {
+// loadSessionArchive 读取被 @ 的历史会话并导出逐条归档文本。
+// 归属校验与当前会话同口径：只能引用自己名下的会话；导出不调用模型，一条消息都不删。
+func (s *ChatService) loadSessionArchive(ctx context.Context, userULID, sessionULID string) (sessionSource, error) {
 	session, err := s.mustOwnSession(ctx, userULID, sessionULID)
 	if err != nil {
 		return sessionSource{}, err
@@ -469,26 +439,26 @@ func (s *ChatService) loadSessionDigest(ctx context.Context, userULID, sessionUL
 	if err != nil {
 		return sessionSource{}, pkg.WrapBizError(domain.RespCodeStorageError, "引用会话读取失败", err)
 	}
-	compactList := make([]ai.CompactMessage, 0, len(messages))
+	archiveList := make([]ai.ArchiveMessage, 0, len(messages))
 	for i := range messages {
-		compactList = append(compactList, ai.CompactMessage{
+		archiveList = append(archiveList, ai.ArchiveMessage{
+			Seq:         i + 1,
 			RoleCode:    messages[i].RoleCode,
 			ContentText: messages[i].ContentText,
+			ToolCodeCSV: strings.Join(decodeStringList(messages[i].ToolCodeJSON), "、"),
+			CreatedAt:   pkg.FormatTime(messages[i].CreatedAt),
 		})
 	}
-	// 引用整段会话时全部折叠：作者要的是「那次聊了什么」，不需要逐条原文
-	result := ai.CompactHistory(compactList, ai.CompactConfig{
-		PerMessageRunes: 80, BudgetChars: ai.ContextBudgetChars / 3, MinTotalChars: 1, FoldAll: true,
-	})
+	// 引用整段会话：逐条编号导出，只有单条正文超长时才保留首尾
+	archiveText := ai.ArchiveHistory(archiveList, ai.ArchiveConfig{WithHeader: true})
 	sessionName := session.SessionName
 	if strings.TrimSpace(sessionName) == "" {
 		sessionName = "未命名会话"
 	}
-	digestText := ai.JoinDigest(session.SummaryText, result.DigestText)
-	if strings.TrimSpace(digestText) == "" {
-		digestText = "（该会话没有可引用的内容）"
+	if strings.TrimSpace(archiveText) == "" {
+		archiveText = "（该会话没有可引用的内容）"
 	}
-	return sessionSource{SessionName: sessionName, ContentText: digestText}, nil
+	return sessionSource{SessionName: sessionName, ContentText: archiveText}, nil
 }
 
 // loadNeighborSummaries 取当前章相邻前后章的梗概（按章节排序号相邻，缺位跳过）。

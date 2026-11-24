@@ -9,8 +9,6 @@ type ChatSessionDO struct {
 	ProjectULID string `json:"project_ulid" gorm:"column:project_ulid;size:40;index"`      // 所属项目
 	UserULID    string `json:"user_ulid" gorm:"column:user_ulid;size:40;index"`            // 所属用户
 	SessionName string `json:"session_name" gorm:"size:128"`                               // 会话名（默认取首条消息摘要）
-	SummaryText string `json:"summary_text" gorm:"column:summary_text;type:text"`          // 已压缩历史摘要（/compact 写入，注入时拼在历史之前）
-	CompactAt   string `json:"compact_at" gorm:"column:compact_at;size:32"`                // 最近一次压缩时间（RFC3339，未压缩为空）
 }
 
 // TableName 指定表名。
@@ -50,8 +48,7 @@ type ChatSendREQ struct {
 	RefSummaryULIDList    []string `json:"ref_summary_ulid_list"`                          // @章节摘要
 	RefCharacterULIDList  []string `json:"ref_character_ulid_list"`                        // @角色卡
 	RefLoreULIDList       []string `json:"ref_lore_ulid_list"`                             // @设定条目
-	RefSessionULIDList    []string `json:"ref_session_ulid_list"`                          // @历史会话（注入时本地压缩）
-	HistoryCount          int      `json:"history_count" binding:"omitempty,min=0,max=50"` // 历史消息注入条数，0 用全局配置
+	RefSessionULIDList    []string `json:"ref_session_ulid_list"`                          // @历史会话（注入时逐条归档）
 	ModelULID             string   `json:"model_ulid" binding:"omitempty,max=40"`          // 指定模型，空用默认
 	SystemPromptCode      string   `json:"system_prompt_code" binding:"omitempty,max=32"`  // 指定身份提示词编码，空用默认全局身份提示词
 }
@@ -69,27 +66,8 @@ type ChatSessionVO struct {
 	SessionName  string `json:"session_name"`  // 会话名
 	MessageCount int    `json:"message_count"` // 消息条数
 	UpdatedAt    string `json:"updated_at"`    // 最后活跃时间（RFC3339）
-	SummaryText  string `json:"summary_text"`  // 已压缩历史摘要（未压缩为空）
-	CompactAt    string `json:"compact_at"`    // 最近一次压缩时间（RFC3339，未压缩为空）
 }
 
-// ChatCompactREQ 压缩会话历史请求（POST /chat/session/compact）。
-type ChatCompactREQ struct {
-	SessionULID string `json:"session_ulid" binding:"required,max=40"` // 会话 ULID
-}
-
-// ChatCompactDTO 压缩结果（前端据此展示折叠了多少条、摘要多长）。
-type ChatCompactDTO struct {
-	SessionULID  string `json:"session_ulid"`  // 会话 ULID
-	FoldedCount  int    `json:"folded_count"`  // 被折叠进摘要的消息条数
-	DroppedCount int    `json:"dropped_count"` // 因摘要预算丢弃的折叠条数
-	KeptCount    int    `json:"kept_count"`    // 原样保留的消息条数
-	SummaryText  string `json:"summary_text"`  // 压缩后的完整摘要
-	CompactAt    string `json:"compact_at"`    // 压缩时间（RFC3339）
-	Compacted    bool   `json:"compacted"`     // 是否实际发生压缩（历史太短时 false）
-}
-
-// ChatMessageVO 消息视图对象。
 type ChatMessageVO struct {
 	MessageULID          string   `json:"message_ulid"`            // 消息 ULID
 	SessionULID          string   `json:"session_ulid"`            // 所属会话

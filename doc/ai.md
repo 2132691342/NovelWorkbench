@@ -137,13 +137,20 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 ### 3.3 装配规则
 
-`ai.AssembleContext(blocks, budgetChars)`：
+`ai.AssembleContext(blocks)`：
 
 1. 按优先级降序稳定排序，同优先级保持输入顺序，输出确定。
-2. 预算 `ai.ContextBudgetChars = 12000` 字节；块间以 `\n\n` 分隔。
-3. 超预算整块丢弃（不截半句），从低优先级开始；空内容块直接跳过且不计入丢弃列表。
-4. 返回被丢弃的 `BlockKey`，`ChatService.Send` 据此打告警日志。
+2. 块间以 `\n\n` 分隔；空内容块直接跳过。
+3. **不按总预算丢弃**：所有块都进上下文，单块超上限时走 `ai.CondenseBlock` 保留首尾并标注省略字数。
+4. 返回被收敛的 `BlockKey`，`ChatService.Send` 据此打日志（`condensed_keys`）。
 5. `ai.RenderPrompt` 渲染 `{{key}}`：命中即替换，缺失键替换为空串。
+
+单块上限（rune）：
+
+| 优先级 | 上限 | 适用块 |
+| --- | --- | --- |
+| ≥ `PriorityExplicitRef`(90) | 20000 | 当前章、引用章节/文档/摘要/角色/设定/会话 |
+| 其余 | 6000 | 知识库召回、章节梗概、全量角色与设定 |
 
 块文本格式（`buildContextBlocks`）：
 
@@ -153,12 +160,13 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `ref_chapter` | `【引用章节】{名}\n{正文}` |
 | `ref_doc` | `【引用文档】{名}\n{全文}` |
 | `ref_summary` | `【引用章节摘要】\n` + 摘要换行拼接 |
-| `ref_prompt` | `【引用提示词】\n` + 正文以空行拼接 |
+| `ref_character` | `【角色卡】` + 每条 `\n姓名：{名}｜性格：{性格}｜背景：{背景}` |
+| `ref_lore` | `【设定条目】` + 每条 `\n设定名：{名}｜内容：{内容}` |
+| `ref_session` | `【引用历史会话】` + 每条 `\n《{会话名}》\n{逐条归档}` |
 | `rag` | `【知识库召回】` + 每条 `\n《{文档名}》{切片}` |
 | `chapter_summary` | `【章节梗概】\n` + 梗概换行拼接 |
-| `character` | `【角色卡】` + 每条 `\n姓名：{名}｜性格：{性格}｜背景：{背景}` |
-| `lore` | `【设定条目】` + 每条 `\n设定名：{名}｜内容：{内容}` |
-| `tool_result` | `【工具结果】\n` + 结果以空行拼接 |
+| `character` | `【角色卡】`（项目全量） |
+| `lore` | `【设定条目】`（项目全量，`note` 排除） |
 
 ### 3.4 单项截断
 
@@ -169,43 +177,70 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | `loreContentRunes` | 300 | 设定条目内容 |
 | `sessionNameRunes` | 20 | 会话缺省名取首条消息字数 |
 
-`service.truncateRunes` 超长时追加省略号；`ai.truncateRunes` 不追加，仅用于探测回显。
+角色卡与设定条目这类「一行一条」的素材按上表收紧；章节正文、文档全文走首尾保留，不按此表截。
 
 ### 3.5 指令提示词渲染
 
 命中指令提示词后（`ChatService.Send`）：
 
-1. `chapter_content` = 引用章节正文按「当前章在前」拼接后按 `ContextBudgetChars` 截断。
+1. `chapter_content` = 引用章节正文按「当前章在前」拼接（不再截断）。
 2. `context` = `ai.AssembleContext` 装配出的上下文文本（与独立系统级上下文消息同源）。
 3. `user_input` = 去掉斜杠命令后的用户正文。
 4. `prompt_code` = 命中的编码。
 5. 渲染结果作为独立**系统级**消息（`CommandText`），位置在上下文消息之后、历史之前。
 
 因此 `{{context}}` 的内容会同时出现在指令提示词与独立上下文消息中，属于有意设计：
-指令提示词需要就近上下文，独立消息保证装配顺序与丢弃统计仍可解释。
+指令提示词需要就近上下文，独立消息保证装配顺序可解释。
 
-### 3.6 历史选取与本地压缩
+### 3.6 历史：全量注入，只收敛超长单条
 
-`selectHistoryMessages(messages, n)`：取最近 `n` 条（旧→新），`n <= 0` 不注入常规历史。
-`n` 的解析（`resolveHistoryLimit`）：请求 `history_count` > 应用配置 `chat_history_count`（默认 5）> 全局配置 `ai.history_count`。
+历史**不按条数截取、不按 token 预算丢弃、不换摘要替代原文**。整段会话按原生角色逐条进消息序列，
+模型看到的就是作者真实说过的话。
 
-历史不原样全量塞进去，`ai.CompactHistory` 会在超过门槛时做**本地压缩**——不调用模型，单趟 O(n)：
+```mermaid
+flowchart LR
+  A["会话全部消息"] --> B["condenseHistory"]
+  B --> C{"单条超过 4000 字?"}
+  C -- 否 --> D["原样注入"]
+  C -- 是 --> E["保留首 2400 + 省略标记 + 尾 1600"]
+  D --> F["消息序列"]
+  E --> F
+```
 
-| 参数 | 默认 | 含义 |
+`condenseHistory(messages)`：浅拷贝后逐条过 `ai.CondenseText`，条数与顺序不变，返回被收敛的条数供日志观测。
+
+| 参数 | 值 | 含义 |
 | --- | --- | --- |
-| `MinTotalChars` | 6000 | 总字符低于此值不压缩（短会话压了反而丢细节） |
-| `KeepRecentCount` | 8 | 最近 8 条保留原文 |
-| `PerMessageRunes` | 60 | 更早的消息每条折成一行，保留 60 字 |
-| `BudgetChars` | 3000 | 摘要总预算，超出从最旧一条开始丢弃 |
-| `FoldAll` | false | `@会话` 引用时全量折叠，忽略 `KeepRecentCount` |
+| `condenseHeadRunes` | 2400 | 超长单条保留的开头字符数 |
+| `condenseTailRunes` | 1600 | 超长单条保留的结尾字符数 |
+| 阈值 | 4000 | 未超过 4000 字的正文一个字符都不改 |
 
-折叠格式：`【历史摘要（本地压缩）】` + 每条 `{用户|AI|系统}: {首段前 60 字}`。
-摘要进入消息序列是一条 `system` 消息，位置在上下文之后、指令提示词之前——
-它描述「已经发生过什么」的事实，指令描述「这次要做什么」的约束。
+为什么不做高压缩率：小说对话里「第几条说过什么」本身就是创作素材，压成摘要句会丢设定、丢语气、丢作者的取舍过程。
+代价是上下文变长——这是明确接受的成本，不是遗漏。
 
-会话级持久压缩点（`/compact` → `POST /chat/session/compact`）把摘要写进 `chat_sessions.summary_text`，
-下次注入时 `ai.JoinDigest` 把它拼在实时压缩结果之前，旧结论不会被新一轮压掉。
-同一输入必然得到同一输出（确定性），因此可用于缓存与落库。
+上下文块同样不再按总预算丢弃：`ai.AssembleContext(blocks)` 只排序拼接，单块超上限时走
+`ai.CondenseBlock` 保留首尾（显式引用 20000 字、背景素材 6000 字），所有块都会进上下文。
+
+### 3.7 `@历史会话`：逐条归档
+
+`POST /chat/send` 的 `ref_session_ulid_list` 指向历史会话时，`ai.ArchiveHistory` 把整段对话导出成
+逐条编号的记录（`loadSessionArchive`）：
+
+```
+【历史会话归档】共 42 条，按时间顺序完整保留
+1. 作者（2026-11-25T10:00:00+08:00）
+这章开头太闷，重写
+2. AI（2026-11-25T10:00:12+08:00）［工具：chapter_check］
+……
+```
+
+| 字段 | 来源 | 说明 |
+| --- | --- | --- |
+| 序号 | 会话内顺序 | 从 1 起，回看时能定位「第几条」 |
+| 角色 | `role_code` | `作者` / `AI` / `系统` |
+| 时间 | `created_at` | RFC3339，可空 |
+| 工具标签 | `tool_code_json` | 本轮模型实际调用的编码，可空 |
+| 正文 | `content_text` | 超长时同样保留首尾并标注省略字数 |
 
 ## 4. 消息序列
 
@@ -215,9 +250,8 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | --- | --- | --- |
 | 1 | `system` | `ai.ComposeSystemPrompt(systemPromptText, styleText)`：身份提示词 + 项目文风约束 |
 | 2 | `system` | `【上下文】\n{contextText}`，为空时整条省略 |
-| 3 | `system` | 历史压缩摘要，为空时整条省略 |
-| 4 | `system` | 指令提示词渲染结果，为空时整条省略 |
-| 5… | 按历史顺序 | 逐条历史，`chatRoleOf` 映射角色 |
+| 3 | `system` | 指令提示词渲染结果，为空时整条省略 |
+| 4… | 按历史顺序 | 逐条历史（全量，超长单条保留首尾），`chatRoleOf` 映射角色 |
 | 末 | `user` | 用户输入（去命令后的正文） |
 
 关键约束：**注入内容一律是系统级消息，用户输入一律是用户级消息**。这让"约束"与"要求"在模型侧与界面侧都可区分，
@@ -241,7 +275,6 @@ streamChat 循环（≤ chatToolRoundLimit = 4）
 防打转三道机制：单轮内「同工具同参数」去重；相邻两轮调用签名相同即摘掉工具声明；
 轮数上限触发后若仍无正文则发 `error` 事件而不是静默返回空串。
 
-## 5. 提示词
 ## 5. 提示词
 
 ### 5.1 数据模型

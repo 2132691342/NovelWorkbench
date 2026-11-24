@@ -391,7 +391,7 @@ ORDER BY score DESC LIMIT <topK>
 | 内置提示词 | 12 个流程域 × (1 身份 + 2 指令) = 36 条（`ai.BuiltinDomains()`）；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`，`asset_hash_text` 为出厂指纹。启动时按指纹升级：已自改或指纹一致不覆盖，其余覆盖正文；清单之外的旧内置提示词删除 |
 | 内置档案 | 12 份（`ai.BuiltinPromptProfiles()`），每个流程域一份：`adapt`、`architect`、`continuity`、`deai`、`draft`、`finalize`、`operation`、`pitch`、`publish`、`review`、`short`、`style`；全局、启用、`asset_hash_text` 为出厂指纹 |
 | 内置工具 | 6 个（`ToolService.SeedDefaults`）：`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`；全局、启用、带触发关键词与参数声明 |
-| 应用配置 | `chat_history_count=5`、`rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
+| 应用配置 | `rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
 | 内置角色 | `admin`（`perm_codes_json=["*"]`）、`user`（`perm_codes_json="[]"`），`builtin_flag=true`，已存在不覆盖 |
 | 内置菜单 | 来源 `menuSeedList`，共 29 行：3 个分组（创作 / AI 资产 / 系统）、25 个页面、1 个动作权限（`action_model_write`）。`material` 是素材库唯一入口；`character`、`lore`、`knowledge`、`notes` 标记 `HiddenFlag`（已被素材库合并取代），`profile` 从顶栏用户菜单进入同样隐藏，五者仍注册路由但不进导航 |
 | 管理员 | 登录名 `admin`，邮箱 `admin@novelworkbench.local`，密码取 `app.admin_password`（缺省 `Admin@123456`），挂载 `admin` 角色 |

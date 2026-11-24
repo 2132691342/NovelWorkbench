@@ -12,7 +12,6 @@
 
   /** 分组：按配置键前缀归类，避免设置项堆成一列 */
   const groupMeta: Array<{ code: string; name: string; keys: string[] }> = [
-    { code: 'chat', name: 'AI 对话', keys: ['chat_history_count'] },
     { code: 'knowledge', name: '知识库检索', keys: ['rag_top_k'] },
     { code: 'writing', name: '写作目标', keys: ['daily_word_goal'] }
   ]

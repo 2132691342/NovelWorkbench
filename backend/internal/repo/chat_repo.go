@@ -71,17 +71,6 @@ func (r *ChatRepo) UpdateSessionName(ctx context.Context, sessionULID, sessionNa
 	return nil
 }
 
-// UpdateSessionCompact 保存会话的历史压缩摘要与压缩时间。
-func (r *ChatRepo) UpdateSessionCompact(ctx context.Context, sessionULID, summaryText, compactAt string) error {
-	result := r.db.WithContext(ctx).Model(&domain.ChatSessionDO{}).
-		Where("session_ulid = ?", sessionULID).
-		Updates(map[string]any{"summary_text": summaryText, "compact_at": compactAt})
-	if result.Error != nil {
-		return fmt.Errorf("update chat session compact: %w", result.Error)
-	}
-	return nil
-}
-
 // DeleteSessionWithMessages 删除会话并级联删除其全部消息（同事务）。
 func (r *ChatRepo) DeleteSessionWithMessages(ctx context.Context, sessionULID string) error {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

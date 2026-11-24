@@ -118,7 +118,7 @@ export const useChatRefs = (options: UseChatRefsOptions) => {
       .map((session) => ({
         ref_ulid: session.session_ulid,
         ref_name: session.session_name || '未命名会话',
-        ref_desc: `${session.message_count} 条消息 · 注入时压缩`,
+        ref_desc: `${session.message_count} 条消息 · 逐条归档注入`,
         ref_tab_code: 'session' as const
       }))
   }))

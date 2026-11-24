@@ -96,15 +96,14 @@
 
 **职责与实现**
 
-`app_settings` 只有三行，由 `service/setting_service.go` 的 `settingDefaultList` 定义，键、默认值、说明、合法区间同源：
+`app_settings` 只有两行，由 `service/setting_service.go` 的 `settingDefaultList` 定义，键、默认值、说明、合法区间同源：
 
 | 键 | 默认值 | 区间 | 消费方 |
 | --- | --- | --- | --- |
-| `chat_history_count` | 5 | 0–50 | `ChatService.resolveHistoryLimit` |
 | `rag_top_k` | 6 | 1–20 | `KnowledgeService.resolveRAGTopK` |
 | `daily_word_goal` | 2000 | 100–100000 | 仪表盘每日目标展示 |
 
-`SeedDefaults`：按 `setting_key` 查缺补插；已存在但说明文案变化时只更新 `setting_desc`，不覆盖用户改过的值。`Update`：`settingKeyAllowed` 白名单校验 → `strconv.Atoi` 要求整数 → `settingRangeMap` 校验区间 → 更新值。消费侧一律「应用配置 > 全局配置」两级回退：`resolveHistoryLimit` 先看请求参数，再看 `chat_history_count`，最后落到 `ChatConfig.HistoryCount`；`resolveRAGTopK` 同理。路由：`GET /setting/list` 对所有登录用户开放（前端要读每日目标），`POST /setting/update` 需要 `system:setting:manage`。
+`SeedDefaults`：按 `setting_key` 查缺补插；已存在但说明文案变化时只更新 `setting_desc`，不覆盖用户改过的值。`Update`：`settingKeyAllowed` 白名单校验 → `strconv.Atoi` 要求整数 → `settingRangeMap` 校验区间 → 更新值。消费侧「应用配置 > 全局配置」两级回退：`resolveRAGTopK` 先看应用配置 `rag_top_k`，再落到全局配置。路由：`GET /setting/list` 对所有登录用户开放（前端要读每日目标），`POST /setting/update` 需要 `system:setting:manage`。
 
 **边界与权衡**
 
@@ -298,11 +297,10 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - 流开始后的失败只能经 `error` 事件下发。
 - 客户端断开或生成失败时不写 assistant 消息，但已落库的用户消息保留。
 - 引用文档必须是本项目或全局库，跨项目返回 `ERR_FORBIDDEN`；引用项目提示词同理。
-- 历史条数优先级：请求参数 > `chat_history_count` > `ChatConfig.HistoryCount`；上下文超预算时丢弃是静默的。
+- 历史全量注入：不按条数截取、不按总预算丢弃；单条正文超 4000 字时保留首尾并标注省略字数。会话与上下文块都不再「超预算静默丢弃」。
 - `chat/send` 在审计跳过名单内，用量统计仍由 `ai.Client` 上报。
 
-
-取舍：单链路把所有生成收口到一处，上下文装配、容错、流式协议、落库与统计只有一份实现，排错路径唯一；代价是交互上多一步「生成 → 手动插入」。上下文用「优先级 + 整块丢弃」而不是「逐块摘要压缩」：行为确定、不会二次调用模型，但预算不足时可能丢掉整块角色信息。RAG 失败降级为空上下文而不是报错，是保证「对话永远可用」的取舍，代价是回答质量静默下降。
+取舍：单链路把所有生成收口到一处，上下文装配、容错、流式协议、落库与统计只有一份实现，排错路径唯一；代价是交互上多一步「生成 → 手动插入」。上下文用「全量注入 + 单条首尾收敛」而不是「条数滑窗 + 预算丢弃」：不会丢掉任何一条历史或任何一个块，行为确定且不用二次调用模型；代价是上下文更长、token 消耗更高，这是刻意选择的成本。RAG 失败降级为空上下文而不是报错，是保证「对话永远可用」的取舍，代价是回答质量静默下降。
 
 ## 15. 提示词资产
 
