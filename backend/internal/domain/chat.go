@@ -22,7 +22,7 @@ type ChatMessageDO struct {
 	RoleCode       string `json:"role_code" gorm:"size:16"`                                   // 角色：user/assistant/system
 	ContentText    string `json:"content_text" gorm:"type:text"`                              // 消息正文
 	ReasoningText  string `json:"reasoning_text" gorm:"type:text"`                            // 思考过程（推理模型返回，可为空）
-	SkillCode      string `json:"skill_code" gorm:"size:32"`                                  // 命中的斜杠命令编码（空为自由对话）
+	PromptCode     string `json:"prompt_code" gorm:"column:prompt_code;size:32"`              // 命中的斜杠命令提示词编码（空为自由对话）
 	ToolCodeJSON   string `json:"tool_code_json" gorm:"type:text"`                            // 本轮执行的工具编码列表（JSON 数组）
 	RefDocJSON     string `json:"ref_doc_json" gorm:"type:text"`                              // @引用文档 ULID 列表（JSON 数组）
 	RefChapterJSON string `json:"ref_chapter_json" gorm:"type:text"`                          // @引用章节 ULID 列表（JSON 数组）
@@ -37,20 +37,19 @@ func (ChatMessageDO) TableName() string { return "chat_messages" }
 
 // ChatSendREQ 发送聊天消息请求（POST，流式以 SSE 响应）。
 type ChatSendREQ struct {
-	SessionULID        string            `json:"session_ulid" binding:"omitempty"`               // 会话 ULID，空则自动创建
-	ProjectULID        string            `json:"project_ulid" binding:"required"`                // 所属项目
-	ContentText        string            `json:"content_text" binding:"required,max=8000"`       // 消息正文
-	SkillCode          string            `json:"skill_code" binding:"omitempty,max=32"`          // 技能编码
-	SkillVariableMap   map[string]string `json:"skill_variable_map"`                             // 技能变量取值
-	ToolCodeList       []string          `json:"tool_code_list"`                                 // 显式指定工具（正文 #code 亦可用）
-	RefDocULIDList     []string          `json:"ref_doc_ulid_list"`                              // @引用文档
-	RefChapterULIDList []string          `json:"ref_chapter_ulid_list"`                          // @引用章节
-	RefMessageULIDList []string          `json:"ref_message_ulid_list"`                          // 显式引用的历史消息
-	RefSummaryULIDList []string          `json:"ref_summary_ulid_list"`                          // @引用章节摘要
-	RefPromptULIDList  []string          `json:"ref_prompt_ulid_list"`                           // @引用提示词档案
-	HistoryCount       int               `json:"history_count" binding:"omitempty,min=0,max=50"` // 历史消息注入条数，0 用全局配置
-	ModelULID          string            `json:"model_ulid" binding:"omitempty,max=40"`          // 指定模型，空用默认
-	PromptProfileULID  string            `json:"prompt_profile_ulid" binding:"omitempty,max=40"` // 指定提示词档案，空用默认全局档案
+	SessionULID        string   `json:"session_ulid" binding:"omitempty"`               // 会话 ULID，空则自动创建
+	ProjectULID        string   `json:"project_ulid" binding:"required"`                // 所属项目
+	ContentText        string   `json:"content_text" binding:"required,max=8000"`       // 消息正文
+	PromptCode         string   `json:"prompt_code" binding:"omitempty,max=32"`         // 提示词编码（对话中以 /code 触发）
+	ToolCodeList       []string `json:"tool_code_list"`                                 // 显式指定工具（正文 #code 亦可用）
+	RefDocULIDList     []string `json:"ref_doc_ulid_list"`                              // @引用文档
+	RefChapterULIDList []string `json:"ref_chapter_ulid_list"`                          // @引用章节
+	RefMessageULIDList []string `json:"ref_message_ulid_list"`                          // 显式引用的历史消息
+	RefSummaryULIDList []string `json:"ref_summary_ulid_list"`                          // @引用章节摘要
+	RefPromptULIDList  []string `json:"ref_prompt_ulid_list"`                           // @引用提示词
+	HistoryCount       int      `json:"history_count" binding:"omitempty,min=0,max=50"` // 历史消息注入条数，0 用全局配置
+	ModelULID          string   `json:"model_ulid" binding:"omitempty,max=40"`          // 指定模型，空用默认
+	SystemPromptCode   string   `json:"system_prompt_code" binding:"omitempty,max=32"`  // 指定身份提示词编码，空用默认全局身份提示词
 }
 
 // ChatHistoryREQ 拉取会话历史。
@@ -75,7 +74,7 @@ type ChatMessageVO struct {
 	RoleCode           string   `json:"role_code"`             // 角色
 	ContentText        string   `json:"content_text"`          // 正文
 	ReasoningText      string   `json:"reasoning_text"`        // 思考过程（推理模型返回，可为空）
-	SkillCode          string   `json:"skill_code"`            // 命中斜杠命令
+	PromptCode         string   `json:"prompt_code"`           // 命中斜杠命令提示词
 	ToolCodeList       []string `json:"tool_code_list"`        // 本轮执行的工具编码
 	RefDocULIDList     []string `json:"ref_doc_ulid_list"`     // 引用文档
 	RefChapterULIDList []string `json:"ref_chapter_ulid_list"` // 引用章节

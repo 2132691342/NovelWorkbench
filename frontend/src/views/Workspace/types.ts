@@ -8,7 +8,8 @@ export interface ChatDisplayMessage {
   content_text: string
   /** 推理模型返回的思考过程，生成期间逐字追加 */
   reasoning_text: string
-  skill_code: string
+  /** 命中的斜杠命令提示词编码（空为自由对话） */
+  prompt_code: string
   /** 本轮执行的工具编码（显式 #code 与关键词自动触发） */
   tool_code_list: string[]
   created_at: string
@@ -24,7 +25,7 @@ export interface ChatDisplayMessage {
 /** 输入区组装的发送载荷 */
 export interface ChatSendPayload {
   content_text: string
-  skill_code: string
+  prompt_code: string
   tool_code_list: string[]
   ref_doc_ulid_list: string[]
   ref_chapter_ulid_list: string[]
@@ -32,7 +33,7 @@ export interface ChatSendPayload {
   ref_prompt_ulid_list: string[]
   ref_message_ulid_list: string[]
   history_count: number
-  prompt_profile_ulid: string
+  system_prompt_code: string
 }
 
 /** @ 引用选择器的条目 */
@@ -47,7 +48,7 @@ export interface ChatRefItem {
 /** @ 引用选择器的页签编码（all 为跨来源聚合检索） */
 export type ChatRefTabCode = 'all' | 'doc' | 'chapter' | 'summary' | 'prompt' | 'message'
 
-/** 命令弹层候选项：技能与工具归一成同一形状 */
+/** 命令弹层候选项：本地动作、指令提示词与工具归一成同一形状 */
 export interface ChatCommandOption {
   code: string
   title: string

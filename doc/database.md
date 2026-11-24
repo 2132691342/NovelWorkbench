@@ -14,7 +14,7 @@
 
 ```mermaid
 flowchart LR
-  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>35 张表)]
+  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>33 张表)]
   SVC -->|PutObject/GetObject| MINIO[(MinIO<br/>novelworkbench)]
   SVC -->|HTTP SQL| MC[(Manticore<br/>nw_chunks)]
   REPO[repo 层] -->|SET/EXISTS| REDIS[(Redis<br/>nw:token:blacklist:*)]
@@ -30,7 +30,7 @@ flowchart LR
 - Postgres 连接或迁移失败：`os.Exit(1)`。
 - Redis 配置非法（`NewRedis` 返回 nil 客户端）：`os.Exit(1)`；连接探活失败仅告警。
 - RabbitMQ、MinIO、Manticore 连接失败：仅告警，对应能力降级。
-- 播种失败（技能、档案、工具、配置、角色、菜单、引导管理员）：`os.Exit(1)`；默认供应商播种失败仅告警。
+- 播种失败（提示词、工具、配置、角色、菜单、引导管理员）：`os.Exit(1)`；默认供应商播种失败仅告警。
 
 运行状态页的依赖探测（`service/system_status_service.go` 的 `SystemStatusService.Status`）把 postgres 标为必需，其余四项为可选：必需依赖失败记 `down`，可选依赖失败记 `degraded`。
 
@@ -55,23 +55,23 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`infra.ULIDNamingStrategy.Colum
 
 | 前缀 | 对应表 / 用途 | 前缀 | 对应表 / 用途 |
 | --- | --- | --- | --- |
-| `USR_` | `users` | `SKL_` | `skills` |
-| `REQ_` | 请求链路 ID（不落库） | `SKR_` | `skill_references` |
-| `PRJ_` | `projects` | `MNU_` | `menus` |
-| `VOL_` | `volumes` | `ROL_` | `roles` |
-| `CHP_` | `chapters` | `URO_` | `user_roles` |
-| `SNP_` | `chapter_snapshots` | `AUD_` | `audit_logs` |
-| `CHR_` | `characters` | `LGL_` | `login_logs` |
-| `RLT_` | `character_relations` | `PMP_` | `prompt_profiles` |
-| `LOR_` | `lore_settings` | `NTF_` | `notifications` |
-| `OUT_` | `outline_nodes` | `MPR_` | `model_providers` |
-| `SCN_` | `detailed_scenes` | `MDL_` | `model_catalogs` |
-| `FCT_` | `temporal_facts` | `MGR_` | `model_role_grants` |
-| `HOK_` | `foreshadow_hooks` | `MUG_` | `model_user_grants` |
-| `CSM_` | `chapter_summaries` | `MUS_` | `model_usage_stats` |
-| `DOC_` | `knowledge_documents`（同时作为 MinIO 对象键） | `JOB_` | `jobs` |
-| `CHK_` | `knowledge_chunks` | `SET_` | `app_settings` |
-| `SES_` | `chat_sessions` | `WCS_` | `word_count_stats` |
+| `USR_` | `users` | `PRM_` | `prompts` |
+| `REQ_` | 请求链路 ID（不落库） | `MNU_` | `menus` |
+| `PRJ_` | `projects` | `ROL_` | `roles` |
+| `VOL_` | `volumes` | `URO_` | `user_roles` |
+| `CHP_` | `chapters` | `AUD_` | `audit_logs` |
+| `SNP_` | `chapter_snapshots` | `LGL_` | `login_logs` |
+| `CHR_` | `characters` | `NTF_` | `notifications` |
+| `RLT_` | `character_relations` | `MPR_` | `model_providers` |
+| `LOR_` | `lore_settings` | `MDL_` | `model_catalogs` |
+| `OUT_` | `outline_nodes` | `MGR_` | `model_role_grants` |
+| `SCN_` | `detailed_scenes` | `MUG_` | `model_user_grants` |
+| `FCT_` | `temporal_facts` | `MUS_` | `model_usage_stats` |
+| `HOK_` | `foreshadow_hooks` | `JOB_` | `jobs` |
+| `CSM_` | `chapter_summaries` | `SET_` | `app_settings` |
+| `DOC_` | `knowledge_documents`（同时作为 MinIO 对象键） | `WCS_` | `word_count_stats` |
+| `CHK_` | `knowledge_chunks` | | |
+| `SES_` | `chat_sessions` | | |
 | `MSG_` | `chat_messages` | `TOL_` | `tools` |
 
 ### 2.2 列类型映射
@@ -89,7 +89,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ## 3. 表结构
 
-`AutoMigrate` 一次性声明 35 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）、`updated_at timestamptz`（`autoUpdateTime`）、`created_by varchar(40)` 与 `updated_by varchar(40)`，来自 `domain.BaseDO`，下表不再重复列出。
+`AutoMigrate` 一次性声明 33 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）、`updated_at timestamptz`（`autoUpdateTime`）、`created_by varchar(40)` 与 `updated_by varchar(40)`，来自 `domain.BaseDO`，下表不再重复列出。
 
 `created_by` / `updated_by` 由 GORM 回调自动填充（`pkg.RegisterActorCallbacks`）：`AuthMiddleware` 把当前登录用户 ULID 注入请求 context，回调在 `gorm:create` / `gorm:update` 之前写入对应列。显式赋值优先，不会被覆盖；系统任务（无登录态）留空串。
 
@@ -111,7 +111,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 `perm_code` 的全局唯一性由 `MenuService.Save` 调用 `MenuRepo.CountByPermCode` 校验（冲突返回 `ERR_CONFLICT`），数据库不建唯一索引以允许多行空值。
 
-**audit_logs** — `audit_ulid`(PK) · `log_level_code`(IDX,v16，级别 `info`(2xx/3xx)/`warn`(4xx)/`error`(5xx)，由 HTTP 状态推导) · `trace_id`(IDX,v40，链路 ID，与响应包络 `trace_id` 同值) · `user_ulid`(IDX，操作者，未登录为空串) · `user_name`(IDX,v64，操作者登录名快照) · `action_code`(IDX,v128，接口路径去 `/api/v1/` 前缀) · `request_path`(v256) · `request_method`(v8) · `request_body`(text，凭据字段脱敏为 `***`，上传与超限不采样) · `target_type`(IDX,v32，目标类型 user/role/menu/project/chapter/document/skill/tool/model/provider/prompt_profile/chat_session/notification) · `target_ulid`(IDX) · `resp_code`(IDX,v32) · `resp_message`(v512) · `http_status`(int) · `latency_ms`(bigint) · `ip_addr`(v64) · `user_agent_text`(v512)
+**audit_logs** — `audit_ulid`(PK) · `log_level_code`(IDX,v16，级别 `info`(2xx/3xx)/`warn`(4xx)/`error`(5xx)，由 HTTP 状态推导) · `trace_id`(IDX,v40，链路 ID，与响应包络 `trace_id` 同值) · `user_ulid`(IDX，操作者，未登录为空串) · `user_name`(IDX,v64，操作者登录名快照) · `action_code`(IDX,v128，接口路径去 `/api/v1/` 前缀) · `request_path`(v256) · `request_method`(v8) · `request_body`(text，凭据字段脱敏为 `***`，上传与超限不采样) · `target_type`(IDX,v32，目标类型 user/role/menu/project/chapter/document/prompt/tool/model/provider/chat_session/notification) · `target_ulid`(IDX) · `resp_code`(IDX,v32) · `resp_message`(v512) · `http_status`(int) · `latency_ms`(bigint) · `ip_addr`(v64) · `user_agent_text`(v512)
 
 写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`。中间件缓冲响应体前 8KB 解析包络（业务码与说明）后透传，普通响应不受影响。落库失败只告警，不阻断业务。`AuditRepo` 有 `Create`、`GetByULID`、`ListPage`，无删除路径；`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤，历史行缺级别时按 HTTP 状态补全。
 
@@ -169,13 +169,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 **chat_sessions** — `session_ulid`(PK) · `project_ulid`(IDX) · `user_ulid`(IDX) · `session_name`(v128，缺省取首条消息前 20 字)
 
-**chat_messages** — `message_ulid`(PK) · `session_ulid`(IDX) · `role_code`(v16，`user`/`assistant`/`system`) · `content_text`(text) · `reasoning_text`(text，完整思考过程) · `skill_code`(v32) · `tool_code_json`(text，本轮执行的工具编码 JSON 数组) · `ref_doc_json` / `ref_chapter_json` / `ref_message_json` / `ref_summary_json` / `ref_prompt_json`(text，各自的引用 ULID 数组) · `token_used_count`(int)
+**chat_messages** — `message_ulid`(PK) · `session_ulid`(IDX) · `role_code`(v16，`user`/`assistant`/`system`) · `content_text`(text) · `reasoning_text`(text，完整思考过程) · `prompt_code`(v32，命中的指令提示词编码) · `tool_code_json`(text，本轮执行的工具编码 JSON 数组) · `ref_doc_json` / `ref_chapter_json` / `ref_message_json` / `ref_summary_json` / `ref_prompt_json`(text，各自的引用 ULID 数组) · `token_used_count`(int)
 
-**skills** — `skill_ulid`(PK) · `skill_code`(IDX,v32，对话中以 `/code` 触发) · `skill_name`(v64) · `scope_code`(IDX,v16，`global`/`project`) · `project_ulid`(IDX，全局为空) · `category_code`(v16，`write`/`revise`/`outline`/`setting`/`review`/`other`) · `description_text`(v256) · `prompt_template`(text，`{{占位符}}`) · `variable_spec_json`(text，变量声明 JSON 数组) · `enabled_flag`(bool) · `builtin_flag`(bool，内置不可删) · `asset_hash_text`(v64，出厂指纹) · `customized_flag`(bool，作者是否改过，改过则代码升级不覆盖) · `sort_order`(int)
-
-**skill_references** — `ref_ulid`(PK) · `skill_ulid`(IDX) · `ref_name`(v128) · `ref_text`(text) · `keyword_list`(v256，命中关键词，逗号分隔) · `sort_order`(int)
-
-**prompt_profiles** — `prompt_profile_ulid`(PK) · `prompt_profile_code`(IDX,v32) · `prompt_profile_name`(v64) · `scope_code`(IDX,v16) · `project_ulid`(IDX) · `description_text`(v256) · `system_prompt_text`(text) · `enabled_flag`(bool) · `builtin_flag`(bool) · `asset_hash_text`(v64) · `customized_flag`(bool) · `sort_order`(int)
+**prompts** — `prompt_ulid`(PK) · `prompt_code`(IDX,v32，对话中以 `/code` 触发) · `prompt_name`(v64) · `prompt_kind_code`(IDX,v16，`system` 身份 / `command` 指令) · `scope_code`(IDX,v16，`global`/`project`) · `project_ulid`(IDX，全局为空) · `domain_code`(IDX,v32，内置提示词的流程域) · `category_code`(v16，`write`/`revise`/`outline`/`setting`/`review`/`other`) · `description_text`(v256) · `prompt_text`(text，可含 `{{占位符}}`) · `enabled_flag`(bool) · `builtin_flag`(bool，内置不可删) · `asset_hash_text`(v64，出厂指纹) · `customized_flag`(bool，作者是否改过，改过则代码升级不覆盖) · `sort_order`(int)
 
 **tools** — `tool_ulid`(PK) · `tool_code`(UQ,v32，对话中以 `#code` 触发) · `tool_name`(v64) · `tool_type_code`(IDX,v16，固定 `builtin`) · `description_text`(v256，模型可见的一句话说明) · `trigger_keywords`(v256，关键词自动触发，逗号分隔) · `param_schema_json`(text，参数声明 JSON 数组) · `enabled_flag`(bool) · `builtin_flag`(bool) · `asset_hash_text`(v64，出厂指纹) · `customized_flag`(bool) · `sort_order`(int)
 
@@ -227,9 +223,8 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `system:role:manage` | `PermRoleManage` | 角色管理 | `system:setting:manage` | `PermSettingManage` | 运行时配置 |
 | `system:menu:manage` | `PermMenuManage` | 菜单与权限登记 | `system:loginlog:read` | `PermLoginLogRead` | 登录日志 |
 | `system:perm:read` | `PermPermissionRead` | 权限目录 | `system:job:manage` | `PermJobManage` | 异步任务 |
-| `system:audit:read` | `PermAuditRead` | 审计日志 | `skill:manage` | `PermSkillManage` | 技能资产 |
+| `system:audit:read` | `PermAuditRead` | 审计日志 | `prompt:manage` | `PermPromptManage` | 提示词库 |
 | `system:model:manage` | `PermModelManage` | 模型供应商 | `tool:manage` | `PermToolManage` | 工具资产 |
-| | | | `prompt:manage` | `PermPromptManage` | 提示词档案 |
 
 ### 4.2 创作
 
@@ -262,9 +257,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 | `knowledge_documents.doc_type_code` | `txt` / `md` / `docx` / `pdf`（由扩展名白名单推导，其他拒绝上传） |
 | `knowledge_documents.doc_status_code` | `pending` / `indexing` / `indexed` / `failed` |
 | `chat_messages.role_code` | `user` / `assistant` / `system` |
-| `skills.scope_code` | `global` / `project` |
-| `skills.category_code` | `write` / `revise` / `outline` / `setting` / `review` / `other` |
-| `prompt_profiles.scope_code` | `global` / `project` |
+| `prompts.scope_code` | `global` / `project` |
+| `prompts.prompt_kind_code` | `system` / `command` |
+| `prompts.category_code` | `write` / `revise` / `outline` / `setting` / `review` / `other` |
 | `tools.tool_type_code` | `builtin` |
 
 文档索引状态机（`KnowledgeService` 与 `KnowledgeWorker`）：
@@ -380,8 +375,7 @@ ORDER BY score DESC LIMIT <topK>
 | --- | --- | --- | --- |
 | 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model` 且 `model_providers` 为空 | 告警，继续启动 |
 | 2 | `ModelProviderService.MigrateLegacyModels` 把 `model_providers.chat_model_name` 非空的行转成 `model_catalogs` 行 | `model_catalogs` 为空 | 告警，继续启动 |
-| 3 | `SkillService.SeedDefaults` 播种内置全局技能并按指纹升级、下线旧内置技能 | 按 `(global, "", skill_code)` 查行；不存在则插入；`customized_flag` 或指纹一致则跳过；否则覆盖正文并写新指纹 | `os.Exit(1)` |
-| 3.1 | `PromptProfileService.SeedDefaults` 播种内置全局提示词档案并按指纹升级 | 同上；已下线编码的内置档案直接删除 | `os.Exit(1)` |
+| 3 | `PromptService.SeedDefaults` 播种内置全局提示词（12 份身份 + 24 份指令）并按指纹升级、下线旧内置提示词 | 按 `(global, "", prompt_code)` 查行；不存在则插入；`customized_flag` 或指纹一致则跳过；否则覆盖正文并写新指纹 | `os.Exit(1)` |
 | 3.2 | `ToolService.SeedDefaults` 播种内置工具 | 按 `tool_code` 查缺补插 | `os.Exit(1)` |
 | 4 | `SettingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插；已存在时仅同步 `setting_desc` | `os.Exit(1)` |
 | 5 | `RoleService.SeedDefaults` 播种内置角色 | 按 `role_code` 查缺补插 | `os.Exit(1)` |
@@ -394,7 +388,7 @@ ORDER BY score DESC LIMIT <topK>
 | --- | --- |
 | 供应商 | 名称「默认模型网关」，`enabled_flag=true`，`last_test_status_code='untested'`，API Key 用 JWT 密钥派生材料做 AES-256-GCM 封存 |
 | 默认模型 | 取 `ai.chat_model`，`default_flag=true`，`model_label` 回填模型名；播种后授权给全部内置角色 |
-| 内置技能 | 12 个流程域 × 2 = 24 个（`ai.BuiltinSkills()`）；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`、`variable_spec_json='[]'`，`asset_hash_text` 为出厂指纹。启动时按指纹升级：已自改或指纹一致不覆盖，其余覆盖正文；清单之外的旧内置技能连带参考资料删除 |
+| 内置提示词 | 12 个流程域 × (1 身份 + 2 指令) = 36 条（`ai.BuiltinDomains()`）；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`，`asset_hash_text` 为出厂指纹。启动时按指纹升级：已自改或指纹一致不覆盖，其余覆盖正文；清单之外的旧内置提示词删除 |
 | 内置档案 | 12 份（`ai.BuiltinPromptProfiles()`），每个流程域一份：`adapt`、`architect`、`continuity`、`deai`、`draft`、`finalize`、`operation`、`pitch`、`publish`、`review`、`short`、`style`；全局、启用、`asset_hash_text` 为出厂指纹 |
 | 内置工具 | 6 个（`ToolService.SeedDefaults`）：`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`；全局、启用、带触发关键词与参数声明 |
 | 应用配置 | `chat_history_count=5`、`rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
@@ -440,7 +434,7 @@ ORDER BY score DESC LIMIT <topK>
 | `jobs` | `JobRepo` 只有 Create / Update / Get / List，任务留痕永久保留 |
 | `audit_logs`、`login_logs` | 只有 Create / ListPage，日志只增不删 |
 
-其余表为全局数据，与项目无归属关系：`users`、`roles`、`user_roles`、`menus`、`app_settings`、`skills`（全局行）、`tools`、`prompt_profiles`（全局行）、`model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants`、`model_usage_stats`、`notifications`（按用户而非项目清理）。
+其余表为全局数据，与项目无归属关系：`users`、`roles`、`user_roles`、`menus`、`app_settings`、`prompts`（全局行）、`tools`、`model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants`、`model_usage_stats`、`notifications`（按用户而非项目清理）。
 
 ### 7.3 跨存储写操作
 
@@ -452,7 +446,6 @@ ORDER BY score DESC LIMIT <topK>
 | 知识库删除 | MinIO 删原文 → Manticore 删行 → PG 事务 | MinIO 失败即中断；Manticore 失败只告警，索引残留 |
 | 索引同步 | PG 切片事务 → Manticore 先删后插 → 回写文档状态 | Manticore 失败只告警，keyword 通道降级 |
 | 项目删除的外部清理 | PG 事务提交后 → MinIO 删对象 → Manticore 删行 | 失败只告警，PG 一致性已保证 |
-| 技能删除 | 删参考资料 → 删技能行 | 两步非同一事务，中途失败会残留参考资料 |
 | 用户删除 | 删角色关联 → 删模型授权 → 删通知（失败只告警）→ 删用户行 | 通知清理失败会残留通知 |
 | 模型用量统计 | 内存缓冲累加 → 每 5s `Flush` 批量 upsert | 落库失败丢弃该批缓冲（只告警），统计可能少计 |
 
@@ -466,11 +459,11 @@ ORDER BY score DESC LIMIT <topK>
 | 无软删除 | 没有 `gorm.DeletedAt` 字段，删除均为物理 `DELETE` |
 | 无数据库级联 | 不存在 `ON DELETE CASCADE`，级联全部由服务层编排 |
 | 数据库唯一约束 6 处 | `users.user_name`、`users.user_email`、`roles.role_code`、`menus.menu_code`、`app_settings.setting_key`、`model_usage_stats.uk_mus_dim`（四列组合） |
-| 服务层唯一语义 | `menus.perm_code`（`CountByPermCode`）、`model_catalogs.default_flag`（`ClearDefaultModel` 后置位）、`skills` 的 `(scope_code, project_ulid, skill_code)`、`chapter_summaries` 的 `(project_ulid, chapter_ulid)`、`word_count_stats` 的 `(project_ulid, stat_date)`（均先查后写） |
+| 服务层唯一语义 | `menus.perm_code`（`CountByPermCode`）、`model_catalogs.default_flag`（`ClearDefaultModel` 后置位）、`prompts` 的 `(scope_code, project_ulid, prompt_code)`、`chapter_summaries` 的 `(project_ulid, chapter_ulid)`、`word_count_stats` 的 `(project_ulid, stat_date)`（均先查后写） |
 | 归属校验在服务层 | `mustOwnProject` / `mustOwnChapter` / `mustOwnDoc` 比对 `projects.user_ulid`，不是数据库约束 |
 | 跨表关联用 JOIN | 如 `RoleRepo.ListRolesByUserULID`、`KnowledgeRepo.GetChunksByULIDs`、`StatsRepo` 联 `projects` |
 | 分页 | `PageREQ.Normalize`：`page_num < 1` 归一为 1；`page_size` 缺省 20、超过 100 归一为 20 |
-| 排序约定 | 时间倒序用于日志/任务/通知/项目；`sort_order ASC, created_at ASC` 用于菜单/设定/技能/参考资料；`chapter_order ASC`、`chunk_index ASC`、`sort_order ASC, outline_ulid ASC` 用于章节/切片/大纲 |
+| 排序约定 | 时间倒序用于日志/任务/通知/项目；`sort_order ASC, created_at ASC` 用于菜单/设定/提示词；`chapter_order ASC`、`chunk_index ASC`、`sort_order ASC, outline_ulid ASC` 用于章节/切片/大纲 |
 | 聚合在 SQL 内 | `model_usage_stats` 的按日/按供应商/按模型聚合由 `ModelUsageRepo` 的 `GROUP BY` 完成，缺日由服务层补零；`word_count_stats` 的区间汇总由 `StatsRepo` 完成 |
 | 大文本不建索引 | `content_text`、`chunk_text`、`prompt_template`、`ref_text` 等 `text` 列不建索引，正文检索依赖 Manticore |
 | 排序号来源 | 章节取项目内 `MAX(chapter_order)+1`；卷在请求值 ≤ 0 时取项目内最大值 +1；大纲节点与场景在请求值为 0 时取同级最大值 +1 |
@@ -488,7 +481,7 @@ ORDER BY score DESC LIMIT <topK>
 
 | 数据 | 备份对象 | 恢复要点 |
 | --- | --- | --- |
-| PostgreSQL | 整库逻辑备份（如 `pg_dump`） | 恢复后启动服务，`AutoMigrate` 幂等补齐缺失的表、列与索引；播种逻辑补回内置角色、菜单、配置、技能与管理员 |
+| PostgreSQL | 整库逻辑备份（如 `pg_dump`） | 恢复后启动服务，`AutoMigrate` 幂等补齐缺失的表、列与索引；播种逻辑补回内置角色、菜单、配置、提示词与管理员 |
 | MinIO | 桶 `novelworkbench` | 对象键即文档 ULID，与 `knowledge_documents.object_key` 一一对应；缺对象时 `KnowledgeService.GetContent` 返回 `ERR_STORAGE`，索引任务读取原文失败后把文档置 `failed` |
 | Manticore | 无需备份 | 索引是投影；恢复 PG 后重启服务即可建表，`SHOW CREATE TABLE` 通过时不会自动回灌，需重建时可先 drop `nw_chunks` 再启动，或对每个文档调 `KnowledgeService.Reindex` 重投任务 |
 | Redis | 无需备份 | 只存令牌黑名单，丢失后已签发令牌在 JWT 有效期内仍可用（默认 168 小时） |

@@ -9,15 +9,13 @@
     listChatSessions
   } from '@/api/chat'
   import { getModelCapability, type NWModelCapabilityVo, type NWModelOptionVo } from '@/api/model'
-  import { listPromptProfiles } from '@/api/prompt'
-  import { listSkills } from '@/api/skill'
+  import { listPrompts } from '@/api/prompt'
   import { listTools, type NWToolVo } from '@/api/tool'
   import type {
     NWChapterBriefVo,
     NWChatSendReqVo,
     NWChatSessionVo,
-    NWPromptProfileVo,
-    NWSkillVo
+    NWPromptVo
   } from '@/api/contracts'
   import { useSSE } from '@/composables/useSSE'
   import { applyStreamEvent } from './chatStream'
@@ -50,9 +48,9 @@
   const selectedModelUlid = ref('')
   const attachChapter = ref(true)
   const historyLoading = ref(false)
-  const skillList = ref<NWSkillVo[]>([])
+  const commandPromptList = ref<NWPromptVo[]>([])
   const toolList = ref<NWToolVo[]>([])
-  const profileList = ref<NWPromptProfileVo[]>([])
+  const systemPromptList = ref<NWPromptVo[]>([])
   const messagesHost = ref<HTMLDivElement | null>(null)
 
   const modelOptions = computed<NWModelOptionVo[]>(() => capability.value?.option_list ?? [])
@@ -77,12 +75,17 @@
     }
   }
 
-  const loadSkills = async () => {
+  const loadPrompts = async () => {
     if (!props.projectUlid) return
     try {
-      skillList.value = await listSkills({ project_ulid: props.projectUlid, enabled_only: true })
+      const allList = await listPrompts({ project_ulid: props.projectUlid, enabled_only: true })
+      // 同编码项目版已覆盖全局版：弹层只该出现真正生效的那一条，否则同一句 /polish 有两个候选
+      const effectiveList = allList.filter((item) => !item.overridden_flag)
+      commandPromptList.value = effectiveList.filter((item) => item.prompt_kind_code === 'command')
+      systemPromptList.value = effectiveList.filter((item) => item.prompt_kind_code === 'system')
     } catch {
-      skillList.value = []
+      commandPromptList.value = []
+      systemPromptList.value = []
     }
   }
 
@@ -91,17 +94,6 @@
       toolList.value = await listTools({ enabled_only: true })
     } catch {
       toolList.value = []
-    }
-  }
-
-  const loadProfiles = async () => {
-    try {
-      profileList.value = await listPromptProfiles({
-        project_ulid: props.projectUlid,
-        enabled_only: true
-      })
-    } catch {
-      profileList.value = []
     }
   }
 

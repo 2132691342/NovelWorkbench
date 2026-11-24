@@ -208,6 +208,16 @@ func selectHistoryMessages(messages []domain.ChatMessageDO, refMessageULIDs []st
 	return selected
 }
 
+// chatMessageInput 消息序列装配输入（纯数据，便于单测）。
+type chatMessageInput struct {
+	SystemPromptText string                 // 身份提示词正文（空则用内置兜底）
+	StyleText        string                 // 项目文风约束
+	ContextText      string                 // 装配后的上下文文本（空则省略）
+	CommandText      string                 // 命中的指令提示词渲染文本（空则省略）
+	HistoryList      []domain.ChatMessageDO // 注入历史（旧→新）
+	UserText         string                 // 用户输入
+}
+
 // buildChatMessages 构造发往模型的消息序列（纯函数）：
 // 身份提示词（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史（原生角色）→ 用户输入（用户）。
 // 注入内容全部是系统级消息，用户输入始终是用户级消息，二者在消息列表里可区分。

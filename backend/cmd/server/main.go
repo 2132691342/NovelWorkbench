@@ -206,20 +206,16 @@ func main() {
 	knowledgeService := service.NewKnowledgeService(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
 		settingRepo, aiClient, providerService, manticoreClient, db, knowledgeConfig)
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, knowledgeRepo,
-		continuityRepo, settingRepo, skillService, promptProfileService, knowledgeService, toolService, providerService, aiClient, db,
+		continuityRepo, settingRepo, promptService, knowledgeService, toolService, providerService, aiClient, db,
 		service.ChatConfig{HistoryCount: cfg.AI.HistoryCount})
 
-	// 内置技能与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
+	// 内置资产与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
 	if err := toolService.SeedDefaults(ctx); err != nil {
 		pkg.SLogger().Errorw("内置工具播种失败", "error", err)
 		os.Exit(1)
 	}
-	if err := skillService.SeedDefaults(ctx); err != nil {
-		pkg.SLogger().Errorw("内置技能播种失败", "error", err)
-		os.Exit(1)
-	}
-	if err := promptProfileService.SeedDefaults(ctx); err != nil {
-		pkg.SLogger().Errorw("内置提示词档案播种失败", "error", err)
+	if err := promptService.SeedDefaults(ctx); err != nil {
+		pkg.SLogger().Errorw("内置提示词播种失败", "error", err)
 		os.Exit(1)
 	}
 	if err := settingService.SeedDefaults(ctx); err != nil {
@@ -314,32 +310,31 @@ func main() {
 			defer cancel()
 			return sqlDB.PingContext(pingCtx)
 		},
-		AuthAPI:          api.NewAuthAPI(authService),
-		ProjectAPI:       api.NewProjectAPI(projectService),
-		BootstrapAPI:     api.NewBootstrapAPI(bootstrapService),
-		VolumeAPI:        api.NewVolumeAPI(volumeService),
-		ChapterAPI:       api.NewChapterAPI(chapterService),
-		CharacterAPI:     api.NewCharacterAPI(characterService),
-		LoreAPI:          api.NewLoreAPI(loreService),
-		KnowledgeAPI:     api.NewKnowledgeAPI(knowledgeService),
-		OutlineAPI:       api.NewOutlineAPI(outlineService),
-		ContinuityAPI:    api.NewContinuityAPI(continuityService),
-		SkillAPI:         api.NewSkillAPI(skillService),
-		PromptProfileAPI: api.NewPromptProfileAPI(promptProfileService),
-		MenuAPI:          api.NewMenuAPI(menuService),
-		SettingAPI:       api.NewSettingAPI(settingService),
-		StatsAPI:         api.NewStatsAPI(statsService),
-		ChatAPI:          api.NewChatAPI(chatService),
-		ToolAPI:          api.NewToolAPI(toolService),
-		UserAdminAPI:     api.NewUserAdminAPI(userAdminService),
-		RoleAPI:          api.NewRoleAPI(roleService),
-		AuditAPI:         api.NewAuditAPI(auditService),
-		ProviderAPI:      api.NewModelProviderAPI(providerService),
-		UsageAPI:         api.NewModelUsageAPI(usageService),
-		StatusAPI:        api.NewSystemStatusAPI(statusService),
-		NotifyAPI:        api.NewNotificationAPI(notificationService),
-		LoginLogAPI:      api.NewLoginLogAPI(loginLogService),
-		JobAPI:           api.NewJobAPI(jobService),
+		AuthAPI:       api.NewAuthAPI(authService),
+		ProjectAPI:    api.NewProjectAPI(projectService),
+		BootstrapAPI:  api.NewBootstrapAPI(bootstrapService),
+		VolumeAPI:     api.NewVolumeAPI(volumeService),
+		ChapterAPI:    api.NewChapterAPI(chapterService),
+		CharacterAPI:  api.NewCharacterAPI(characterService),
+		LoreAPI:       api.NewLoreAPI(loreService),
+		KnowledgeAPI:  api.NewKnowledgeAPI(knowledgeService),
+		OutlineAPI:    api.NewOutlineAPI(outlineService),
+		ContinuityAPI: api.NewContinuityAPI(continuityService),
+		PromptAPI:     api.NewPromptAPI(promptService),
+		MenuAPI:       api.NewMenuAPI(menuService),
+		SettingAPI:    api.NewSettingAPI(settingService),
+		StatsAPI:      api.NewStatsAPI(statsService),
+		ChatAPI:       api.NewChatAPI(chatService),
+		ToolAPI:       api.NewToolAPI(toolService),
+		UserAdminAPI:  api.NewUserAdminAPI(userAdminService),
+		RoleAPI:       api.NewRoleAPI(roleService),
+		AuditAPI:      api.NewAuditAPI(auditService),
+		ProviderAPI:   api.NewModelProviderAPI(providerService),
+		UsageAPI:      api.NewModelUsageAPI(usageService),
+		StatusAPI:     api.NewSystemStatusAPI(statusService),
+		NotifyAPI:     api.NewNotificationAPI(notificationService),
+		LoginLogAPI:   api.NewLoginLogAPI(loginLogService),
+		JobAPI:        api.NewJobAPI(jobService),
 	})
 
 	server := &http.Server{

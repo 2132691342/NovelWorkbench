@@ -3,7 +3,7 @@
 本文逐个说明 NovelWorkbench 业务模块的职责、数据结构、实现路径、边界与设计权衡。
 每个模块固定两段：**职责与实现**（做什么、落在哪些表上、由哪些文件实现、关键规则是什么）与**边界与权衡**（不做什么、失败如何处理、为什么这样设计、代价是什么）；接口字段见 [api.md](api.md)，表结构见 [database.md](database.md)，AI 细节见 [ai.md](ai.md)，模块地图见 [architecture.md](architecture.md)。
 
-后端在 `backend/internal/api/router.go` 内注册 119 条 GET/POST 路由（另加 `/health`、`/ready` 两个探针）、35 张 AutoMigrate 表（`backend/cmd/server/main.go`）、24 个内置技能（`backend/internal/ai/domain_<域>.go`，12 个流程域每域两个）、12 份内置提示词档案与 6 个内置工具。
+后端在 `backend/internal/api/router.go` 内注册 112 条 GET/POST 路由（另加 `/health`、`/ready` 两个探针）、33 张 AutoMigrate 表（`backend/cmd/server/main.go`）、24 份内置指令提示词与 12 份内置身份提示词（`backend/internal/ai/domain_<域>.go`，12 个流程域每域两指令一身份）与 6 个内置工具。
 
 ## 1. 认证与会话
 

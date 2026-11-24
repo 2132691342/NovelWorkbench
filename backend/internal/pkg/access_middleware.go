@@ -61,19 +61,19 @@ type AuditRecorder interface {
 
 // auditTargetKeys 审计目标提取白名单（body 键 → 目标类型）。
 var auditTargetKeys = map[string]string{
-	"user_ulid":         "user",
-	"role_ulid":         "role",
-	"menu_ulid":         "menu",
-	"project_ulid":      "project",
-	"chapter_ulid":      "chapter",
-	"doc_ulid":          "document",
-	"skill_ulid":        "skill",
-	"tool_ulid":         "tool",
-	"model_ulid":        "model",
-	"provider_ulid":     "provider",
-	"profile_ulid":      "prompt_profile",
-	"session_ulid":      "chat_session",
-	"notification_ulid": "notification",
+	"user_ulid":          "user",
+	"role_ulid":          "role",
+	"menu_ulid":          "menu",
+	"project_ulid":       "project",
+	"chapter_ulid":       "chapter",
+	"doc_ulid":           "document",
+	"prompt_ulid":        "prompt",
+	"tool_ulid":          "tool",
+	"model_ulid":         "model",
+	"provider_ulid":      "provider",
+	"system_prompt_code": "prompt",
+	"session_ulid":       "chat_session",
+	"notification_ulid":  "notification",
 }
 
 // auditSecretKeys 需要脱敏的请求体字段（凭据类，落库前替换为掩码）。
