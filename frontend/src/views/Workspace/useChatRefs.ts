@@ -1,12 +1,13 @@
-// @ 引用数据源：按页签拉取并缓存可选引用条目，「全部」页签跨来源聚合检索。
+// @ 引用数据源：只认两类来源——素材库（角色/设定/章节/摘要/文档）与历史会话。
+// 「全部」页签跨来源聚合检索，选中时按条目自身来源写回对应列表。
 import { computed, ref, type Ref } from 'vue'
+import { listCharacters, type NWCharacterVo } from '@/api/character'
+import { listLore, type NWLoreVo } from '@/api/lore'
 import { listSummaries, type NWChapterSummaryVo } from '@/api/continuity'
 import { listKnowledgeDocuments } from '@/api/knowledge'
-import type { NWChapterBriefVo, NWKnowledgeDocumentVo, NWPromptVo } from '@/api/contracts'
-import type { ChatDisplayMessage, ChatRefItem, ChatRefTabCode } from './types'
-
-/** @ 候选里的历史消息上限（长会话只取最近若干条，避免弹层卡顿） */
-const AT_MESSAGE_LIMIT = 40
+import { listChatSessions } from '@/api/chat'
+import type { NWChapterBriefVo, NWKnowledgeDocumentVo, NWChatSessionVo } from '@/api/contracts'
+import type { ChatRefItem, ChatRefTabCode } from './types'
 
 /** 聚合页签最多展示条数（够翻即可，再多靠关键词收窄） */
 const AT_ALL_LIMIT = 30
@@ -14,18 +15,18 @@ const AT_ALL_LIMIT = 30
 export interface UseChatRefsOptions {
   projectUlid: () => string
   chapterList: () => NWChapterBriefVo[]
-  messageList: () => ChatDisplayMessage[]
-  promptList: () => NWPromptVo[]
+  sessionUlid: () => string
 }
 
 /** 页签展示顺序（「全部」置首，作为默认检索入口） */
 export const REF_TAB_LIST: Array<{ code: ChatRefTabCode; label: string }> = [
   { code: 'all', label: '全部' },
-  { code: 'doc', label: '文档' },
+  { code: 'character', label: '角色' },
+  { code: 'lore', label: '设定' },
   { code: 'chapter', label: '章节' },
   { code: 'summary', label: '摘要' },
-  { code: 'prompt', label: '提示词' },
-  { code: 'message', label: '消息' }
+  { code: 'doc', label: '文档' },
+  { code: 'session', label: '会话' }
 ]
 
 /** 单条候选的匹配分：名称前缀命中 3、包含命中 2、说明包含命中 1，未命中 0 */
@@ -47,35 +48,46 @@ export function rankRefItems(candidateList: ChatRefItem[], keywordText: string):
   return scored.map((entry) => entry.item)
 }
 
-/** @ 引用状态：六类页签的候选、选中态与载荷装配（全部/文档/章节/摘要/提示词/历史消息） */
+/** @ 引用状态：七类页签的候选、选中态与载荷装配 */
 export const useChatRefs = (options: UseChatRefsOptions) => {
-  const refDocList = ref<ChatRefItem[]>([])
+  const refCharacterList = ref<ChatRefItem[]>([])
+  const refLoreList = ref<ChatRefItem[]>([])
   const refChapterList = ref<ChatRefItem[]>([])
   const refSummaryList = ref<ChatRefItem[]>([])
-  const refPromptList = ref<ChatRefItem[]>([])
-  const refMessageList = ref<ChatRefItem[]>([])
+  const refDocList = ref<ChatRefItem[]>([])
+  const refSessionList = ref<ChatRefItem[]>([])
+  const characterSourceList = ref<NWCharacterVo[]>([])
+  const loreSourceList = ref<NWLoreVo[]>([])
   const knowledgeList = ref<NWKnowledgeDocumentVo[]>([])
   const summaryList = ref<NWChapterSummaryVo[]>([])
+  const sessionSourceList = ref<NWChatSessionVo[]>([])
   const refPickerVisible = ref(false)
   const refPickerPinned = ref(false)
   const refPickerTab = ref<ChatRefTabCode>('all')
   const refPickerFilter = ref('')
 
   const refListOf = (tabCode: ChatRefTabCode): Ref<ChatRefItem[]> => {
+    if (tabCode === 'character') return refCharacterList
+    if (tabCode === 'lore') return refLoreList
     if (tabCode === 'chapter') return refChapterList
     if (tabCode === 'summary') return refSummaryList
-    if (tabCode === 'prompt') return refPromptList
-    if (tabCode === 'message') return refMessageList
+    if (tabCode === 'session') return refSessionList
     return refDocList
   }
 
   /** 各来源的完整候选（未过滤），聚合页签据此合并 */
   const sourceCandidateMap = computed<Record<Exclude<ChatRefTabCode, 'all'>, ChatRefItem[]>>(() => ({
-    doc: knowledgeList.value.map((doc) => ({
-      ref_ulid: doc.doc_ulid,
-      ref_name: doc.doc_name,
-      ref_desc: doc.doc_type_code,
-      ref_tab_code: 'doc' as const
+    character: characterSourceList.value.map((character) => ({
+      ref_ulid: character.character_ulid,
+      ref_name: character.character_name,
+      ref_desc: character.personality_text || character.role_type_code,
+      ref_tab_code: 'character' as const
+    })),
+    lore: loreSourceList.value.map((lore) => ({
+      ref_ulid: lore.lore_ulid,
+      ref_name: lore.lore_name,
+      ref_desc: lore.content_text.replace(/\s+/g, ' ').slice(0, 40),
+      ref_tab_code: 'lore' as const
     })),
     chapter: options.chapterList().map((chapter) => ({
       ref_ulid: chapter.chapter_ulid,
@@ -95,30 +107,27 @@ export const useChatRefs = (options: UseChatRefsOptions) => {
         ref_desc: summary.summary_text.replace(/\s+/g, ' ').slice(0, 40),
         ref_tab_code: 'summary' as const
       })),
-    prompt: options.promptList().map((prompt) => ({
-      ref_ulid: prompt.prompt_ulid,
-      ref_name: prompt.prompt_name,
-      ref_desc: prompt.description_text,
-      ref_tab_code: 'prompt' as const
+    doc: knowledgeList.value.map((doc) => ({
+      ref_ulid: doc.doc_ulid,
+      ref_name: doc.doc_name,
+      ref_desc: doc.doc_type_code,
+      ref_tab_code: 'doc' as const
     })),
-    message: options
-      .messageList()
-      .filter((message) => message.content_text.length > 0 && !message.streaming_flag)
-      .slice(-AT_MESSAGE_LIMIT)
-      .map((message) => ({
-        ref_ulid: message.message_ulid,
-        ref_name: message.content_text.replace(/\s+/g, ' ').slice(0, 40),
-        ref_desc: message.role_code === 'user' ? '我' : 'AI',
-        ref_tab_code: 'message' as const
+    session: sessionSourceList.value
+      .filter((session) => session.session_ulid !== options.sessionUlid())
+      .map((session) => ({
+        ref_ulid: session.session_ulid,
+        ref_name: session.session_name || '未命名会话',
+        ref_desc: `${session.message_count} 条消息 · 注入时压缩`,
+        ref_tab_code: 'session' as const
       }))
-      .filter((item) => item.ref_ulid.length > 0)
   }))
 
   /** 当前页签的候选：按关键词过滤，「全部」跨来源聚合后截断 */
   const refCandidateList = computed<ChatRefItem[]>(() => {
     if (refPickerTab.value === 'all') {
       const merged: ChatRefItem[] = []
-      for (const tabCode of ['chapter', 'doc', 'summary', 'prompt', 'message'] as const) {
+      for (const tabCode of ['character', 'lore', 'chapter', 'summary', 'doc', 'session'] as const) {
         merged.push(...sourceCandidateMap.value[tabCode])
       }
       return rankRefItems(merged, refPickerFilter.value).slice(0, AT_ALL_LIMIT)
@@ -129,10 +138,42 @@ export const useChatRefs = (options: UseChatRefsOptions) => {
   /** 当前页签已选中的 ULID（「全部」页签按条目自身来源判断） */
   const refSelectedUlidList = computed(() =>
     refPickerTab.value === 'all'
-      ? [...refDocList.value, ...refChapterList.value, ...refSummaryList.value,
-        ...refPromptList.value, ...refMessageList.value].map((item) => item.ref_ulid)
+      ? [
+          ...refCharacterList.value,
+          ...refLoreList.value,
+          ...refChapterList.value,
+          ...refSummaryList.value,
+          ...refDocList.value,
+          ...refSessionList.value
+        ].map((item) => item.ref_ulid)
       : refListOf(refPickerTab.value).value.map((item) => item.ref_ulid)
   )
+
+  const loadCharacterList = async () => {
+    if (!options.projectUlid()) {
+      characterSourceList.value = []
+      return
+    }
+    try {
+      characterSourceList.value = await listCharacters({ project_ulid: options.projectUlid() })
+    } catch {
+      characterSourceList.value = []
+    }
+  }
+
+  const loadLoreList = async () => {
+    if (!options.projectUlid()) {
+      loreSourceList.value = []
+      return
+    }
+    try {
+      const allList = await listLore({ project_ulid: options.projectUlid() })
+      // 创作笔记严禁进入 AI 上下文，连候选都不该出现
+      loreSourceList.value = allList.filter((lore) => lore.lore_type_code !== 'note')
+    } catch {
+      loreSourceList.value = []
+    }
+  }
 
   const loadSummaryList = async () => {
     if (!options.projectUlid() || summaryList.value.length > 0) return
@@ -160,11 +201,26 @@ export const useChatRefs = (options: UseChatRefsOptions) => {
     }
   }
 
-  /** 切页签：摘要需要额外拉取，「全部」同时把摘要备好 */
+  const loadSessionSourceList = async () => {
+    if (!options.projectUlid()) {
+      sessionSourceList.value = []
+      return
+    }
+    try {
+      sessionSourceList.value = await listChatSessions(options.projectUlid())
+    } catch {
+      sessionSourceList.value = []
+    }
+  }
+
+  /** 切页签：只拉当前页签需要的数据，「全部」把六类都备好 */
   const switchTab = (tabCode: ChatRefTabCode) => {
     refPickerTab.value = tabCode
+    if (tabCode === 'character' || tabCode === 'all') void loadCharacterList()
+    if (tabCode === 'lore' || tabCode === 'all') void loadLoreList()
     if (tabCode === 'summary' || tabCode === 'all') void loadSummaryList()
     if (tabCode === 'doc' || tabCode === 'all') void loadKnowledgeList()
+    if (tabCode === 'session' || tabCode === 'all') void loadSessionSourceList()
   }
 
   const closePicker = () => {
@@ -180,8 +236,11 @@ export const useChatRefs = (options: UseChatRefsOptions) => {
     refPickerFilter.value = ''
     refPickerPinned.value = true
     refPickerVisible.value = true
+    void loadCharacterList()
+    void loadLoreList()
     void loadKnowledgeList()
     void loadSummaryList()
+    void loadSessionSourceList()
   }
 
   /** 选中/取消：按条目自身来源写回对应列表，聚合页签下也能正确落位 */
@@ -198,19 +257,21 @@ export const useChatRefs = (options: UseChatRefsOptions) => {
   }
 
   const clearRefs = () => {
-    refDocList.value = []
+    refCharacterList.value = []
+    refLoreList.value = []
     refChapterList.value = []
     refSummaryList.value = []
-    refPromptList.value = []
-    refMessageList.value = []
+    refDocList.value = []
+    refSessionList.value = []
   }
 
   const toRefPayload = () => ({
-    ref_doc_ulid_list: refDocList.value.map((item) => item.ref_ulid),
+    ref_character_ulid_list: refCharacterList.value.map((item) => item.ref_ulid),
+    ref_lore_ulid_list: refLoreList.value.map((item) => item.ref_ulid),
     ref_chapter_ulid_list: refChapterList.value.map((item) => item.ref_ulid),
     ref_summary_ulid_list: refSummaryList.value.map((item) => item.ref_ulid),
-    ref_prompt_ulid_list: refPromptList.value.map((item) => item.ref_ulid),
-    ref_message_ulid_list: refMessageList.value.map((item) => item.ref_ulid)
+    ref_doc_ulid_list: refDocList.value.map((item) => item.ref_ulid),
+    ref_session_ulid_list: refSessionList.value.map((item) => item.ref_ulid)
   })
 
   const pushChapterRef = (chapterUlid: string, refName: string, refDesc: string) => {
@@ -224,26 +285,25 @@ export const useChatRefs = (options: UseChatRefsOptions) => {
   }
 
   return {
-    refDocList,
+    refCharacterList,
+    refLoreList,
     refChapterList,
     refSummaryList,
-    refPromptList,
-    refMessageList,
+    refDocList,
+    refSessionList,
     refPickerVisible,
     refPickerTab,
     refPickerFilter,
     refPickerPinned,
     refCandidateList,
     refSelectedUlidList,
-    loadKnowledgeList,
-    loadSummaryList,
-    switchTab,
     togglePicker,
     closePicker,
     toggleRefItem,
     removeRefItem,
     clearRefs,
     toRefPayload,
-    pushChapterRef
+    pushChapterRef,
+    switchTab
   }
 }

@@ -1,8 +1,8 @@
-<!-- 对话输入区：/ 唤起斜杠命令（本地动作 + 指令提示词）、# 唤起工具、@ 引用与身份提示词选择。 -->
+<!-- 对话输入区：/ 唤起斜杠命令（本地动作 + 指令提示词），@ 引用素材库与历史会话。
+     # 工具钩子已移除：工具由模型自行决定是否调用，界面上不再提供手动点名入口。 -->
 <script setup lang="ts">
   import { computed, nextTick, ref, watch } from 'vue'
   import type { NWPromptVo } from '@/api/contracts'
-  import type { NWToolVo } from '@/api/tool'
   import type { ChatCommandOption, ChatRefItem, ChatSendPayload } from './types'
   import { useChatRefs, REF_TAB_LIST } from './useChatRefs'
   import ComposerPopup from './ComposerPopup.vue'
@@ -15,14 +15,12 @@
     parseLeadingSlashToken
   } from './composerCommands'
   import type { NWChapterBriefVo } from '@/api/contracts'
-  import type { ChatDisplayMessage } from './types'
 
   const props = defineProps<{
     projectUlid: string
+    sessionUlid: string
     chapterList: NWChapterBriefVo[]
-    messageList: ChatDisplayMessage[]
     promptList: NWPromptVo[]
-    toolList: NWToolVo[]
     systemPromptList: NWPromptVo[]
     streaming: boolean
     canSend: boolean
@@ -35,16 +33,12 @@
     action: [actionCode: string]
   }>()
 
-  /** 行内命令触发符：/ 斜杠（动作 + 提示词）、# 工具（两者都是单选列表，共用一个弹层） */
-  type CommandKind = 'slash' | 'hash'
-
   const inputText = ref('')
   const promptCode = ref('')
-  const toolCodeList = ref<string[]>([])
   const historyCount = ref(0)
   const systemPromptCode = ref('')
   const inputRef = ref<HTMLTextAreaElement | null>(null)
-  const commandKind = ref<CommandKind | ''>('')
+  const commandVisible = ref(false)
   const commandFilter = ref('')
   const commandActiveIndex = ref(0)
   const refActiveIndex = ref(0)
@@ -52,19 +46,18 @@
   const atTokenActive = ref(false)
 
   const {
-    refDocList,
+    refCharacterList,
+    refLoreList,
     refChapterList,
     refSummaryList,
-    refPromptList,
-    refMessageList,
+    refDocList,
+    refSessionList,
     refPickerVisible,
     refPickerTab,
     refPickerFilter,
     refPickerPinned,
     refCandidateList,
     refSelectedUlidList,
-    loadKnowledgeList,
-    loadSummaryList,
     switchTab,
     togglePicker,
     closePicker,
@@ -76,8 +69,7 @@
   } = useChatRefs({
     projectUlid: () => props.projectUlid,
     chapterList: () => props.chapterList,
-    messageList: () => props.messageList,
-    promptList: () => props.systemPromptList
+    sessionUlid: () => props.sessionUlid
   })
 
   /** 斜杠候选：本地动作在前、指令提示词在后，同一弹层里按来源分组 */
@@ -107,45 +99,21 @@
     return [...actionOptions, ...promptOptions]
   })
 
-  const hashOptionList = computed<ChatCommandOption[]>(() => {
-    const filterText = commandFilter.value.toLowerCase()
-    return props.toolList
-      .filter(
-        (tool) =>
-          tool.tool_code.toLowerCase().includes(filterText) ||
-          tool.tool_name.toLowerCase().includes(filterText)
-      )
-      .map((tool) => ({
-        code: tool.tool_code,
-        title: tool.tool_name,
-        desc: tool.description_text,
-        active: toolCodeList.value.includes(tool.tool_code),
-        source_code: 'tool' as const,
-        icon: ''
-      }))
-  })
-
-  const commandOptionList = computed<ChatCommandOption[]>(() => {
-    if (commandKind.value === 'slash') return slashOptionList.value
-    if (commandKind.value === 'hash') return hashOptionList.value
-    return []
-  })
-
   const chipList = computed(() => [
-    ...refDocList.value.map((item) => ({ tab: 'doc' as const, label: '文档', ...item })),
+    ...refCharacterList.value.map((item) => ({ tab: 'character' as const, label: '角色', ...item })),
+    ...refLoreList.value.map((item) => ({ tab: 'lore' as const, label: '设定', ...item })),
     ...refChapterList.value.map((item) => ({ tab: 'chapter' as const, label: '章节', ...item })),
     ...refSummaryList.value.map((item) => ({ tab: 'summary' as const, label: '摘要', ...item })),
-    ...refPromptList.value.map((item) => ({ tab: 'prompt' as const, label: '提示词', ...item })),
-    ...refMessageList.value.map((item) => ({ tab: 'message' as const, label: '消息', ...item }))
+    ...refDocList.value.map((item) => ({ tab: 'doc' as const, label: '文档', ...item })),
+    ...refSessionList.value.map((item) => ({ tab: 'session' as const, label: '会话', ...item }))
   ])
 
   const refTabs = REF_TAB_LIST
 
   const SLASH_TOKEN_REGEXP = /(^|\s)\/([^\s]*)$/
-  const HASH_TOKEN_REGEXP = /(^|\s)#([^\s]*)$/
   const AT_TOKEN_REGEXP = /(^|\s)@([^\s]*)$/
 
-  /** 删除光标前的 /xxx、#xxx 或 @xxx 触发词 */
+  /** 删除光标前的 /xxx 或 @xxx 触发词 */
   const removeTriggerToken = (tokenRegexp: RegExp) => {
     const cursorPos = inputRef.value?.selectionStart ?? inputText.value.length
     const beforeCursor = inputText.value.slice(0, cursorPos)
@@ -157,15 +125,11 @@
     const beforeCursor = inputText.value.slice(0, cursorPos)
 
     const slashMatch = SLASH_TOKEN_REGEXP.exec(beforeCursor)
-    const hashMatch = HASH_TOKEN_REGEXP.exec(beforeCursor)
     if (slashMatch) {
-      commandKind.value = 'slash'
+      commandVisible.value = true
       commandFilter.value = slashMatch[2]
-    } else if (hashMatch) {
-      commandKind.value = 'hash'
-      commandFilter.value = hashMatch[2]
     } else {
-      commandKind.value = ''
+      commandVisible.value = false
       commandFilter.value = ''
     }
     commandActiveIndex.value = 0
@@ -176,8 +140,7 @@
       refPickerVisible.value = true
       atTokenActive.value = true
       refActiveIndex.value = 0
-      void loadKnowledgeList()
-      void loadSummaryList()
+      switchTab(refPickerTab.value)
     } else {
       // 触发词消失即收起：否则弹层会一直盖在输入框上方，键盘导航还会抢走方向键
       atTokenActive.value = false
@@ -186,23 +149,18 @@
     }
   }
 
-  /** 选中斜杠/井号候选项：动作立即执行，提示词记为徽标，工具追加进列表 */
+  /** 选中斜杠候选项：动作立即执行，提示词记为徽标 */
   const selectCommand = (option: ChatCommandOption) => {
-    const triggerRegexp = commandKind.value === 'slash' ? SLASH_TOKEN_REGEXP : HASH_TOKEN_REGEXP
-    commandKind.value = ''
+    commandVisible.value = false
     commandFilter.value = ''
     if (option.source_code === 'action') {
-      removeTriggerToken(triggerRegexp)
+      removeTriggerToken(SLASH_TOKEN_REGEXP)
       runAction(option.code)
       inputRef.value?.focus()
       return
     }
-    if (option.source_code === 'prompt') {
-      promptCode.value = option.code
-    } else if (!toolCodeList.value.includes(option.code)) {
-      toolCodeList.value.push(option.code)
-    }
-    removeTriggerToken(triggerRegexp)
+    promptCode.value = option.code
+    removeTriggerToken(SLASH_TOKEN_REGEXP)
     inputRef.value?.focus()
   }
 
@@ -219,10 +177,6 @@
     emit('action', actionCode)
   }
 
-  const removeToolCode = (toolCode: string) => {
-    toolCodeList.value = toolCodeList.value.filter((code) => code !== toolCode)
-  }
-
   const selectRef = (item: ChatRefItem) => {
     toggleRefItem(item)
     removeTriggerToken(AT_TOKEN_REGEXP)
@@ -236,8 +190,7 @@
   const clearComposer = () => {
     inputText.value = ''
     promptCode.value = ''
-    toolCodeList.value = []
-    commandKind.value = ''
+    commandVisible.value = false
     commandFilter.value = ''
     atTokenActive.value = false
     clearRefs()
@@ -257,7 +210,7 @@
     emit('send', {
       content_text: contentText,
       prompt_code: promptCode.value,
-      tool_code_list: [...toolCodeList.value],
+      tool_code_list: [],
       ...toRefPayload(),
       history_count: historyCount.value,
       system_prompt_code: systemPromptCode.value
@@ -265,8 +218,7 @@
     // 发送后只清正文与引用，身份提示词、历史档位与模型是会话级偏好，保持不变
     inputText.value = ''
     promptCode.value = ''
-    toolCodeList.value = []
-    commandKind.value = ''
+    commandVisible.value = false
     clearRefs()
     closePicker()
   }
@@ -306,8 +258,8 @@
   }
 
   const handleKeydown = (event: KeyboardEvent) => {
-    if (commandKind.value && commandOptionList.value.length > 0) {
-      const optionCount = commandOptionList.value.length
+    if (commandVisible.value && slashOptionList.value.length > 0) {
+      const optionCount = slashOptionList.value.length
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         commandActiveIndex.value = (commandActiveIndex.value + 1) % optionCount
@@ -320,13 +272,13 @@
       }
       if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault()
-        selectCommand(commandOptionList.value[commandActiveIndex.value])
+        selectCommand(slashOptionList.value[commandActiveIndex.value])
         return
       }
     }
     if (handleRefKeydown(event)) return
     if (event.key === 'Escape') {
-      commandKind.value = ''
+      commandVisible.value = false
       closePicker()
       return
     }
@@ -335,12 +287,8 @@
       submit()
       return
     }
-    if (event.key === 'Backspace' && inputText.value.length === 0) {
-      if (promptCode.value) {
-        promptCode.value = ''
-      } else if (toolCodeList.value.length > 0) {
-        toolCodeList.value.pop()
-      }
+    if (event.key === 'Backspace' && inputText.value.length === 0 && promptCode.value) {
+      promptCode.value = ''
     }
   }
 
@@ -361,7 +309,7 @@
     () => props.projectUlid,
     () => {
       systemPromptCode.value = ''
-      toolCodeList.value = []
+      clearRefs()
     }
   )
 
@@ -386,18 +334,8 @@
 
 <template>
   <div class="composer">
-    <div v-if="promptCode || toolCodeList.length > 0 || chipList.length > 0" class="composer__chips">
+    <div v-if="promptCode || chipList.length > 0" class="composer__chips">
       <ElTag v-if="promptCode" closable size="small" @close="promptCode = ''">/{{ promptCode }}</ElTag>
-      <ElTag
-        v-for="toolCode in toolCodeList"
-        :key="`tool-${toolCode}`"
-        closable
-        size="small"
-        type="warning"
-        @close="removeToolCode(toolCode)"
-      >
-        #{{ toolCode }}
-      </ElTag>
       <ElTag
         v-for="chip in chipList"
         :key="`${chip.tab}-${chip.ref_ulid}`"
@@ -412,8 +350,8 @@
 
     <div class="composer__input-wrap">
       <ComposerPopup
-        :command-kind="commandKind"
-        :command-option-list="commandOptionList"
+        :command-visible="commandVisible"
+        :command-option-list="slashOptionList"
         :command-active-index="commandActiveIndex"
         :ref-picker-visible="refPickerVisible"
         :ref-tabs="refTabs"
@@ -434,7 +372,7 @@
         class="composer__textarea"
         rows="3"
         :disabled="streaming"
-        placeholder="写下你的要求；/ 命令与提示词，# 工具，@ 引用素材"
+        placeholder="写下你的要求；/ 命令与提示词，@ 引用素材或历史会话"
         @input="handleInput"
         @keydown="handleKeydown"
       />

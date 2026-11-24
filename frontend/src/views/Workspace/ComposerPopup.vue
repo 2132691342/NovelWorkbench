@@ -1,9 +1,9 @@
-<!-- 输入区弹层：斜杠（本地动作 + 指令提示词）、井号工具与 @ 引用选择器，同一定位层互斥展示。 -->
+<!-- 输入区弹层：斜杠命令（本地动作 + 指令提示词）与 @ 引用选择器，同一定位层互斥展示。 -->
 <script setup lang="ts">
   import type { ChatCommandOption, ChatRefItem, ChatRefTabCode } from './types'
 
   defineProps<{
-    commandKind: 'slash' | 'hash' | ''
+    commandVisible: boolean
     commandOptionList: ChatCommandOption[]
     commandActiveIndex: number
     refPickerVisible: boolean
@@ -23,17 +23,13 @@
   }>()
 
   /** 命令来源标签：让用户一眼看出哪条会耗模型、哪条只是本地开关 */
-  const sourceLabel = (option: ChatCommandOption): string => {
-    if (option.source_code === 'action') return '本地'
-    if (option.source_code === 'tool') return '工具'
-    return '注入'
-  }
+  const sourceLabel = (option: ChatCommandOption): string =>
+    option.source_code === 'action' ? '本地' : '注入'
 
-  /** 来源标题：动作、提示词与工具混排时只在切换处插一条分隔 */
+  /** 来源标题：动作与提示词混排时只在切换处插一条分隔 */
   const SOURCE_TITLE_MAP: Record<ChatCommandOption['source_code'], string> = {
     action: '本地动作（立即执行，不消耗模型）',
-    prompt: '指令提示词（以系统级消息注入本轮）',
-    tool: '工具（服务端确定性执行，不消耗模型）'
+    prompt: '指令提示词（以系统级消息注入本轮）'
   }
 
   const groupTitle = (index: number, optionList: ChatCommandOption[]): string => {
@@ -44,19 +40,18 @@
   /** 引用来源标签：聚合页签下必须标出来源，否则同名条目无法区分 */
   const REF_SOURCE_LABEL_MAP: Record<ChatRefTabCode, string> = {
     all: '全部',
-    doc: '文档',
+    character: '角色',
+    lore: '设定',
     chapter: '章节',
     summary: '摘要',
-    prompt: '提示词',
-    message: '消息'
+    doc: '文档',
+    session: '会话'
   }
 </script>
 
 <template>
-  <div v-if="commandKind" class="composer__popup">
-    <p class="composer__popup-title">
-      {{ commandKind === 'slash' ? '↑↓ 选择，Enter/Tab 确认，Esc 关闭' : '↑↓ 选择工具，可多选' }}
-    </p>
+  <div v-if="commandVisible" class="composer__popup">
+    <p class="composer__popup-title">↑↓ 选择，Enter/Tab 确认，Esc 关闭</p>
     <template v-for="(option, index) in commandOptionList" :key="option.source_code + option.code">
       <p v-if="groupTitle(index, commandOptionList)" class="composer__group">
         {{ groupTitle(index, commandOptionList) }}
@@ -71,7 +66,7 @@
         @click="emit('select-command', option)"
       >
         <span class="composer__item-head">
-          <strong>{{ commandKind === 'slash' ? '/' : '#' }}{{ option.code }}</strong>
+          <strong>/{{ option.code }}</strong>
           <span class="composer__badge" :class="`is-${option.source_code}`">
             {{ sourceLabel(option) }}
           </span>
@@ -80,9 +75,7 @@
         <small>{{ option.desc }}</small>
       </button>
     </template>
-    <p v-if="commandOptionList.length === 0" class="composer__empty">
-      {{ commandKind === 'slash' ? '没有匹配的命令或提示词' : '没有匹配的工具' }}
-    </p>
+    <p v-if="commandOptionList.length === 0" class="composer__empty">没有匹配的命令或提示词</p>
   </div>
 
   <div v-if="refPickerVisible" class="composer__popup">
@@ -138,51 +131,44 @@
 
   .composer__popup-title {
     padding: 4px 8px 6px;
-    font-size: 11px;
-    color: var(--el-text-color-placeholder);
-    border-bottom: 1px solid var(--nw-border-soft);
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
   }
 
   .composer__group {
-    padding: 8px 8px 3px;
-    font-size: 10.5px;
+    padding: 8px 8px 2px;
+    margin: 0;
+    font-size: 11px;
     font-weight: 600;
-    color: var(--el-text-color-placeholder);
-    letter-spacing: 0.02em;
+    color: var(--el-text-color-secondary);
+  }
+
+  .composer__empty {
+    padding: 10px 8px;
+    margin: 0;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 
   .composer__item {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    display: block;
     width: 100%;
-    padding: 7px 9px;
+    padding: 6px 8px;
     text-align: left;
     cursor: pointer;
     background: transparent;
     border: 0;
-    border-radius: var(--nw-radius-base);
-
-    strong {
-      font-size: 12.5px;
-      color: var(--nw-ink);
-    }
-
-    small {
-      overflow: hidden;
-      font-size: 11px;
-      color: var(--el-text-color-placeholder);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+    border-radius: var(--nw-radius-sm);
+    transition: background 0.15s ease;
 
     &:hover,
     &.is-active {
-      background: var(--nw-primary-soft);
+      background: var(--nw-surface-subtle);
     }
 
-    &.is-picked strong {
-      color: var(--el-color-primary);
+    &.is-picked {
+      background: var(--nw-primary-soft);
     }
   }
 
@@ -190,39 +176,43 @@
     display: flex;
     gap: 6px;
     align-items: center;
-    min-width: 0;
+    font-size: 12.5px;
+
+    strong {
+      font-family: var(--nw-font-mono);
+      font-weight: 600;
+      color: var(--el-color-primary);
+    }
   }
 
   .composer__item-title {
-    overflow: hidden;
-    font-size: 12px;
-    color: var(--el-text-color-regular);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    color: var(--nw-ink);
+  }
+
+  .composer__item small {
+    display: block;
+    margin-top: 2px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--el-text-color-secondary);
   }
 
   .composer__badge {
     flex: none;
     padding: 0 5px;
-    font-size: 10px;
-    line-height: 15px;
+    font-size: 10.5px;
+    line-height: 16px;
     color: var(--el-text-color-secondary);
     background: var(--nw-surface-subtle);
-    border-radius: 999px;
+    border: 1px solid var(--nw-border-soft);
+    border-radius: 4px;
 
     &.is-action {
       color: var(--el-color-success);
-      background: var(--el-color-success-light-9);
-    }
-
-    &.is-tool {
-      color: var(--el-color-warning);
-      background: var(--el-color-warning-light-9);
     }
 
     &.is-prompt {
       color: var(--el-color-primary);
-      background: var(--nw-primary-soft);
     }
 
     &.is-picked {
@@ -231,40 +221,36 @@
     }
   }
 
-  .composer__empty {
-    padding: 10px;
-    font-size: 12px;
-    color: var(--el-text-color-placeholder);
-    text-align: center;
-  }
-
   .composer__tabs {
     display: flex;
-    flex-wrap: wrap;
     gap: 4px;
     align-items: center;
-    padding: 2px 2px 6px;
-    border-bottom: 1px solid var(--nw-border-soft);
-  }
-
-  .composer__tabs-hint {
-    margin-left: auto;
-    font-size: 10px;
-    color: var(--el-text-color-placeholder);
+    padding: 2px 4px 6px;
+    overflow-x: auto;
   }
 
   .composer__tab {
-    padding: 3px 9px;
-    font-size: 12px;
+    flex: none;
+    padding: 2px 8px;
+    font-size: 11.5px;
     color: var(--el-text-color-secondary);
     cursor: pointer;
     background: transparent;
-    border: 0;
-    border-radius: 999px;
+    border: 1px solid var(--nw-border-soft);
+    border-radius: 10px;
+    transition: all 0.15s ease;
 
     &.is-active {
       color: var(--el-color-primary);
       background: var(--nw-primary-soft);
+      border-color: var(--el-color-primary);
     }
+  }
+
+  .composer__tabs-hint {
+    margin-left: auto;
+    font-size: 10.5px;
+    color: var(--el-text-color-placeholder);
+    white-space: nowrap;
   }
 </style>
