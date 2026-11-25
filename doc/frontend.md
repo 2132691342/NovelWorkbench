@@ -148,7 +148,13 @@
    请求体是 `FormData` 时**不写 `Content-Type`**：必须交给浏览器生成带 boundary 的 `multipart/form-data`，
    写死 `application/json` 会让后端 `ShouldBind` 收不到任何字段（表现为上传接口 400「project_ulid 不能为空」）。
 2. `transformResponse` 解包后端包络：`resp_code === 'SUCCESS'` 时直接返回 `data`，否则抛 `ApiError`（保留 `resp_code` / `resp_message` / `trace_id` / `http_status`）。
-3. 统一出口 `send()`：401 视为会话过期，清本地会话并跳登录（登录接口自身的 401 是凭据错误，单独放行）；其余失败按 `silent` 决定是否弹 `ElMessage`。
+3. 统一出口 `send()`：写动作（路径末段命中写动作白名单）自动附加 `Idempotency-Key`，并把「相同 URL + 相同请求体」的在途请求合并为一次；查询类 POST 不带键、不合并。401 视为会话过期，清本地会话并跳登录（登录接口自身的 401 是凭据错误，单独放行）；其余失败按 `silent` 决定是否弹 `ElMessage`。
+
+`src/utils/idempotency.ts` 只提供 `newActionId()`（26 位 ULID，时间有序）；在途合并与按键注入都在 `request/index.ts`，其 `WRITE_ACTION_FLAGS` 必须与后端 `idempotentActionVerbs` 保持同一份末段清单，任一侧新增写接口都要同步。
+
+### 3.2.1 等待中的行内动作
+
+表格行内的删除等动作统一用 `composables/useRowAction.ts`：同一时刻只允许一个行内动作在飞，`isPending(rowKey)` 把加载态精确落在被点击那一行，`busyFlag` 让其余行按钮同时置灰，避免连点造成重复请求。弹窗内的提交仍由各自 `saving` 状态驱动按钮 `:loading`。
 
 `src/api/http.ts` 是业务模块唯一依赖的薄封装：`get<T>` / `post<T>` 返回解包后的数据，`silent_error: true` 静默失败，支持 `timeout` / `responseType` / `onUploadProgress`。
 
@@ -214,7 +220,7 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 - 路径拼接：`pathResolve()` 会合并重复斜杠并去掉**结尾斜杠**。路由表是 `strict: true`，`/workspace/PRJ_x/` 与 `/workspace/PRJ_x` 不匹配同一个记录，尾斜杠会让任何菜单点击都落到 Fallback（回归用例：`src/utils/routerChain.test.ts`）。
 - 分组节点（`menu_type_code=group`）只生成 children 与 `redirect`，不渲染自身页面。
 - 新增页面：写 `.vue` → 在「菜单管理」登记 `component_path` → 刷新即生效，**不需要前端发版**。
-- 顶栏入口（如「个人中心」）也必须登记菜单行并置 `visible_flag=false`：菜单即路由，未登记就没有路由，点击只会 404（回归用例：`backend/internal/service/navigation_chain_test.go`）。
+- 顶栏入口（如「个人中心」）也必须登记菜单行并置 `visible_flag=false`：菜单即路由，未登记就没有路由，点击只会 404（回归用例：`backend/internal/service/access_control_chain_test.go`）。
 
 ### 4.2 唯一全局守卫
 
@@ -273,11 +279,11 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 | 创作规划 | 大纲树 + 场景卡（左侧节点、右侧场景列表与编辑器） |
 | 连续性看板 | 三个页签：时间事实（主体+谓词+客体+来源章节，复核确认/推翻）、伏笔台账（计划→埋设→呼应→回收）、章节摘要（可由事实一键起草）；顶部统计待确认事实与未回收伏笔。事实与伏笔的表单在 `views/Continuity/components/EntityDialogs.vue` |
 | 素材库 | 单一入口，胶囊分段切换四个子页（`?tab=` 深链直达）：角色（角色表 + X6 关系图谱）、设定（卡片列表 + 搜索 + 抽屉）、笔记（左列表 + 右双栏 Markdown 编辑预览）、文档（统计卡 + 上传/重索引/删除 + 检索 + 切片 + 原文预览）。四个子页首次点开才挂载并保留状态 |
-| 角色 / 设定 / 笔记 / 文档（旧路由） | 入口已并入素材库，菜单行 `visible_flag=false`：不进侧边栏，路由仍注册，旧链接与深链继续可用 |
+| 角色 / 设定 / 笔记 / 文档（独立入口） | 入口已并入素材库，菜单行 `visible_flag=false`：不进侧边栏，路由仍注册，直接访问旧链接与深链继续可用 |
 | 模型供应商 | 能力探测横幅 + 供应商表（协议、密钥掩码、连通性测试）+ 模型目录表（默认、授权角色/用户）+ 授权弹窗（按角色与按用户两个页签）+ 用量面板（ECharts 双轴） |
 | 工具管理 | 内置/自建标记 + 启停开关 + 抽屉编辑（说明、参数声明）+ 试运行抽屉（结果文本 + 指标） |
 | 提示词库 | 按流程域分组（身份在前、指令在后）+ 种类/作用域过滤器 + 内置/已改/被覆盖标记 + 抽屉编辑（种类、作用域、正文、启停）+ 只读预览 |
-| 管理端 | 用户（角色分配、重置密码）、角色（权限目录勾选）、菜单（树形父级、路由、组件路径、权限码）、权限目录（只读分组）、审计（级别/链路/目标/日期筛选 + 详情抽屉）、登录日志、任务中心（统计与重试）、用量分析、运行状态（依赖健康） |
+| 管理端 | 用户（角色分配、重置密码；备注可清空）、角色（权限目录勾选，内置 `admin` 锁定为通配、其余角色可反复编辑，行内删除带 loading）、菜单（树形父级、路由、组件路径、权限码；删除后自动清理角色悬挂权限码）、权限目录（只读分组）、审计（级别/链路/目标/日期筛选 + 详情抽屉，请求体与响应体并列）、登录日志、任务中心（统计与重试）、用量分析、运行状态（依赖健康） |
 | 系统设置 | 配置项分组编辑（布尔项用开关）+ 整体保存 |
 | 个人中心 | 账号信息 + 资料编辑 + 改密 |
 | 通知中心 | 全部/未读/已读筛选 + 标记已读 + 删除，联动顶栏铃铛计数 |

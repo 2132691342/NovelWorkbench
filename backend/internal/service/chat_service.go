@@ -151,8 +151,15 @@ func (s *ChatService) SessionList(ctx context.Context, userULID string, req *dom
 
 // SessionDelete 删除会话（级联删除其全部消息）。
 func (s *ChatService) SessionDelete(ctx context.Context, userULID string, req *domain.ChatSessionDeleteREQ) error {
-	if _, err := s.mustOwnSession(ctx, userULID, req.SessionULID); err != nil {
+	session, err := s.chatRepo.GetSession(ctx, req.SessionULID)
+	if err != nil {
 		return err
+	}
+	if session == nil {
+		return nil // 幂等：会话已不存在，视为删除成功
+	}
+	if session.UserULID != userULID {
+		return pkg.NewBizError(domain.RespCodeForbidden, "无权操作该会话")
 	}
 	if err := s.chatRepo.DeleteSessionWithMessages(ctx, req.SessionULID); err != nil {
 		return pkg.WrapBizError(domain.RespCodeStorageError, "会话删除失败", err)

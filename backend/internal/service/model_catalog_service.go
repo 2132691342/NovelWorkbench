@@ -197,7 +197,7 @@ func (s *ModelProviderService) DeleteModel(ctx context.Context, req *domain.Mode
 		return err
 	}
 	if current == nil {
-		return pkg.NewBizError(domain.RespCodeNotFound, "模型不存在")
+		return nil // 幂等：目标已不存在，视为删除成功
 	}
 	if current.DefaultFlag {
 		return pkg.NewBizError(domain.RespCodeBizFailed, "系统默认模型不可删除，请先把其他模型设为默认")

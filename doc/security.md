@@ -9,9 +9,10 @@
 | --- | --- |
 | 登录方式 | 登录名或邮箱 + 密码（`UserRepo.GetByAccount`） |
 | 密码存储 | bcrypt DefaultCost，API 永不返回 `password_hash` |
-| 会话 | JWT HS256，默认 7 天，载荷含 `user_ulid`、签发与过期时间 |
+| 会话 | JWT HS256，默认 7 天，载荷含 `user_ulid`、`pwd_epoch`、签发与过期时间 |
 | 登出 | 令牌写入 Redis 黑名单，TTL 取 `expires_at - issued_at`（签发时长） |
 | 账号禁用 | 每次请求校验用户状态，禁用后旧令牌立即失效 |
+| 改密失效 | `users.pwd_epoch` 递增，令牌内版本落后立即 401；本人改密返回新令牌续期 |
 | 注册 | 不开放，账号只能由管理员创建 |
 | 个人改密 | 必须校验旧密码，成功后写安全通知 |
 
@@ -30,11 +31,27 @@
 
 ```
 Authorization: Bearer <token>
-  → 解析签名与过期时间（pkg.JWTSigner.ParseToken）
+  → 解析签名与过期时间（pkg.JWTSigner.ParseClaims）
   → 查 Redis 黑名单（pkg.TokenStore.IsRevoked）
-  → 校验用户状态（不存在或禁用 → 401）
+  → 校验用户状态与密码版本（不存在或禁用 → 401）
+  → 令牌内 pwd_epoch 落后于库内值 → 401「密码已变更，请重新登录」
   → 注入 user_ulid
 ```
+
+### 1.1 写请求幂等
+
+重复提交是写作类系统最容易被忽略的闭环：网络重试、双击、弱网重发都会造成重复写入。
+
+| 层 | 手段 | 说明 |
+| --- | --- | --- |
+| 前端 | 每次 POST 生成 `Idempotency-Key` | 26 位 ULID，`utils/idempotency.ts` |
+| 前端 | 写动作单飞合并 | 相同 URL + 相同请求体在途时复用同一 Promise |
+| 后端 | `pkg.IdempotencyMiddleware` | Redis `SET NX` 抢占，成功响应缓存 24 小时 |
+| 后端 | 同键不同体拒绝 | `ERR_INVALID_PARAM`，避免把两次动作混成一次 |
+| 后端 | 只缓存 2xx | 失败释放键，允许改正后重试 |
+| 后端 | 删除幂等 | 目标已不存在即视为成功，越权仍 403 |
+
+查询类 POST（`/list`、`/history`、`/detail`）**不进入**幂等白名单：缓存列表响应会让用户在 24 小时内看不到自己刚写的数据。
 
 ## 2. 授权
 
@@ -103,7 +120,8 @@ Authorization: Bearer <token>
 ### 4.1 审计日志
 
 - 所有 POST 请求（除登录、登出、`/chat/send`）记录一条审计，无论成败。
-- 字段：级别（`info` / `warn` / `error`，按 HTTP 状态推导）、链路 ID（与响应包络 `trace_id` 同值）、操作者 ULID 与登录名快照、动作码（路径去掉 `/api/v1/`）、请求路径与方法、脱敏请求体、目标类型与目标 ULID、业务响应码与说明、HTTP 状态、耗时、IP、UA。
+- 字段：级别（`info` / `warn` / `error`，按 HTTP 状态推导）、链路 ID（与响应包络 `trace_id` 同值）、操作者 ULID 与登录名快照、动作码（路径去掉 `/api/v1/`）、请求路径与方法、脱敏请求体、**脱敏响应体**、目标类型与目标 ULID、业务响应码与说明、HTTP 状态、耗时、IP、UA。
+- 请求体与响应体都采样落库（各 32KB 上限，超限追加截断标记）；响应体非 JSON（SSE 流、上传回执）记占位说明。详情接口 `AuditDetailVO` 同时返回 `request_body` 与 `resp_body`，前端抽屉并列展示——「只记请求不记响应」无法回答「这次写到底改成了什么」。
 - 所有 POST 都读取 body 提取目标，上限 32KB，读后还原供 handler 绑定；`multipart` 请求不采样。
 - 目标提取白名单覆盖 user / role / menu / project / chapter / document / prompt / tool / model / provider / chat_session / notification，取第一个命中的键。
 - 凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）一律替换为 `***`，审计表即使被读也不泄露口令。

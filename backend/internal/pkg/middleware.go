@@ -79,8 +79,8 @@ func MethodWhitelistMiddleware() gin.HandlerFunc {
 	}
 }
 
-// UserStateChecker 校验用户当前是否可用（禁用/删除后立即失效，而非等令牌自然过期）。
-type UserStateChecker func(ctx context.Context, userULID string) (bool, error)
+// UserStateChecker 校验用户当前是否可用：active 表示允许访问，pwdEpoch 为该用户当前密码版本。
+type UserStateChecker func(ctx context.Context, userULID string) (active bool, pwdEpoch int64, err error)
 
 // AuthMiddleware 校验 Bearer 令牌、用户状态并注入用户 ULID；skipPaths 为免鉴权白名单。
 func AuthMiddleware(signer *JWTSigner, tokenStore TokenStore, userStateChecker UserStateChecker, skipPaths []string) gin.HandlerFunc {
@@ -99,19 +99,20 @@ func AuthMiddleware(signer *JWTSigner, tokenStore TokenStore, userStateChecker U
 			Fail(c, domain.RespCodeUnauthorized, "未登录")
 			return
 		}
-		userULID, err := signer.ParseToken(tokenString)
+		claims, err := signer.ParseClaims(tokenString)
 		if err != nil {
 			c.Abort()
 			Fail(c, domain.RespCodeUnauthorized, "登录已失效")
 			return
 		}
+		userULID := claims.UserULID
 		if tokenStore != nil && tokenStore.IsRevoked(c.Request.Context(), tokenString) {
 			c.Abort()
 			Fail(c, domain.RespCodeUnauthorized, "登录已失效")
 			return
 		}
 		if userStateChecker != nil {
-			active, err := userStateChecker(c.Request.Context(), userULID)
+			active, pwdEpoch, err := userStateChecker(c.Request.Context(), userULID)
 			if err != nil {
 				Logger().Error("user_state_check_failed",
 					zap.String("request_id", c.GetString(ContextKeyRequestID)),
@@ -125,6 +126,12 @@ func AuthMiddleware(signer *JWTSigner, tokenStore TokenStore, userStateChecker U
 			if !active {
 				c.Abort()
 				Fail(c, domain.RespCodeUnauthorized, "账号不存在或已被禁用")
+				return
+			}
+			// 改密后旧令牌失效：令牌里的密码版本落后即视为登录过期
+			if claims.PwdEpoch < pwdEpoch {
+				c.Abort()
+				Fail(c, domain.RespCodeUnauthorized, "密码已变更，请重新登录")
 				return
 			}
 		}

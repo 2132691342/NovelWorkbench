@@ -17,6 +17,7 @@ import (
 type RouterDeps struct {
 	AuthMW        gin.HandlerFunc   // 鉴权中间件（pkg.AuthMiddleware 产物）
 	AuditMW       gin.HandlerFunc   // 审计中间件（pkg.AuditMiddleware 产物）
+	IdempotencyMW gin.HandlerFunc   // 幂等中间件（pkg.IdempotencyMiddleware 产物，可为 nil）
 	PermChecker   pkg.PermChecker   // 权限判定（admin 路由收口）
 	ReadyCheck    func() error      // 就绪探针（DB Ping）
 	AuthAPI       *AuthAPI          // 认证模块处理器
@@ -56,8 +57,8 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	router.Use(cors.New(cors.Config{
 		AllowAllOrigins: true,
 		AllowMethods:    []string{http.MethodGet, http.MethodPost, http.MethodOptions},
-		AllowHeaders:    []string{"Origin", "Content-Type", "Authorization", "X-Request-ID"},
-		ExposeHeaders:   []string{"X-Request-ID"},
+		AllowHeaders:    []string{"Origin", "Content-Type", "Authorization", "X-Request-ID", pkg.IdempotencyHeader},
+		ExposeHeaders:   []string{"X-Request-ID", pkg.IdempotencyReplayHeader},
 		MaxAge:          12 * time.Hour,
 	}))
 	router.Use(pkg.MethodWhitelistMiddleware())
@@ -66,6 +67,9 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 
 	v1 := router.Group("/api/v1")
 	v1.Use(deps.AuthMW)
+	if deps.IdempotencyMW != nil {
+		v1.Use(deps.IdempotencyMW) // 幂等键需按用户隔离，必须排在鉴权之后
+	}
 	v1.Use(deps.AuditMW)
 	registerAuthRoutes(v1, deps.AuthAPI)
 	registerProfileRoutes(v1, deps.AuthAPI)

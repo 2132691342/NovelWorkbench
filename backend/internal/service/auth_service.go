@@ -7,6 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
@@ -54,7 +55,7 @@ func (s *AuthService) Login(ctx context.Context, req *domain.UserLoginREQ, meta 
 		s.recordLogin(ctx, req.AccountText, do.UserULID, domain.LoginResultFailed, "密码错误", meta)
 		return domain.UserLoginDTO{}, pkg.NewBizError(domain.RespCodeUnauthorized, "账号或密码错误")
 	}
-	token, expiresInSec, err := s.signer.SignToken(do.UserULID)
+	token, expiresInSec, err := s.signer.SignToken(do.UserULID, do.PwdEpoch)
 	if err != nil {
 		return domain.UserLoginDTO{}, err
 	}
@@ -125,21 +126,33 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userULID string, req *d
 	return toUserProfileVO(do, roleCodes), nil
 }
 
-// ChangePassword 校验旧密码后更新本人密码，并发送账号安全通知。
-func (s *AuthService) ChangePassword(ctx context.Context, userULID string, req *domain.UserPasswordChangeREQ) error {
+// ChangePassword 校验旧密码后更新本人密码，返回新令牌（旧令牌因密码版本递增立即失效）。
+func (s *AuthService) ChangePassword(ctx context.Context, userULID string, req *domain.UserPasswordChangeREQ) (domain.UserPasswordChangeDTO, error) {
 	do, err := s.mustGetUser(ctx, userULID)
 	if err != nil {
-		return err
+		return domain.UserPasswordChangeDTO{}, err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(do.PasswordHash), []byte(req.OldPasswordText)); err != nil {
-		return pkg.NewBizError(domain.RespCodeUnauthorized, "当前密码不正确")
+		return domain.UserPasswordChangeDTO{}, pkg.NewBizError(domain.RespCodeUnauthorized, "当前密码不正确")
 	}
 	hashBytes, err := bcrypt.GenerateFromPassword([]byte(req.NewPasswordText), bcrypt.DefaultCost)
 	if err != nil {
-		return pkg.WrapBizError(domain.RespCodeInternalError, "加密密码失败", err)
+		return domain.UserPasswordChangeDTO{}, pkg.WrapBizError(domain.RespCodeInternalError, "加密密码失败", err)
 	}
-	if err := s.userRepo.Update(ctx, userULID, map[string]any{"password_hash": string(hashBytes)}); err != nil {
-		return err
+	// 改密即让旧令牌失效：密码版本递增，令牌内的版本号随之落后
+	if err := s.userRepo.Update(ctx, userULID, map[string]any{
+		"password_hash": string(hashBytes),
+		"pwd_epoch":     gorm.Expr("pwd_epoch + 1"),
+	}); err != nil {
+		return domain.UserPasswordChangeDTO{}, err
+	}
+	updated, err := s.mustGetUser(ctx, userULID)
+	if err != nil {
+		return domain.UserPasswordChangeDTO{}, err
+	}
+	token, expiresInSec, err := s.signer.SignToken(updated.UserULID, updated.PwdEpoch)
+	if err != nil {
+		return domain.UserPasswordChangeDTO{}, err
 	}
 	s.notify(ctx, domain.NotificationCreateDTO{
 		UserULID:              userULID,
@@ -150,7 +163,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, userULID string, req *
 		RefTypeCode:           "user",
 		RefULID:               userULID,
 	})
-	return nil
+	return domain.UserPasswordChangeDTO{AccessToken: token, ExpiresInSec: expiresInSec}, nil
 }
 
 // Logout 吊销访问令牌（写入黑名单，TTL 为令牌签发有效期）。

@@ -15,6 +15,7 @@
   import { changePassword, fetchProfileDetail, updateProfile } from '@/api/profile'
   import type { NWProfileVo } from '@/api/profile'
   import { useUserStore } from '@/store/modules/user'
+  import { isPersistentToken, writeToken } from '@/utils/storage'
   import { formatTime } from '@/utils/time'
 
   const userStore = useUserStore()
@@ -105,11 +106,14 @@
 
     savingPassword.value = true
     try {
-      await changePassword({
+      const result = await changePassword({
         old_password_text: passwordForm.old_password_text,
         new_password_text: passwordForm.new_password_text
       })
-      ElMessage.success('密码已修改，请牢记新密码')
+      // 改密会让旧令牌失效，必须立刻换用新令牌，否则下一次请求就会被踢回登录页
+      userStore.token = result.access_token
+      writeToken(result.access_token, isPersistentToken())
+      ElMessage.success('密码已修改，本次登录已自动续期')
       passwordForm.old_password_text = ''
       passwordForm.new_password_text = ''
       passwordForm.confirm_password_text = ''

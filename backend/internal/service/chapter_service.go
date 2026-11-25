@@ -142,7 +142,7 @@ func (s *ChapterService) Delete(ctx context.Context, userULID string, req *domai
 			return err
 		}
 		if chapter == nil {
-			return pkg.NewBizError(domain.RespCodeNotFound, "章节不存在")
+			return nil // 幂等：目标已不存在，视为删除成功
 		}
 		if _, err := mustOwnProject(ctx, txProject, userULID, chapter.ProjectULID); err != nil {
 			return err

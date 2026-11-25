@@ -13,6 +13,7 @@
   } from 'element-plus'
   import { deleteMenu, listMenus } from '@/api/menu'
   import type { NWMenuVo } from '@/api/contracts'
+  import { useRowAction } from '@/composables/useRowAction'
   import MenuFormDialog from './components/MenuFormDialog.vue'
   import { asRow } from '@/utils/table'
 
@@ -22,6 +23,7 @@
   const typeFilter = ref('')
 
   const formDialog = ref<InstanceType<typeof MenuFormDialog>>()
+  const rowAction = useRowAction()
 
   const typeOptions = [
     { value: '', label: '全部类型' },
@@ -73,7 +75,7 @@
     }
   }
 
-  /** 删除菜单（含子节点时由后端拦截） */
+  /** 删除菜单（含子节点时由后端拦截；行内加锁防连点） */
   const remove = async (row: NWMenuVo) => {
     try {
       await ElMessageBox.confirm(
@@ -84,9 +86,11 @@
     } catch {
       return
     }
-    await deleteMenu(row.menu_ulid)
-    ElMessage.success('菜单已删除')
-    await load()
+    await rowAction.run(row.menu_ulid, async () => {
+      await deleteMenu(row.menu_ulid)
+      ElMessage.success('菜单已删除')
+      await load()
+    })
   }
 
   const handleSaved = () => {
@@ -185,7 +189,16 @@
       <ElTableColumn label="操作" width="130" fixed="right">
         <template #default="{ row }">
           <ElButton size="small" text type="primary" @click="formDialog?.open(asRow<NWMenuVo>(row))">编辑</ElButton>
-          <ElButton size="small" text type="danger" @click="remove(asRow<NWMenuVo>(row))">删除</ElButton>
+          <ElButton
+            size="small"
+            text
+            type="danger"
+            :loading="rowAction.isPending(asRow<NWMenuVo>(row).menu_ulid)"
+            :disabled="rowAction.busyFlag.value"
+            @click="remove(asRow<NWMenuVo>(row))"
+          >
+            删除
+          </ElButton>
         </template>
       </ElTableColumn>
       <template #empty>

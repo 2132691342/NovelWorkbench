@@ -1,5 +1,6 @@
-// 导航链路的场景回归：菜单种子可注册性 → 可见性过滤 → 菜单树装配 → 权限目录汇总。
-// 这四者是同一条「后端驱动导航」请求的上下游，合并为一条用例，任一环节断裂时按「环节N」定位。
+// 访问控制链路的回归：权限码规范化 → 角色脏数据修复 → 权限码下线清理 → 菜单种子可注册性 → 导航装配 → 权限目录。
+// 这六件事共同保证「权限可勾选、可保存、可回读、可下架、菜单可导航」这条闭环，
+// 任一环断裂都会表现为「点得进却用不了」或「面板被锁死」，因此集中在本文件按链路组织。
 
 package service
 
@@ -10,6 +11,15 @@ import (
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 )
+
+// knownPermSet 构造权限目录夹具（菜单是权限码唯一登记处，这里直接给集合）。
+func knownPermSet(codes ...string) map[string]bool {
+	known := make(map[string]bool, len(codes))
+	for _, code := range codes {
+		known[code] = true
+	}
+	return known
+}
 
 // menuDO 构造测试用菜单行。
 func menuDO(ulid, parentULID, code, name, menuType, permCode string) domain.MenuDO {
@@ -33,6 +43,60 @@ func testMenus() []domain.MenuDO {
 	menus[4].VisibleFlag = false
 	menus[5].EnabledFlag = false
 	return menus
+}
+
+// TestPermissionChain 覆盖角色权限从编辑到下线的完整变更链路。
+func TestPermissionChain(t *testing.T) {
+	known := knownPermSet("prompt:manage", "tool:manage", "system:audit:read")
+
+	// 环节1：权限码规范化。去重保序、空白剔除、非管理员禁用通配、未登记编码报错。
+	normalized, err := normalizePermCodeList("editor",
+		[]string{"tool:manage", "prompt:manage", "tool:manage", " "}, known)
+	if err != nil {
+		t.Fatalf("合法权限码应通过校验: %v", err)
+	}
+	if len(normalized) != 2 || normalized[0] != "tool:manage" || normalized[1] != "prompt:manage" {
+		t.Fatalf("去重保序失败: %v", normalized)
+	}
+	if _, err := normalizePermCodeList("editor", []string{domain.PermAdminAll}, known); err == nil {
+		t.Fatal("非管理员角色带通配 * 应被拒绝")
+	}
+	if _, err := normalizePermCodeList(domain.RoleCodeAdmin, []string{domain.PermAdminAll}, known); err != nil {
+		t.Fatalf("管理员角色应允许通配 *: %v", err)
+	}
+	if _, err := normalizePermCodeList("editor", []string{"ghost:perm"}, known); err == nil {
+		t.Fatal("未登记权限码应被拒绝")
+	}
+
+	// 环节2：历史脏数据修复。普通角色误带 "*" 会让前端锁死权限面板，修复后必须只剩合法权限码。
+	dirty := &domain.RoleDO{
+		RoleCode:      domain.RoleCodeUser,
+		PermCodesJSON: `["prompt:manage","*","ghost:perm","tool:manage"]`,
+	}
+	if repaired := marshalPermCodes(repairedPermCodeList(dirty, known)); repaired != `["prompt:manage","tool:manage"]` {
+		t.Fatalf("普通角色脏权限应被清洗，实际 %s", repaired)
+	}
+	adminDirty := &domain.RoleDO{RoleCode: domain.RoleCodeAdmin, PermCodesJSON: `["prompt:manage"]`}
+	if repaired := marshalPermCodes(repairedPermCodeList(adminDirty, known)); repaired != `["*"]` {
+		t.Fatalf("管理员角色应固定为通配，实际 %s", repaired)
+	}
+	clean := &domain.RoleDO{RoleCode: domain.RoleCodeAdmin, PermCodesJSON: `["*"]`}
+	if repaired := marshalPermCodes(repairedPermCodeList(clean, known)); repaired != `["*"]` {
+		t.Fatalf("已合规权限不应被改写，实际 %s", repaired)
+	}
+
+	// 环节3：权限码下线。删菜单后角色里的悬挂权限码必须被剔除，管理员通配不受影响。
+	normalRole := &domain.RoleDO{
+		RoleCode:      "editor",
+		PermCodesJSON: `["prompt:manage","system:audit:read"]`,
+	}
+	if pruned := marshalPermCodes(prunedPermCodeList(normalRole, "system:audit:read")); pruned != `["prompt:manage"]` {
+		t.Fatalf("下线权限码应从普通角色剔除，实际 %s", pruned)
+	}
+	adminRole := &domain.RoleDO{RoleCode: domain.RoleCodeAdmin, PermCodesJSON: `["*"]`}
+	if pruned := marshalPermCodes(prunedPermCodeList(adminRole, domain.PermAdminAll)); pruned != `["*"]` {
+		t.Fatalf("通配权限码本身不允许被剔除，实际 %s", pruned)
+	}
 }
 
 // TestNavigationChain 覆盖一次导航装配请求的完整链路。

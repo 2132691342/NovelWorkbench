@@ -85,7 +85,7 @@ func (s *CharacterService) Delete(ctx context.Context, userULID string, req *dom
 			return err
 		}
 		if character == nil {
-			return pkg.NewBizError(domain.RespCodeNotFound, "角色不存在")
+			return nil // 幂等：目标已不存在，视为删除成功
 		}
 		if _, err := mustOwnProject(ctx, txProject, userULID, character.ProjectULID); err != nil {
 			return err
@@ -187,7 +187,7 @@ func (s *CharacterService) RelationDelete(ctx context.Context, userULID string, 
 		return err
 	}
 	if relation == nil {
-		return pkg.NewBizError(domain.RespCodeNotFound, "关系不存在")
+		return nil // 幂等：关系已不存在，视为删除成功
 	}
 	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, relation.ProjectULID); err != nil {
 		return err

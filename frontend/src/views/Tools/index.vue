@@ -11,6 +11,7 @@
     type NWToolVo
   } from '@/api/tool'
   import { useProjectStore } from '@/store/modules/project'
+  import { useRowAction } from '@/composables/useRowAction'
   import ToolEditDrawer from './components/ToolEditDrawer.vue'
 
   const projectStore = useProjectStore()
@@ -25,6 +26,7 @@
   const invokeToolCode = ref('')
   const invokeContentText = ref('')
   const invokeResult = ref<NWToolInvokeVo | null>(null)
+  const rowAction = useRowAction()
 
   const builtinCount = computed(() => rows.value.filter((row) => row.builtin_flag).length)
   const enabledCount = computed(() => rows.value.filter((row) => row.enabled_flag).length)
@@ -67,9 +69,11 @@
     } catch {
       return
     }
-    await deleteTool(row.tool_ulid)
-    ElMessage.success('工具已删除')
-    await load()
+    await rowAction.run(row.tool_ulid, async () => {
+      await deleteTool(row.tool_ulid)
+      ElMessage.success('工具已删除')
+      await load()
+    })
   }
 
   /** 打开试运行：默认用当前项目的第一章正文 */
@@ -151,7 +155,15 @@
         <template #default="{ row }">
           <ElButton size="small" text type="primary" @click="openInvoke(row)">试运行</ElButton>
           <ElButton size="small" text @click="drawer?.open(row)">编辑</ElButton>
-          <ElButton v-if="!row.builtin_flag" size="small" text type="danger" @click="remove(row)">
+          <ElButton
+            v-if="!row.builtin_flag"
+            size="small"
+            text
+            type="danger"
+            :loading="rowAction.isPending(row.tool_ulid)"
+            :disabled="rowAction.busyFlag.value"
+            @click="remove(row)"
+          >
             删除
           </ElButton>
         </template>

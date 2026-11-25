@@ -77,7 +77,7 @@ CORS 放行 `Origin`、`Content-Type`、`Authorization`、`X-Request-ID`，暴�
 flowchart LR
   A[Recovery] --> B[RequestID] --> C[Logger] --> D[CORS] --> E[MethodWhitelist]
   E --> F["探针 /health /ready"]
-  E --> G[Auth] --> H[Audit] --> I[RequirePerm] --> J[Handler]
+  E --> G[Auth] --> G2[Idempotency] --> H[Audit] --> I[RequirePerm] --> J[Handler]
 ```
 
 | 序 | 中间件 | 作用 | 失败输出 |
@@ -87,13 +87,14 @@ flowchart LR
 | 3 | `pkg.LoggerMiddleware` | 出口记录 method / path / status / latency_ms | 无 |
 | 4 | `cors.New(...)` | 处理预检，预检直接返回 | 无 |
 | 5 | `pkg.MethodWhitelistMiddleware` | 仅放行 GET / POST | `ERR_INVALID_PARAM` / 400 |
-| 6 | `pkg.AuthMiddleware` | 仅挂 `/api/v1` 组；校验令牌、吊销名单、用户状态，注入上下文键 `user_ulid` | `ERR_UNAUTHORIZED` / 401 |
-| 7 | `pkg.AuditMiddleware` | 仅挂 `/api/v1` 组；记录 POST 审计 | 不阻断业务 |
-| 8 | `pkg.RequirePermMiddleware` | 分组级权限门禁 | `ERR_FORBIDDEN` / 403，判定报错 `ERR_INTERNAL` / 500 |
+| 6 | `pkg.AuthMiddleware` | 仅挂 `/api/v1` 组；校验令牌、吊销名单、密码版本、用户状态，注入上下文键 `user_ulid` | `ERR_UNAUTHORIZED` / 401 |
+| 7 | `pkg.IdempotencyMiddleware` | 仅挂 `/api/v1` 组；按 `Idempotency-Key` 保证写动作只执行一次 | `ERR_INVALID_PARAM` / `ERR_CONFLICT` |
+| 8 | `pkg.AuditMiddleware` | 仅挂 `/api/v1` 组；记录 POST 审计（请求体 + 响应体） | 不阻断业务 |
+| 9 | `pkg.RequirePermMiddleware` | 分组级权限门禁 | `ERR_FORBIDDEN` / 403，判定报错 `ERR_INTERNAL` / 500 |
 
 `/health`、`/ready` 注册在 `/api/v1` 组之前，只经过 1–5，不鉴权、不审计。
 
-鉴权中间件内部顺序：跳过名单直接放行 → 取 `Authorization`（缺省 401「未登录」）→ `JWTSigner.ParseToken`（失败 401「登录已失效」）→ `TokenStore.IsRevoked` 命中 401「登录已失效」→ `UserStateChecker` 判定用户非禁用（禁用 401「账号不存在或已被禁用」，判定报错 500）。
+鉴权中间件内部顺序：跳过名单直接放行 → 取 `Authorization`（缺省 401「未登录」）→ `JWTSigner.ParseClaims`（失败 401「登录已失效」）→ `TokenStore.IsRevoked` 命中 401「登录已失效」→ `UserStateChecker` 返回账号状态与当前密码版本（禁用 401「账号不存在或已被禁用」，判定报错 500）→ 令牌内 `pwd_epoch` 落后于库内版本时 401「密码已变更，请重新登录」。
 
 ### 4.1 免鉴权白名单
 
@@ -115,7 +116,24 @@ flowchart LR
 | `/api/v1/auth/logout` | 不落审计 |
 | `/api/v1/chat/send` | 高频流式调用，不落审计 |
 
-审计规则（`pkg/access_middleware.go`）：只记录 `POST`；`action_code` 取路径去掉 `/api/v1/` 前缀；所有 POST 都会读取 body 提取目标（键白名单覆盖 user / role / menu / project / chapter / document / prompt / tool / model / provider / chat_session / notification），body 采样上限 32KB、`multipart` 不采样且读后还原，凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）脱敏为 `***`；响应体缓冲前 8KB 用于解析包络得到 `resp_code` / `resp_message`，并按 HTTP 状态推导 `log_level_code`（`info` / `warn` / `error`），`trace_id` 取请求链路 ID；落库失败只记 `audit_record_failed` 告警。
+审计规则（`pkg/access_middleware.go`）：只记录 `POST`；`action_code` 取路径去掉 `/api/v1/` 前缀；所有 POST 都会读取 body 提取目标（键白名单覆盖 user / role / menu / project / chapter / document / prompt / tool / model / provider / chat_session / notification），body 采样上限 32KB、`multipart` 不采样且读后还原，凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）脱敏为 `***`；响应体同样采样落库（上限 32KB，超限追加「已截断」标记，非 JSON 流式响应记占位说明），并从响应包络解析 `resp_code` / `resp_message`，按 HTTP 状态推导 `log_level_code`（`info` / `warn` / `error`），`trace_id` 取请求链路 ID；落库失败只记 `audit_record_failed` 告警。审计详情接口返回 `request_body` 与 `resp_body`，前端详情抽屉同时展示两者。
+
+### 4.3 写请求幂等
+
+`pkg.IdempotencyMiddleware`（`backend/internal/pkg/idempotency.go`）对**写动作**提供「同一次点击只执行一次」语义：
+
+- 键来自请求头 `Idempotency-Key`，缓存键为 `nw:idempotency:<sha256(用户 + 路径 + 键)>`，按用户隔离；
+- 仅路径末段命中写动作白名单（`create/save/update/delete/restore/upload/reindex/review/invoke/set_default/grant/test/read/read_all/apply/retry/change/reset_password`）才生效；列表、详情等查询类 POST 一律不缓存，否则会读到写前快照；
+- 首请求以 `SET NX` 抢占并写 `processing`，成功后以 `SET XX` 覆盖为 `done` 并保留 24 小时；重放直接返回首响应，并带 `Idempotent-Replay: true`；
+- 同键不同请求体返回 `ERR_INVALID_PARAM`「同一 Idempotency-Key 不能用于不同的请求内容」，同键仍在处理中返回 `ERR_CONFLICT`「相同请求正在处理中，请稍候」；
+- 只有 2xx 才缓存：业务校验失败或 5xx 会释放键，允许客户端改正后重试；
+- 登录、登出在跳过名单内（重放登录会把旧令牌再发一次）；Redis 不可用时降级为普通请求，不阻断业务。
+
+前端在 `frontend/src/request/index.ts` 为每个 POST 生成 `Idempotency-Key`（26 位 ULID，见 `utils/idempotency.ts`），并对「写动作 + 相同 URL + 相同请求体」的在途请求做单飞合并，双击不会产生两条并发写入。
+
+### 4.4 删除幂等
+
+所有删除接口遵循「目标已不存在 = 删除成功」：`project`、`volume`、`chapter`、`character`、`character relation`、`lore`、`outline node`、`outline scene`、`knowledge doc`、`chat session`、`prompt`、`tool`、`role`、`menu`、`model provider`、`model catalog`、`user` 在查不到目标时直接返回 `SUCCESS`。越权（目标存在但不归属当前用户）仍返回 `ERR_FORBIDDEN`，不会因幂等被吞掉。
 
 ## 5. 权限码
 
@@ -142,6 +160,18 @@ flowchart LR
 
 权限目录（`GET /menu/permission/catalog`）由菜单表汇总而来：`service/menu_service.go` 的 `buildPermCatalog` 先登记 `*`，再按菜单行的 `perm_code` 逐条登记（同一码只登记一次），按权限码首段分组（当前实际使用 `system` / `prompt` / `tool`）并升序返回。因此新增权限码只需在菜单管理里登记一行，无需改代码。
 
+角色授权规则（`service/role_service.go`）：
+
+- 提交的 `perm_codes` 必须先通过校验：去重保序、剔除空白，**未在权限目录登记的编码直接返回 `ERR_INVALID_PARAM`**，`*` 只允许 `admin` 角色持有；
+- `perm_codes` 缺省（`null`）表示「不修改权限」，只改名称/备注的请求不会把权限清空；传 `[]` 才表示清空；
+- 管理员角色的 `*` 是系统不变量：任何保存都会强制保留，避免改坏后无人能进入管理端；
+- 内置角色权限在启动时自动修复：`admin` 固定为 `*`，其他内置角色剔除 `*` 与未登记编码（普通角色带 `*` 会让前端把权限面板锁成只读，该状态不可手工修复，只能由启动期自愈纠正）；
+- 菜单被删除、权限码被改写或菜单被停用后，`RoleService.PrunePermCode` 会从所有角色中剔除该悬挂权限码，`*` 永不被剔除。
+
+### 5.1 密码版本与令牌失效
+
+`users.pwd_epoch` 记录密码版本，签发 JWT 时写入 `pwd_epoch` 声明；鉴权中间件每次比对令牌版本与库内版本，落后即返回 `ERR_UNAUTHORIZED`「密码已变更，请重新登录」。本人改密与管理员重置密码都会 `pwd_epoch + 1`，因此改密后所有旧令牌立刻失效。本人改密接口返回新令牌（`UserPasswordChangeDTO`），前端收到后立即替换本地令牌，避免「改完密码把自己踢下线」。
+
 ## 6. 探针
 
 | 方法 | 路径 | 鉴权 | 成功 data | 失败 |
@@ -164,7 +194,7 @@ flowchart LR
 | POST | `/auth/logout` | 无（读 `Authorization` 头） | `null` |
 | GET | `/profile/detail` | 无 | `UserProfileVO` |
 | POST | `/profile/update` | `UserProfileUpdateREQ` | `UserProfileVO` |
-| POST | `/profile/password/change` | `UserPasswordChangeREQ` | `null` |
+| POST | `/profile/password/change` | `UserPasswordChangeREQ` | `UserPasswordChangeDTO`（新令牌） |
 
 ### 7.2 站内通知（5 条）
 
@@ -324,47 +354,29 @@ flowchart LR
 
 字段级定义以 `backend/internal/domain/*.go` 为唯一事实源（每个 REQ/VO 字段都带注释与 `binding` 校验），此处只记录**从字段名看不出来**的规则。
 
-**认证**
-登录名或邮箱均可登录（`UserRepo.GetByAccount` 同时匹配两列）；账号不存在与密码错误返回同一文案与同一业务码，不泄露账号是否存在。登出把当前令牌写入吊销名单（Redis），之后同一令牌访问任意接口返回 401。
+| 模块 | 规则 |
+| --- | --- |
+| 认证 | 登录名或邮箱均可登录（`UserRepo.GetByAccount` 同时匹配两列）；账号不存在与密码错误返回同一文案与同一业务码，不泄露账号是否存在。登出把当前令牌写入吊销名单（Redis），之后同一令牌访问任意接口返回 401 |
+| 个人中心 | `UserProfileUpdateREQ` 只允许改 `user_email`、`avatar_url`、`remark_text`，`user_name` 不可改。旧密码不符返回 `ERR_UNAUTHORIZED`，邮箱冲突返回 `ERR_CONFLICT` |
+| 站内通知 | `NotificationReadREQ.notification_ulid_list` 为 1–100 条的批量标记。全部接口按 `user_ulid` 隔离，只作用于当前用户的通知 |
+| 项目 | `project_status` 取 `draft` / `serial` / `completed`，创建时固定 `draft`。删除项目在单个事务内级联清理卷、章节、快照、角色、设定、大纲节点与场景卡、连续性数据、会话、知识库文档与统计；事务提交后由 `cleanupKnowledgeExternal` 清理 MinIO 原文与 Manticore 切片，失败仅告警 |
+| AI 开书 | `target_chapter_count` 缺省 12。`plan` 只生成不落库，模型输出经 `normalizeBootstrapPlan` 收敛（卷 ≤3、角色 ≤8、设定 ≤10、枚举值校正、名称截断），作者可改字段后回传；`apply` 在单事务内创建项目、卷、章节、角色、设定与两级大纲节点（卷 → 章），失败整体回滚。生成失败返回 `ERR_AI_PROVIDER`，模型未授权返回 `ERR_FORBIDDEN` |
+| 卷与章节 | 卷与章节的 `volume_order` / `chapter_order` 传 0 表示取同级最大值 +1。`ChapterUpdateREQ` 是整体覆盖；`content_text`、`summary_text` 为指针字段，省略表示不改、空串表示清空。`ChapterSnapshotRestoreREQ` 回滚前会为当前正文再留一份快照。`ChapterCheckREQ.content_text` 优先于库内正文 |
+| 角色与关系图 | `CharacterREQ.character_ulid` 为空即新建。`CharacterRelationREQ` 拒绝自环，两端角色必须存在且同属本项目。删除角色时连带删除其关系边 |
+| 设定与笔记 | `lore_type_code` 的 `note` 即创作笔记，与其他设定共用同一组接口。`content_mode_code` 缺省 `rich` |
+| 知识库 | 上传仅接受 `txt` / `md` / `docx` / `pdf`，文件字段名固定 `file`；超过 `NW_APP_UPLOAD_MAX_MB` 返回 `ERR_INVALID_PARAM`。上传成功即写入 MinIO 原文、落库 `pending` 并投递 `doc_index` 任务。`KnowledgeSearchREQ.keyword_text` 去空白后为空返回 `ERR_INVALID_PARAM`；`search_mode` 仅 `hybrid` 走双通道，其余值一律按 `keyword`；`top_k_count` 缺省取应用配置 `rag_top_k`，再退回全局配置 |
+| 提示词 | 作用域 `global` / `project`；同编码的项目提示词覆盖全局提示词，被覆盖项在列表里带 `overridden_flag`。编码解析：请求体 `prompt_code` 优先，否则只解析正文**首个 token** 的 `/code`，命中启用提示词则剥离命令，未命中按自由对话处理。模板占位符只允许 `user_input` / `chapter_content` / `context` / `prompt_code`，保存期校验，未登记占位符直接 `ERR_INVALID_PARAM`。指令类提示词若用了写作台保留动作编码（`/help` 等），保存被拒绝 |
+| 工具 | 内置 6 个工具不可删、不可改编码；`customized_flag` 由名称/说明/参数的改动推导，改过后代码升级不再覆盖。`/tool/invoke` 按登录用户执行归属校验，结果只读、不写项目数据；`content_text` 为空时回落到 `chapter_ulid` 的库内正文。工具不由命令注入：服务端随请求下发启用工具声明，模型自行决定调用与否 |
+| 菜单与权限目录 | `page` 行承载页面权限码，`action` 行只登记动作权限码、不进导航。约束：`group` 不可配路由；菜单编码唯一；权限码全局唯一，同码只能被一行登记；上级必须存在且不能是自己或自己的下级；存在下级时不可删除（须先删下级）。隐藏页（`visible_flag=false`）仍下发，前端据此注册路由——这样「把多个页面合并成一个入口」时直接访问旧链接与深链不会失效 |
+| 应用配置 | 键为白名单，值为正整数且须落在区间内，越界或键不在白名单返回 `ERR_INVALID_PARAM` |
+| AI 对话 | `ref_*_ulid_list` 只对应 `@` 的两类来源（素材库与历史会话），装配方式见下表。工具**不在**请求体里点名：`tool_code_list` 字段已移除，服务端随请求下发启用工具声明，由模型自行决定调用；响应 `done` 事件的 `tool_code_list` 是模型本轮**实际调用**的编码，仅供展示与回看。引用文档必须是本项目或全局库，跨项目返回 `ERR_FORBIDDEN` |
+| 创作规划 | 大纲节点 `node_type_code` 取 `volume` / `arc` / `storyBlock` / `chapter`，`node_status_code` 取 `draft` / `planning` / `ready` / `done`。父子关系与成环由 service 校验，含子节点不可直接删除 |
+| 连续性看板 | 事实复核只接受 `confirmed` / `superseded` / `stale`，不允许退回 `candidate`。伏笔状态取 `planned` / `planted` / `echoed` / `resolved` / `abandoned`。`ChapterSummarySaveREQ` 不带 `summary_ulid` 时按 `(project_ulid, chapter_ulid)` 覆盖，保证「一章一条摘要」 |
+| 模型生态 | 供应商承载「网关 + 凭据」，模型是使用与授权的最小单位：`model_providers` → `model_catalogs` → `model_role_grants` / `model_user_grants`。密钥以 AES-256-GCM 加密保存，VO 只回 `api_key_masked` 与 `api_key_configured`。`api_key_text` 传空表示保持原值。`role_ulid_list` 保存时整体覆盖授权。管理员（含 `*`）可见全部启用模型，其余账号按角色授权与用户直授的并集过滤 |
+| 用量与运行状态 | 日期格式 `YYYY-MM-DD`；缺省近 14 天，非法输入回退默认，起止倒置自动纠正。`success_rate_value` 取 0–1。`dependency_code` 取 `postgres` / `redis` / `rabbitmq` / `minio` / `manticore` / `model`，`status_code` 取 `up` / `down` / `degraded` |
+| 系统管理 | 用户与邮箱唯一，重复返回 `ERR_CONFLICT`；`role_codes` 为空时默认挂 `user` 角色，`UserAdminUpdateREQ.role_codes` 为整体覆盖语义；不能删除自己（`ERR_BIZ_FAILED`）。内置角色 `admin` / `user` 不可删除、不可改编码；仍有用户挂载的角色不可删除（`ERR_CONFLICT`）。审计列表的 `trace_id` 为精确匹配，`action_code` 与 `keyword_text` 为模糊匹配 |
 
-**个人中心**
-`UserProfileUpdateREQ` 只允许改 `user_email`、`avatar_url`、`remark_text`，`user_name` 不可改。旧密码不符返回 `ERR_UNAUTHORIZED`，邮箱冲突返回 `ERR_CONFLICT`。
-
-**站内通知**
-`NotificationReadREQ.notification_ulid_list` 为 1–100 条的批量标记。全部接口按 `user_ulid` 隔离，只作用于当前用户的通知。
-
-**项目**
-`project_status` 取 `draft` / `serial` / `completed`，创建时固定 `draft`。删除项目在单个事务内级联清理卷、章节、快照、角色、设定、大纲节点与场景卡、连续性数据、会话、知识库文档与统计；事务提交后由 `cleanupKnowledgeExternal` 清理 MinIO 原文与 Manticore 切片，失败仅告警。
-
-**AI 开书**
-`target_chapter_count` 缺省 12。`plan` 只生成不落库，模型输出经 `normalizeBootstrapPlan` 收敛（卷 ≤3、角色 ≤8、设定 ≤10、枚举值校正、名称截断），作者可改字段后回传；`apply` 在单事务内创建项目、卷、章节、角色、设定与两级大纲节点（卷 → 章），失败整体回滚。生成失败返回 `ERR_AI_PROVIDER`，模型未授权返回 `ERR_FORBIDDEN`。
-
-**卷与章节**
-卷与章节的 `volume_order` / `chapter_order` 传 0 表示取同级最大值 +1。`ChapterUpdateREQ` 是整体覆盖；`content_text`、`summary_text` 为指针字段，省略表示不改、空串表示清空。`ChapterSnapshotRestoreREQ` 回滚前会为当前正文再留一份快照。`ChapterCheckREQ.content_text` 优先于库内正文。
-
-**角色与关系图**
-`CharacterREQ.character_ulid` 为空即新建。`CharacterRelationREQ` 拒绝自环，两端角色必须存在且同属本项目。删除角色时连带删除其关系边。
-
-**世界观设定与创作笔记**
-`lore_type_code` 的 `note` 即创作笔记，与其他设定共用同一组接口。`content_mode_code` 缺省 `rich`。
-
-**知识库**
-上传仅接受 `txt` / `md` / `docx` / `pdf`，文件字段名固定 `file`；超过 `NW_APP_UPLOAD_MAX_MB` 返回 `ERR_INVALID_PARAM`。上传成功即写入 MinIO 原文、落库 `pending` 并投递 `doc_index` 任务。`KnowledgeSearchREQ.keyword_text` 去空白后为空返回 `ERR_INVALID_PARAM`；`search_mode` 仅 `hybrid` 走双通道，其余值一律按 `keyword`；`top_k_count` 缺省取应用配置 `rag_top_k`，再退回全局配置。
-
-**提示词**
-作用域 `global` / `project`；同编码的项目提示词覆盖全局提示词，被覆盖项在列表里带 `overridden_flag`。编码解析：请求体 `prompt_code` 优先，否则只解析正文**首个 token** 的 `/code`，命中启用提示词则剥离命令，未命中按自由对话处理。模板占位符只允许 `user_input` / `chapter_content` / `context` / `prompt_code`，保存期校验，未登记占位符直接 `ERR_INVALID_PARAM`。指令类提示词若用了写作台保留动作编码（`/help` 等），保存被拒绝。
-
-**工具**
-内置 6 个工具不可删、不可改编码；`customized_flag` 由名称/说明/参数的改动推导，改过后代码升级不再覆盖。`/tool/invoke` 按登录用户执行归属校验，结果只读、不写项目数据；`content_text` 为空时回落到 `chapter_ulid` 的库内正文。工具不由命令注入：服务端随请求下发启用工具声明，模型自行决定调用与否。
-
-**菜单与权限目录**
-`page` 行承载页面权限码，`action` 行只登记动作权限码、不进导航。约束：`group` 不可配路由；菜单编码唯一；权限码全局唯一，同码只能被一行登记；上级必须存在且不能是自己或自己的下级；存在下级时不可删除（须先删下级）。隐藏页（`visible_flag=false`）仍下发，前端据此注册路由——这样「把多个页面合并成一个入口」时旧链接与深链不会失效。
-
-**应用配置**
-键为白名单，值为正整数且须落在区间内，越界或键不在白名单返回 `ERR_INVALID_PARAM`。
-
-**AI 对话**
-`ref_*_ulid_list` 只对应 `@` 的两类来源（素材库与历史会话），没有单条消息引用也没有提示词引用：
+`@` 引用的装配方式（优先级数值越大越靠前）：
 
 | 字段 | 来源 | 装配方式 |
 | --- | --- | --- |
@@ -374,23 +386,6 @@ flowchart LR
 | `ref_summary_ulid_list` | 素材库 · 章节摘要 | 显式引用块 |
 | `ref_doc_ulid_list` | 素材库 · 文档 | 全文按切片拼接后进块 |
 | `ref_session_ulid_list` | 历史会话 | 逐条编号归档后进块，一条不删；当前会话自身被拒 |
-
-工具**不在**请求体里点名：`tool_code_list` 字段已移除，服务端随请求下发启用工具声明，由模型自行决定调用。响应 `done` 事件的 `tool_code_list` 是模型本轮**实际调用**的编码，仅供展示与回看。引用文档必须是本项目或全局库，跨项目返回 `ERR_FORBIDDEN`。
-
-**创作规划**
-大纲节点 `node_type_code` 取 `volume` / `arc` / `storyBlock` / `chapter`，`node_status_code` 取 `draft` / `planning` / `ready` / `done`。父子关系与成环由 service 校验，含子节点不可直接删除。
-
-**连续性看板**
-事实复核只接受 `confirmed` / `superseded` / `stale`，不允许退回 `candidate`。伏笔状态取 `planned` / `planted` / `echoed` / `resolved` / `abandoned`。`ChapterSummarySaveREQ` 不带 `summary_ulid` 时按 `(project_ulid, chapter_ulid)` 覆盖，保证「一章一条摘要」。
-
-**模型生态**
-供应商承载「网关 + 凭据」，模型是使用与授权的最小单位：`model_providers` → `model_catalogs` → `model_role_grants` / `model_user_grants`。密钥以 AES-256-GCM 加密保存，VO 只回 `api_key_masked` 与 `api_key_configured`。`api_key_text` 传空表示保持原值。`role_ulid_list` 保存时整体覆盖授权。管理员（含 `*`）可见全部启用模型，其余账号按角色授权与用户直授的并集过滤。
-
-**用量分析与运行状态**
-日期格式 `YYYY-MM-DD`；缺省近 14 天，非法输入回退默认，起止倒置自动纠正。`success_rate_value` 取 0–1。`dependency_code` 取 `postgres` / `redis` / `rabbitmq` / `minio` / `manticore` / `model`，`status_code` 取 `up` / `down` / `degraded`。
-
-**系统管理**
-用户与邮箱唯一，重复返回 `ERR_CONFLICT`；`role_codes` 为空时默认挂 `user` 角色，`UserAdminUpdateREQ.role_codes` 为整体覆盖语义；不能删除自己（`ERR_BIZ_FAILED`）。内置角色 `admin` / `user` 不可删除、不可改编码；仍有用户挂载的角色不可删除（`ERR_CONFLICT`）。审计列表的 `trace_id` 为精确匹配，`action_code` 与 `keyword_text` 为模糊匹配。
 
 
 ## 8. 特殊端点

@@ -121,9 +121,17 @@ func (s *KnowledgeService) List(ctx context.Context, userULID string, req *domai
 
 // Delete 删除文档：MinIO 原文 + 切片 + Manticore 行 + 文档行。
 func (s *KnowledgeService) Delete(ctx context.Context, userULID string, req *domain.KnowledgeDeleteREQ) error {
-	doc, err := s.mustOwnDoc(ctx, userULID, req.DocULID)
+	doc, err := s.knowledgeRepo.GetDocument(ctx, req.DocULID)
 	if err != nil {
 		return err
+	}
+	if doc == nil {
+		return nil // 幂等：文档已不存在，视为删除成功
+	}
+	if doc.ProjectULID != "" && doc.ProjectULID != "0" {
+		if _, err := mustOwnProject(ctx, s.projectRepo, userULID, doc.ProjectULID); err != nil {
+			return err
+		}
 	}
 	if err := s.objectRepo.RemoveObject(ctx, doc.ObjectKey); err != nil {
 		return pkg.WrapBizError(domain.RespCodeStorageError, "文档原文删除失败", err)

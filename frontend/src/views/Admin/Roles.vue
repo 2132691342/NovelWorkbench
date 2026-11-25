@@ -11,6 +11,7 @@
   } from 'element-plus'
   import { deleteAdminRole, listAdminRoles, type NWRoleVo } from '@/api/admin'
   import { usePageQuery } from '@/composables/usePageQuery'
+  import { useRowAction } from '@/composables/useRowAction'
   import { formatTime } from '@/utils/time'
   import { asRow } from '@/utils/table'
   import RoleFormDialog from './components/RoleFormDialog.vue'
@@ -21,9 +22,11 @@
   )
 
   const formDialog = ref<InstanceType<typeof RoleFormDialog>>()
+  const rowAction = useRowAction()
 
-  /** 删除角色（内置角色由后端拒绝） */
+  /** 删除角色（内置角色由后端拒绝；行内加锁防连点） */
   const remove = async (row: NWRoleVo) => {
+    if (row.builtin_flag) return
     try {
       await ElMessageBox.confirm(`将删除角色「${row.role_name}」，确定吗？`, '删除角色', {
         type: 'warning'
@@ -31,9 +34,11 @@
     } catch {
       return
     }
-    await deleteAdminRole(row.role_ulid)
-    ElMessage.success('角色已删除')
-    await load()
+    await rowAction.run(row.role_ulid, async () => {
+      await deleteAdminRole(row.role_ulid)
+      ElMessage.success('角色已删除')
+      await load()
+    })
   }
 
   onMounted(() => {
@@ -82,7 +87,8 @@
             size="small"
             text
             type="danger"
-            :disabled="row.builtin_flag"
+            :loading="rowAction.isPending(row.role_ulid)"
+            :disabled="row.builtin_flag || rowAction.busyFlag.value"
             @click="remove(asRow<NWRoleVo>(row))"
           >
             删除

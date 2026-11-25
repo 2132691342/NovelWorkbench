@@ -9,6 +9,11 @@ export function readToken(): string {
   return sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY) ?? ''
 }
 
+/** 当前令牌是否为「记住我」的持久化存储（换令牌时保持同一存储层级） */
+export function isPersistentToken(): boolean {
+  return localStorage.getItem(TOKEN_KEY) !== null
+}
+
 /** 写入访问令牌：remember=true 持久化，false 只保留到关闭标签页 */
 export function writeToken(token: string, remember = true): void {
   if (remember) {

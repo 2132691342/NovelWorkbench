@@ -50,14 +50,18 @@
     return levelOptions.find((item) => item.value === levelCode)?.label ?? levelCode
   }
 
-  const prettyBody = computed(() => {
-    if (!detail.value?.request_body) return ''
+  const prettyBody = computed(() => prettyJson(detail.value?.request_body))
+  const prettyRespBody = computed(() => prettyJson(detail.value?.resp_body))
+
+  /** 把落库文本格式化为可读 JSON；非 JSON（上传占位、纯文本）原样返回 */
+  function prettyJson(raw?: string) {
+    if (!raw) return ''
     try {
-      return JSON.stringify(JSON.parse(detail.value.request_body), null, 2)
+      return JSON.stringify(JSON.parse(raw), null, 2)
     } catch {
-      return detail.value.request_body
+      return raw
     }
-  })
+  }
 
   const searchWithDate = () => {
     query.value.date_from = dateRange.value?.[0] ?? ''
@@ -246,6 +250,8 @@
           </ElDescriptions>
           <h4 class="audit-detail__title">请求体</h4>
           <pre class="audit-detail__body">{{ prettyBody || '（未采样：上传请求或超过 32KB）' }}</pre>
+          <h4 class="audit-detail__title">响应体</h4>
+          <pre class="audit-detail__body">{{ prettyRespBody || '（未采样：流式响应、上传或超过 32KB）' }}</pre>
         </template>
         <ElEmpty v-else-if="!detailLoading" description="未读取到审计详情" />
       </div>

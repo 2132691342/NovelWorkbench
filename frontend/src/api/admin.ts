@@ -55,6 +55,8 @@ export interface NWAuditVo {
 /** 审计详情视图（含请求体原文，字段对齐后端 AuditDetailVO） */
 export interface NWAuditDetailVo extends NWAuditVo {
   request_body: string
+  /** 响应体（脱敏截断；空串表示流式/上传/超限未采样） */
+  resp_body: string
 }
 
 // ============================================================
@@ -78,7 +80,7 @@ export interface NWUserAdminCreateReqVo {
   remark_text?: string
 }
 
-/** 更新用户请求（字段对齐后端 UserAdminUpdateREQ，仅覆盖非空字段） */
+/** 更新用户请求（字段对齐后端 UserAdminUpdateREQ；缺省字段不改，空串表示清空） */
 export interface NWUserAdminUpdateReqVo {
   user_ulid: string
   user_email?: string

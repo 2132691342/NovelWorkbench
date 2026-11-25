@@ -36,9 +36,9 @@
 
   const title = computed(() => (editing.value ? '编辑角色' : '新建角色'))
   const builtinFlag = computed(() => editing.value?.builtin_flag === true)
-  const allPermFlag = computed(
-    () => editing.value?.builtin_flag === true && (editing.value.perm_codes ?? []).includes('*')
-  )
+  // 只有内置管理员锁定权限面板：其余内置角色（如普通用户）的权限必须可反复编辑
+  const adminLocked = computed(() => editing.value?.role_code === 'admin')
+  const allPermFlag = computed(() => adminLocked.value)
 
   const rules = computed<FormRules>(() => ({
     role_code: [
@@ -61,6 +61,16 @@
     }
   }
 
+  /** 可勾选的分组：通配权限 "*" 只属于管理员，其他角色里不展示，避免选了必被后端拒绝 */
+  const visibleGroups = computed(() =>
+    permGroups.value
+      .map((group) => ({
+        ...group,
+        perm_list: group.perm_list.filter((item) => item.perm_code !== '*')
+      }))
+      .filter((group) => group.perm_list.length > 0)
+  )
+
   const groupCodes = (group: NWPermGroupVo) => group.perm_list.map((item) => item.perm_code)
 
   const isGroupChecked = (group: NWPermGroupVo) =>
@@ -72,13 +82,13 @@
     form.perm_codes = checked ? [...rest, ...codes] : rest
   }
 
-  /** 打开弹窗：传角色为编辑，不传为新建 */
+  /** 打开弹窗：传角色为编辑，不传为新建；每次都按当前行重建表单，避免残留上一次的勾选 */
   const open = async (role?: NWRoleVo) => {
     editing.value = role ?? null
     form.role_code = role?.role_code ?? ''
     form.role_name = role?.role_name ?? ''
     form.remark_text = role?.remark_text ?? ''
-    form.perm_codes = [...(role?.perm_codes ?? [])]
+    form.perm_codes = (role?.perm_codes ?? []).filter((code) => code !== '*' || adminLocked.value)
     visible.value = true
     formRef.value?.clearValidate()
     await loadCatalog()
@@ -95,7 +105,7 @@
         role_code: form.role_code,
         role_name: form.role_name,
         remark_text: form.remark_text,
-        perm_codes: allPermFlag.value ? ['*'] : form.perm_codes
+        perm_codes: adminLocked.value ? ['*'] : [...form.perm_codes]
       })
       ElMessage.success(editing.value ? '角色已更新' : '角色已创建')
       visible.value = false
@@ -137,7 +147,7 @@
             title="内置管理员拥有全部权限（*），无需逐项勾选"
           />
           <template v-else>
-            <div v-for="group in permGroups" :key="group.group_code" class="role-form__group">
+            <div v-for="group in visibleGroups" :key="group.group_code" class="role-form__group">
               <label class="role-form__group-head">
                 <ElCheckbox
                   :model-value="isGroupChecked(group)"
@@ -157,7 +167,7 @@
                 </ElCheckbox>
               </ElCheckboxGroup>
             </div>
-            <p v-if="!catalogLoading && permGroups.length === 0" class="nw-hint">
+            <p v-if="!catalogLoading && visibleGroups.length === 0" class="nw-hint">
               暂无可用权限目录
             </p>
           </template>

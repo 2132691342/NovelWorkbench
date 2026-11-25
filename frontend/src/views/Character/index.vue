@@ -24,6 +24,7 @@
     type NWCharacterVo
   } from '@/api/character'
   import { useProjectStore } from '@/store/modules/project'
+  import { useRowAction } from '@/composables/useRowAction'
   import CharacterFormDrawer from './components/CharacterFormDrawer.vue'
   import CharacterGraphPanel from './components/CharacterGraphPanel.vue'
   import RelationFormDialog from './components/RelationFormDialog.vue'
@@ -63,6 +64,7 @@
 
   const formDrawer = ref<InstanceType<typeof CharacterFormDrawer> | null>(null)
   const relationDialog = ref<InstanceType<typeof RelationFormDialog> | null>(null)
+  const rowAction = useRowAction()
 
   const roleTypeLabel = (code: string) =>
     roleTypeOptions.find((item) => item.value === code)?.label ?? (code || '未分类')
@@ -133,9 +135,11 @@
     } catch {
       return
     }
-    await deleteCharacter(row.character_ulid)
-    ElMessage.success('角色已删除')
-    await refreshAll()
+    await rowAction.run(row.character_ulid, async () => {
+      await deleteCharacter(row.character_ulid)
+      ElMessage.success('角色已删除')
+      await refreshAll()
+    })
   }
 
   const openRelationDialog = () => {
@@ -269,7 +273,14 @@
                 <ElButton size="small" text type="primary" @click="formDrawer?.open(asRow<NWCharacterVo>(row))">
                   编辑
                 </ElButton>
-                <ElButton size="small" text type="danger" @click="removeCharacter(asRow<NWCharacterVo>(row))">
+                <ElButton
+                  size="small"
+                  text
+                  type="danger"
+                  :loading="rowAction.isPending(asRow<NWCharacterVo>(row).character_ulid)"
+                  :disabled="rowAction.busyFlag.value"
+                  @click="removeCharacter(asRow<NWCharacterVo>(row))"
+                >
                   删除
                 </ElButton>
               </template>

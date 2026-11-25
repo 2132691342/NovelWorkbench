@@ -17,6 +17,7 @@
   import { deletePrompt, listPrompts, savePrompt } from '@/api/prompt'
   import type { NWPromptVo } from '@/api/contracts'
   import { useProjectStore } from '@/store/modules/project'
+  import { useRowAction } from '@/composables/useRowAction'
   import { formatRelativeTime } from '@/utils/time'
   import PromptEditDrawer from './components/PromptEditDrawer.vue'
   import PromptPreviewDialog from './components/PromptPreviewDialog.vue'
@@ -37,6 +38,7 @@
   const kindCode = ref('')
   const keywordText = ref('')
   const togglingUlid = ref('')
+  const rowAction = useRowAction()
 
   const drawer = ref<InstanceType<typeof PromptEditDrawer>>()
   const previewVisible = ref(false)
@@ -123,9 +125,11 @@
     } catch {
       return
     }
-    await deletePrompt(row.prompt_ulid)
-    ElMessage.success('提示词已删除')
-    await load()
+    await rowAction.run(row.prompt_ulid, async () => {
+      await deletePrompt(row.prompt_ulid)
+      ElMessage.success('提示词已删除')
+      await load()
+    })
   }
 
   const openPreview = (row: NWPromptVo) => {
@@ -263,7 +267,8 @@
                 size="small"
                 text
                 type="danger"
-                :disabled="row.builtin_flag"
+                :loading="rowAction.isPending(row.prompt_ulid)"
+                :disabled="row.builtin_flag || rowAction.busyFlag.value"
                 @click="remove(row as NWPromptVo)"
               >
                 删除

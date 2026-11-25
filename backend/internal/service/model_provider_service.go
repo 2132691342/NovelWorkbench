@@ -251,7 +251,7 @@ func (s *ModelProviderService) DeleteProvider(ctx context.Context, req *domain.M
 		return err
 	}
 	if current == nil {
-		return pkg.NewBizError(domain.RespCodeNotFound, "供应商不存在")
+		return nil // 幂等：目标已不存在，视为删除成功
 	}
 	modelCount, err := s.providerRepo.CountModelsByProvider(ctx, req.ProviderULID)
 	if err != nil {

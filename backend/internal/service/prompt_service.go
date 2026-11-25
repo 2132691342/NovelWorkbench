@@ -265,7 +265,7 @@ func (s *PromptService) Delete(ctx context.Context, req *domain.PromptDeleteREQ)
 		return err
 	}
 	if current == nil {
-		return pkg.NewBizError(domain.RespCodeNotFound, "提示词不存在")
+		return nil // 幂等：目标已不存在，视为删除成功
 	}
 	if current.BuiltinFlag {
 		return pkg.NewBizError(domain.RespCodeBizFailed, "内置提示词不允许删除，可停用")

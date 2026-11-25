@@ -99,7 +99,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ### 3.1 用户、权限与审计（7 张）
 
-**users** — `user_ulid`(PK) · `user_name`(UQ,v64) · `user_email`(UQ,v128) · `password_hash`(v128，bcrypt，`json:"-"` 不出参) · `avatar_url`(v256) · `remark_text`(v256) · `user_status_code`(IDX,v16，缺省 `active`，取值 `active`/`disabled`)
+**users** — `user_ulid`(PK) · `user_name`(UQ,v64) · `user_email`(UQ,v128) · `password_hash`(v128，bcrypt，`json:"-"` 不出参) · `avatar_url`(v256) · `remark_text`(v256) · `user_status_code`(IDX,v16，缺省 `active`，取值 `active`/`disabled`) · `pwd_epoch`(bigint，缺省 0，改密/重置密码时 +1；令牌内版本落后即失效)
 
 **roles** — `role_ulid`(PK) · `role_code`(UQ,v64) · `role_name`(v64) · `remark_text`(v256) · `perm_codes_json`(text，权限码 JSON 数组，`["*"]` 表示全部) · `builtin_flag`(bool，缺省 false，内置角色不可删除)
 
@@ -111,9 +111,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 `perm_code` 的全局唯一性由 `MenuService.Save` 调用 `MenuRepo.CountByPermCode` 校验（冲突返回 `ERR_CONFLICT`），数据库不建唯一索引以允许多行空值。
 
-**audit_logs** — `audit_ulid`(PK) · `log_level_code`(IDX,v16，级别 `info`(2xx/3xx)/`warn`(4xx)/`error`(5xx)，由 HTTP 状态推导) · `trace_id`(IDX,v40，链路 ID，与响应包络 `trace_id` 同值) · `user_ulid`(IDX，操作者，未登录为空串) · `user_name`(IDX,v64，操作者登录名快照) · `action_code`(IDX,v128，接口路径去 `/api/v1/` 前缀) · `request_path`(v256) · `request_method`(v8) · `request_body`(text，凭据字段脱敏为 `***`，上传与超限不采样) · `target_type`(IDX,v32，目标类型 user/role/menu/project/chapter/document/prompt/tool/model/provider/chat_session/notification) · `target_ulid`(IDX) · `resp_code`(IDX,v32) · `resp_message`(v512) · `http_status`(int) · `latency_ms`(bigint) · `ip_addr`(v64) · `user_agent_text`(v512)
+**audit_logs** — `audit_ulid`(PK) · `log_level_code`(IDX,v16，级别 `info`(2xx/3xx)/`warn`(4xx)/`error`(5xx)，由 HTTP 状态推导) · `trace_id`(IDX,v40，链路 ID，与响应包络 `trace_id` 同值) · `user_ulid`(IDX，操作者，未登录为空串) · `user_name`(IDX,v64，操作者登录名快照) · `action_code`(IDX,v128，接口路径去 `/api/v1/` 前缀) · `request_path`(v256) · `request_method`(v8) · `request_body`(text，凭据字段脱敏为 `***`，上传与超限不采样) · `resp_body`(text，响应体采样，超 32KB 追加截断标记，流式/上传记占位) · `target_type`(IDX,v32，目标类型 user/role/menu/project/chapter/document/prompt/tool/model/provider/chat_session/notification) · `target_ulid`(IDX) · `resp_code`(IDX,v32) · `resp_message`(v512) · `http_status`(int) · `latency_ms`(bigint) · `ip_addr`(v64) · `user_agent_text`(v512)
 
-写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`。中间件缓冲响应体前 8KB 解析包络（业务码与说明）后透传，普通响应不受影响。落库失败只告警，不阻断业务。`AuditRepo` 有 `Create`、`GetByULID`、`ListPage`，无删除路径；`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤。
+写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`。中间件缓冲响应体（上限 32KB）解析包络（业务码与说明）并把响应体一并落库，普通响应不受影响。落库失败只告警，不阻断业务。`AuditRepo` 有 `Create`、`GetByULID`、`ListPage`，无删除路径；`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤。
 
 **login_logs** — `login_log_ulid`(PK) · `user_ulid`(IDX，命中用户，失败为空) · `login_account_text`(IDX,v128，登录名或邮箱) · `login_result_code`(IDX,v16，`success`/`failed`/`disabled`) · `fail_reason_text`(v256) · `ip_addr`(v64) · `user_agent_text`(v512)
 
@@ -187,7 +187,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 **model_user_grants** — `grant_ulid`(PK，`MUG_`) · `model_ulid`(IDX) · `user_ulid`(IDX)
 
-角色授权与用户授权是两条并列的授权路径：`ModelAccessService` 判定时取「用户显式授权 ∪ 用户所属角色授权」，任一命中即放行。用户被删除时 `UserAdminService.Delete` 连带清理其 `model_user_grants` 行；角色授权则由 `ModelProviderRepo.ReplaceGrants` 整体覆盖。
+角色授权与用户授权是两条并列的授权路径：`ModelProviderService.ChatSpecOf` 判定时取「用户显式授权 ∪ 用户所属角色授权」，任一命中即放行。用户被删除时 `UserAdminService.Delete` 连带清理其 `model_user_grants` 行；角色授权则由 `ModelProviderRepo.ReplaceGrants` 整体覆盖。
 
 **model_usage_stats** — `usage_stat_ulid`(PK) · `stat_date`(UQ,v10，`YYYY-MM-DD`) · `provider_ulid`(UQ) · `provider_name`(v64，供应商名快照) · `model_name`(UQ,v128) · `call_type_code`(UQ,v16，`chat`) · `call_count`(bigint) · `success_count`(bigint) · `fail_count`(bigint) · `prompt_tokens`(bigint) · `completion_tokens`(bigint) · `total_tokens`(bigint) · `latency_ms_sum`(bigint)
 
@@ -341,13 +341,12 @@ ORDER BY score DESC LIMIT <topK>
 
 ### 5.3 Redis
 
-| 项 | 值 |
-| --- | --- |
-| 键格式 | `nw:token:blacklist:<sha256hex(token)>` |
-| 值 | `"1"` |
-| TTL | 令牌签发有效期（`expires_at - issued_at`），到期键自动清除 |
-| 读语义 | `TokenRepo.IsRevoked` 在 Redis 异常时返回 false（视为未吊销） |
-| 写入点 | `AuthService.Logout` → `TokenRepo.Revoke` |
+两类键，均为易失缓存，可整体丢弃后由业务重建：
+
+| 键格式 | 值 | TTL | 语义 |
+| --- | --- | --- | --- |
+| `nw:token:blacklist:<sha256hex(token)>` | `"1"` | 令牌签发时长（`expires_at - issued_at`） | 登出拉黑；`IsRevoked` 在 Redis 异常时返回 false（视为未吊销），写入点 `AuthService.Logout` |
+| `nw:idempotency:<sha256hex(user \| path \| key)>` | `IdempotencyRecord` JSON（`state_code`/`body_hash`/`http_status`/`header_map`/`body_text`） | 24 小时 | 写请求幂等：首请求 `SET NX` 写 `processing`，2xx 后 `SET XX` 覆盖 `done`，非 2xx 与 5xx `DEL` 释放；单键上限 1MB，超限放弃缓存；Redis 不可用时放行 |
 
 ### 5.4 RabbitMQ
 
@@ -376,12 +375,12 @@ ORDER BY score DESC LIMIT <topK>
 | 顺序 | 动作 | 触发条件 | 失败处理 |
 | --- | --- | --- | --- |
 | 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model` 且 `model_providers` 为空 | 告警，继续启动 |
-| 2 | `ModelProviderService.MigrateLegacyModels` 把仅带 `chat_model_name` 的供应商行补成目录行 | `model_catalogs` 为空 | 告警，继续启动 |
-| 3 | `PromptService.SeedDefaults` 播种内置全局提示词（12 份身份 + 24 份指令）并按指纹升级、下线旧内置提示词 | 按 `(global, "", prompt_code)` 查行；不存在则插入；`customized_flag` 或指纹一致则跳过；否则覆盖正文并写新指纹 | `os.Exit(1)` |
-| 4 | `ToolService.SeedDefaults` 播种内置工具 | 按 `tool_code` 查缺补插 | `os.Exit(1)` |
+| 2 | `ModelProviderService.MigrateLegacyModels`：模型目录为空时，把仅带 `chat_model_name` 的供应商行补成目录行 | `model_catalogs` 为空 | 告警，继续启动 |
+| 3 | `ToolService.SeedDefaults` 播种内置工具 | 按 `tool_code` 查缺补插 | `os.Exit(1)` |
+| 4 | `PromptService.SeedDefaults` 播种内置全局提示词（12 份身份 + 24 份指令）并按指纹升级、下线清单外的内置提示词 | 按 `(global, "", prompt_code)` 查行；不存在则插入；`customized_flag` 或指纹一致则跳过；否则覆盖正文并写新指纹 | `os.Exit(1)` |
 | 5 | `SettingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插；已存在时仅同步 `setting_desc` | `os.Exit(1)` |
-| 6 | `RoleService.SeedDefaults` 播种内置角色 | 按 `role_code` 查缺补插 | `os.Exit(1)` |
-| 7 | `MenuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插，父级编码先解析 | `os.Exit(1)` |
+| 6 | `MenuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插，父级编码先解析 | `os.Exit(1)` |
+| 7 | `RoleService.SeedDefaults` 播种内置角色，并修正权限数据 | 按 `role_code` 查缺补插；`admin` 固定 `*`，其他内置角色剔除 `*` 与未登记编码（依赖上一步菜单先登记完权限码，顺序不可颠倒） | `os.Exit(1)` |
 | 8 | `UserAdminService.BootstrapAdmin` 引导管理员 | `users` 为空 | `os.Exit(1)` |
 
 播种内容：
@@ -394,7 +393,7 @@ ORDER BY score DESC LIMIT <topK>
 | 内置工具 | 6 个（`ToolService.SeedDefaults`）：`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`；全局、启用、带参数声明 |
 | 应用配置 | `rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
 | 内置角色 | `admin`（`perm_codes_json=["*"]`）、`user`（`perm_codes_json="[]"`），`builtin_flag=true`，已存在不覆盖 |
-| 内置菜单 | 来源 `menuSeedList`，共 28 行：3 个分组（创作 / AI 资产 / 系统）、24 个页面、1 个动作权限（`action_model_write`）。`material` 是素材库唯一入口；`character`、`lore`、`knowledge`、`notes` 标记 `HiddenFlag`（已被素材库合并取代），`profile` 从顶栏用户菜单进入同样隐藏，五者仍注册路由但不进导航 |
+| 内置菜单 | 来源 `menuSeedList`，共 28 行：3 个分组（创作 / AI 资产 / 系统）、24 个页面、1 个动作权限（`action_model_write`）。`material` 是素材库唯一入口；`character`、`lore`、`knowledge`、`notes` 标记 `HiddenFlag`（入口已并入素材库），`profile` 从顶栏用户菜单进入同样隐藏，五者仍注册路由但不进导航 |
 | 管理员 | 登录名 `admin`，邮箱 `admin@novelworkbench.local`，密码取 `app.admin_password`（缺省 `Admin@123456`），挂载 `admin` 角色 |
 
 ## 7. 事务与一致性
@@ -474,7 +473,7 @@ ORDER BY score DESC LIMIT <topK>
 - 唯一迁移入口是 `cmd/server/main.go` 的 `db.AutoMigrate(...)`，声明 33 个 DO。仓库内没有 `.sql` 文件，也没有 migrations 目录。
 - AutoMigrate 语义：表不存在则建表；表已存在则补缺失的列与索引。它不做破坏性变更——不删列、不改列类型、不删索引；删除字段或调整列宽必须手工执行 DDL。
 - AutoMigrate 失败（连接失败或 DDL 出错）时 `os.Exit(1)`，服务不会带半迁移状态启动。
-- **下线清理在启动期显式执行**：AutoMigrate 只补不删，因此已下线模块的遗留表与列必须手工清理。`cmd/server/main.go` 在迁移后依次执行：删 `chat_sessions.summary_text` 与 `chat_sessions.compact_at`（历史改为全量注入后不再有「压缩摘要」概念）；删表 `skills`、`skill_references`、`prompt_profiles`、`slash_commands`（技能与提示词档案模块已被 `prompts` 一张表取代）；删列 `chat_messages.skill_code`、`chat_messages.ref_message_json`、`chat_messages.ref_prompt_json`（引用机制改为「素材库 + 历史会话」两类来源，不再有单条消息引用与提示词引用）。清理前先 `HasTable` / `HasColumn` 判存，失败只告警不阻断启动。
+- **遗留结构在启动期显式清理**：AutoMigrate 只补不删，因此已被取代的表与列必须在启动时手工清理。`cmd/server/main.go` 在迁移后依次执行：删 `chat_sessions.summary_text` 与 `chat_sessions.compact_at`（会话摘要与压缩时间两列已无写入方）；删表 `skills`、`skill_references`、`prompt_profiles`、`slash_commands`（技能与提示词档案已合并进 `prompts` 一张表）；删列 `chat_messages.skill_code`、`chat_messages.ref_message_json`、`chat_messages.ref_prompt_json`（引用只保留「素材库 + 历史会话」两类来源）。清理前先 `HasTable` / `HasColumn` 判存，失败只告警不阻断启动。
 - 数据层幂等补丁在启动期以业务键判空执行：`SeedDefault`（供应商表为空）、`MigrateLegacyModels`（模型表为空）、四个 `SeedDefaults`（按编码/键查缺补插）、`BootstrapAdmin`（用户表为空）。
 - Manticore 侧的结构管理由 `ensureManticoreSchema` 自实现：表不存在则按 CJK ngram 结构建表；已存在但 `SHOW CREATE TABLE` 结果缺少 `ngram_len` 时 drop 重建，并从 PG 回灌全部切片。这是唯一支持的结构变更路径。
 - Redis 与 RabbitMQ 无结构迁移：键按 TTL 自然过期，队列在每次投递/消费前 `QueueDeclare` 幂等声明。

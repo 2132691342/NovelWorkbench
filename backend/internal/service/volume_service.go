@@ -93,7 +93,7 @@ func (s *VolumeService) Delete(ctx context.Context, userULID string, req *domain
 			return err
 		}
 		if volume == nil {
-			return pkg.NewBizError(domain.RespCodeNotFound, "卷不存在")
+			return nil // 幂等：目标已不存在，视为删除成功
 		}
 		if _, err := mustOwnProject(ctx, txProject, userULID, volume.ProjectULID); err != nil {
 			return err

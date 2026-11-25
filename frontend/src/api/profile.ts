@@ -27,6 +27,12 @@ export interface NWPasswordChangeReqVo {
   new_password_text: string
 }
 
+/** 修改密码结果（后端返回新令牌：旧令牌已因密码版本递增失效） */
+export interface NWPasswordChangeVo {
+  access_token: string
+  expires_in_sec: number
+}
+
 /** 查询个人资料 */
 export function fetchProfileDetail(): Promise<NWProfileVo> {
   return get<NWProfileVo>('/profile/detail')
@@ -37,7 +43,7 @@ export function updateProfile(req: NWProfileUpdateReqVo): Promise<NWProfileVo> {
   return post<NWProfileVo>('/profile/update', req)
 }
 
-/** 修改本人密码 */
-export function changePassword(req: NWPasswordChangeReqVo): Promise<null> {
-  return post<null>('/profile/password/change', req)
+/** 修改本人密码（返回新令牌，调用方必须替换本地令牌） */
+export function changePassword(req: NWPasswordChangeReqVo): Promise<NWPasswordChangeVo> {
+  return post<NWPasswordChangeVo>('/profile/password/change', req)
 }

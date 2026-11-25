@@ -81,7 +81,7 @@ func (s *LoreService) Delete(ctx context.Context, userULID string, req *domain.L
 		return err
 	}
 	if lore == nil {
-		return pkg.NewBizError(domain.RespCodeNotFound, "设定不存在")
+		return nil // 幂等：目标已不存在，视为删除成功
 	}
 	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, lore.ProjectULID); err != nil {
 		return err

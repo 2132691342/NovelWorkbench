@@ -14,6 +14,7 @@
   } from 'element-plus'
   import { deleteAdminUser, listAdminUsers, type NWUserAdminVo } from '@/api/admin'
   import { usePageQuery } from '@/composables/usePageQuery'
+  import { useRowAction } from '@/composables/useRowAction'
   import { formatTime } from '@/utils/time'
   import { asRow } from '@/utils/table'
   import ResetPasswordDialog from './components/ResetPasswordDialog.vue'
@@ -26,6 +27,7 @@
 
   const formDialog = ref<InstanceType<typeof UserFormDialog>>()
   const resetDialog = ref<InstanceType<typeof ResetPasswordDialog>>()
+  const rowAction = useRowAction()
 
   const statusOptions = [
     { value: '', label: '全部状态' },
@@ -39,7 +41,7 @@
   const statusBadge = (statusCode: string) =>
     statusCode === 'active' ? 'success' : 'danger'
 
-  /** 删除用户（禁止删除自己由后端拦截并给出提示） */
+  /** 删除用户（禁止删除自己由后端拦截并给出提示；行内加锁防连点） */
   const remove = async (row: NWUserAdminVo) => {
     try {
       await ElMessageBox.confirm(`将永久删除用户「${row.user_name}」，确定吗？`, '删除用户', {
@@ -48,9 +50,11 @@
     } catch {
       return
     }
-    await deleteAdminUser(row.user_ulid)
-    ElMessage.success('用户已删除')
-    await load()
+    await rowAction.run(row.user_ulid, async () => {
+      await deleteAdminUser(row.user_ulid)
+      ElMessage.success('用户已删除')
+      await load()
+    })
   }
 
   const handleSaved = () => {
@@ -122,7 +126,16 @@
         <template #default="{ row }">
           <ElButton size="small" text type="primary" @click="formDialog?.open(asRow<NWUserAdminVo>(row))">编辑</ElButton>
           <ElButton size="small" text @click="resetDialog?.open(asRow<NWUserAdminVo>(row))">重置密码</ElButton>
-          <ElButton size="small" text type="danger" @click="remove(asRow<NWUserAdminVo>(row))">删除</ElButton>
+          <ElButton
+            size="small"
+            text
+            type="danger"
+            :loading="rowAction.isPending(asRow<NWUserAdminVo>(row).user_ulid)"
+            :disabled="rowAction.busyFlag.value"
+            @click="remove(asRow<NWUserAdminVo>(row))"
+          >
+            删除
+          </ElButton>
         </template>
       </ElTableColumn>
       <template #empty>

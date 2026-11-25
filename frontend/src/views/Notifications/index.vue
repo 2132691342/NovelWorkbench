@@ -20,6 +20,7 @@
     type NWNotificationVo
   } from '@/api/notification'
   import { useNotificationStore } from '@/store/modules/notification'
+  import { useRowAction } from '@/composables/useRowAction'
   import { formatRelativeTime, formatTime } from '@/utils/time'
 
   const notificationStore = useNotificationStore()
@@ -33,6 +34,7 @@
   const loading = ref(false)
   const activeFilter = ref<string>('all')
   const markingAll = ref(false)
+  const rowAction = useRowAction()
 
   const filterTabs: Array<{ value: ReadFilter; label: string }> = [
     { value: 'all', label: '全部' },
@@ -111,12 +113,14 @@
     } catch {
       return
     }
-    await deleteNotification(row.notification_ulid)
-    ElMessage.success('通知已删除')
-    if (items.value.length === 1 && pageNum.value > 1) {
-      pageNum.value -= 1
-    }
-    await refreshAll()
+    await rowAction.run(row.notification_ulid, async () => {
+      await deleteNotification(row.notification_ulid)
+      ElMessage.success('通知已删除')
+      if (items.value.length === 1 && pageNum.value > 1) {
+        pageNum.value -= 1
+      }
+      await refreshAll()
+    })
   }
 
   onMounted(() => {
@@ -184,7 +188,16 @@
             标记已读
           </ElButton>
           <div class="notifications__spacer" />
-          <ElButton size="small" text type="danger" @click="remove(row)">删除</ElButton>
+          <ElButton
+            size="small"
+            text
+            type="danger"
+            :loading="rowAction.isPending(row.notification_ulid)"
+            :disabled="rowAction.busyFlag.value"
+            @click="remove(row)"
+          >
+            删除
+          </ElButton>
         </div>
       </ElCard>
 

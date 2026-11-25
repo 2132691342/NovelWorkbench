@@ -22,6 +22,7 @@ type AuditLogDO struct {
 	RequestPath   string `json:"request_path" gorm:"column:request_path;size:256"`          // 请求路径
 	RequestMethod string `json:"request_method" gorm:"column:request_method;size:8"`        // 请求方法（GET/POST）
 	RequestBody   string `json:"request_body" gorm:"column:request_body;type:text"`         // 请求体（脱敏截断，文件上传不记）
+	RespBody      string `json:"resp_body" gorm:"column:resp_body;type:text"`               // 响应体（脱敏截断，SSE 流不采样）
 	TargetType    string `json:"target_type" gorm:"column:target_type;size:32;index"`       // 目标类型（user/role 等）
 	TargetULID    string `json:"target_ulid" gorm:"column:target_ulid;size:40;index"`       // 目标 ULID
 	RespCode      string `json:"resp_code" gorm:"column:resp_code;size:32;index"`           // 业务响应码
@@ -56,10 +57,11 @@ type AuditVO struct {
 	CreatedAt     string `json:"created_at"`      // 记录时间（RFC3339）
 }
 
-// AuditDetailVO 审计详情视图（含请求体原文）。
+// AuditDetailVO 审计详情视图（含请求体与响应体原文）。
 type AuditDetailVO struct {
 	AuditVO
 	RequestBody string `json:"request_body"` // 请求体（脱敏截断）
+	RespBody    string `json:"resp_body"`    // 响应体（脱敏截断）
 }
 
 // AuditListREQ 审计日志分页查询请求（POST body）。

@@ -374,6 +374,14 @@ func (s *MenuService) Save(ctx context.Context, req *domain.MenuREQ) (domain.Men
 	if err := s.menuRepo.Update(ctx, req.MenuULID, fields); err != nil {
 		return domain.MenuVO{}, err
 	}
+	// 权限码被改写或菜单被停用后，旧权限码不再登记于任何启用菜单，需从角色里剔除
+	permRetired := current.PermCode != "" &&
+		(current.PermCode != req.PermCode || !enabledFlag || !current.EnabledFlag)
+	if s.roleSvc != nil && permRetired {
+		if err := s.roleSvc.PrunePermCode(ctx, current.PermCode); err != nil {
+			pkg.SLogger().Warnw("清理角色悬挂权限码失败", "perm_code", current.PermCode, "error", err)
+		}
+	}
 	current.ParentULID = req.ParentULID
 	current.MenuCode = req.MenuCode
 	current.MenuName = req.MenuName
@@ -397,7 +405,7 @@ func (s *MenuService) Delete(ctx context.Context, req *domain.MenuDeleteREQ) err
 		return err
 	}
 	if current == nil {
-		return pkg.NewBizError(domain.RespCodeNotFound, "菜单不存在")
+		return nil // 幂等：目标已不存在，视为删除成功
 	}
 	children, err := s.menuRepo.CountChildren(ctx, req.MenuULID)
 	if err != nil {
@@ -406,7 +414,17 @@ func (s *MenuService) Delete(ctx context.Context, req *domain.MenuDeleteREQ) err
 	if children > 0 {
 		return pkg.NewBizError(domain.RespCodeConflict, "请先删除下级菜单")
 	}
-	return s.menuRepo.Delete(ctx, req.MenuULID)
+	if err := s.menuRepo.Delete(ctx, req.MenuULID); err != nil {
+		return err
+	}
+	// 菜单是权限码的唯一登记处：删掉登记后必须同步剔除角色里的悬挂权限码，
+	// 否则角色页会显示一个「勾选了但目录里没有」的幽灵权限。
+	if s.roleSvc != nil && current.PermCode != "" {
+		if err := s.roleSvc.PrunePermCode(ctx, current.PermCode); err != nil {
+			pkg.SLogger().Warnw("清理角色悬挂权限码失败", "perm_code", current.PermCode, "error", err)
+		}
+	}
+	return nil
 }
 
 // validateParent 校验上级菜单：不能指向自己或自己的下级（成环检测）。

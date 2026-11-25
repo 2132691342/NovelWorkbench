@@ -59,7 +59,7 @@ func (s *AuditService) Detail(ctx context.Context, req *domain.AuditDetailREQ) (
 	if do == nil {
 		return domain.AuditDetailVO{}, pkg.NewBizError(domain.RespCodeNotFound, "审计记录不存在")
 	}
-	return domain.AuditDetailVO{AuditVO: toAuditVO(do), RequestBody: do.RequestBody}, nil
+	return domain.AuditDetailVO{AuditVO: toAuditVO(do), RequestBody: do.RequestBody, RespBody: do.RespBody}, nil
 }
 
 // toAuditVO 组装审计视图对象（历史行缺级别时按 HTTP 状态推导，保证列表着色一致）。

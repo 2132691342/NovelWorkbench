@@ -165,16 +165,14 @@ func (s *ToolService) Save(ctx context.Context, req *domain.ToolREQ) (domain.Too
 	if err := s.toolRepo.Update(ctx, req.ToolULID, fields); err != nil {
 		return domain.ToolVO{}, err
 	}
-	current.ToolCode = req.ToolCode
-	current.ToolName = req.ToolName
-	current.DescriptionText = req.DescriptionText
-	current.ParamSchemaJSON = paramJSON
-	current.EnabledFlag = enabledFlag
-	current.SortOrder = req.SortOrder
-	if customized, ok := fields["customized_flag"].(bool); ok {
-		current.CustomizedFlag = customized
+	updated, err := s.toolRepo.GetByULID(ctx, req.ToolULID)
+	if err != nil {
+		return domain.ToolVO{}, err
 	}
-	return toToolVO(current), nil
+	if updated == nil {
+		return domain.ToolVO{}, pkg.NewBizError(domain.RespCodeNotFound, "工具不存在")
+	}
+	return toToolVO(updated), nil
 }
 
 // Delete 删除工具（内置不可删）。
@@ -184,7 +182,7 @@ func (s *ToolService) Delete(ctx context.Context, req *domain.ToolDeleteREQ) err
 		return err
 	}
 	if current == nil {
-		return pkg.NewBizError(domain.RespCodeNotFound, "工具不存在")
+		return nil // 幂等：目标已不存在，视为删除成功
 	}
 	if current.BuiltinFlag {
 		return pkg.NewBizError(domain.RespCodeBizFailed, "内置工具不允许删除，可停用")

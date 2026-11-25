@@ -79,8 +79,15 @@ func (s *ProjectService) Update(ctx context.Context, userULID string, req *domai
 
 // Delete 级联删除项目全部从属数据（DB 单事务），事务提交后清理 MinIO/Manticore。
 func (s *ProjectService) Delete(ctx context.Context, userULID string, req *domain.ProjectDeleteREQ) error {
-	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID); err != nil {
+	project, err := s.projectRepo.GetByULID(ctx, req.ProjectULID)
+	if err != nil {
 		return err
+	}
+	if project == nil {
+		return nil // 幂等：目标已不存在，视为删除成功
+	}
+	if project.UserULID != userULID {
+		return pkg.NewBizError(domain.RespCodeForbidden, "无权操作该项目")
 	}
 	docs, err := s.cascade.KnowledgeRepo.ListDocumentsByProject(ctx, req.ProjectULID)
 	if err != nil {

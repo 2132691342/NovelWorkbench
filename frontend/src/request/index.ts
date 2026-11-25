@@ -1,6 +1,12 @@
 // 请求实例：注入令牌、解包后端包络并处理会话过期。
 import { ElMessage } from 'element-plus'
-import { createRequest, isCancel, type AxiosResponse, type RequestConfig } from '@novelworkbench/request'
+import {
+  createRequest,
+  isCancel,
+  type AxiosResponse,
+  type RawAxiosRequestHeaders,
+  type RequestConfig
+} from '@novelworkbench/request'
 import {
   API_BASE_PATH,
   REQUEST_TIMEOUT,
@@ -8,6 +14,7 @@ import {
   RESP_CODE_UNAUTHORIZED
 } from '@/constants'
 import { readToken } from '@/utils/storage'
+import { newActionId } from '@/utils/idempotency'
 import { useUserStoreWithOut } from '@/store/modules/user'
 import router from '@/router'
 
@@ -108,8 +115,74 @@ function handleSessionExpired() {
   }
 }
 
+/** 需要合并重复点击的写动作末段（与后端幂等白名单一致；查询类 POST 不合并，否则会读到写前快照） */
+const WRITE_ACTION_FLAGS: Record<string, true> = {
+  create: true,
+  save: true,
+  update: true,
+  delete: true,
+  restore: true,
+  upload: true,
+  reindex: true,
+  review: true,
+  invoke: true,
+  set_default: true,
+  grant: true,
+  test: true,
+  read: true,
+  read_all: true,
+  apply: true,
+  retry: true,
+  change: true,
+  reset_password: true
+}
+
+/** 在途写请求：相同 URL + 相同请求体视为同一次点击，复用同一个 Promise */
+const inflightWrites = new Map<string, Promise<unknown>>()
+
+/** 写请求签名：URL + 请求体（FormData 不参与合并，避免把两次上传压成一次） */
+function writeSignature(config: RequestOptions): string {
+  if (!config.url) return ''
+  const actionCode = config.url.split('?')[0].replace(/\/$/, '').split('/').pop() ?? ''
+  if (!WRITE_ACTION_FLAGS[actionCode]) return ''
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) return ''
+  let body = ''
+  try {
+    body = JSON.stringify(config.data ?? null)
+  } catch {
+    return ''
+  }
+  return `${config.url}\u0000${body}`
+}
+
+/** 写请求附加幂等键：调用方显式传入时尊重调用方（重试要复用同一个键） */
+function withIdempotencyKey(config: RequestOptions): RequestOptions {
+  const headers = { ...(config.headers ?? {}) } as RawAxiosRequestHeaders
+  if (!headers['Idempotency-Key']) {
+    headers['Idempotency-Key'] = newActionId()
+  }
+  return { ...config, headers }
+}
+
 /** 统一出口：解包后的业务数据直接返回；失败时按 silent 决定是否弹全局提示 */
 async function send<Data>(config: RequestOptions, method: 'get' | 'post'): Promise<Data> {
+  if (method === 'post') {
+    const signature = writeSignature(config)
+    if (signature) {
+      const existing = inflightWrites.get(signature)
+      if (existing) return existing as Promise<Data>
+      const pending = sendOnce<Data>(withIdempotencyKey(config), method).finally(() => {
+        inflightWrites.delete(signature)
+      })
+      inflightWrites.set(signature, pending)
+      return pending
+    }
+  }
+  return sendOnce<Data>(config, method)
+}
+
+/** 真正发出一次请求并归一错误 */
+async function sendOnce<Data>(config: RequestOptions, method: 'get' | 'post'): Promise<Data> {
   try {
     return method === 'get'
       ? await client.get<Data>(config)

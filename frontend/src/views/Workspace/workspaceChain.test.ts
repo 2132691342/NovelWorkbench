@@ -1,10 +1,19 @@
-// 流式对话链路的回归：SSE 报文解析 → 事件归并到消息展示态。
-// 解析偏差会丢事件或重复事件，归并偏差会让正文重复累加或思考被清空，两者直接决定 AI 回复能否正确落到界面。
+// 写作台对话链路的回归：SSE 报文解析 → 事件归并到展示态 → 斜杠命令解析与注册表。
+// 三者是同一次「作者发出指令、模型流式回话」的前后端两半：报文解析偏差会丢事件或重复事件，
+// 归并偏差会让正文重复累加或思考被清空，命令解析偏差会让本地动作被误发给模型。
+
 import { describe, expect, it } from 'vitest'
 import { parseSseBuffer } from '@/composables/useSSE'
 import { applyStreamEvent } from './chatStream'
 import type { ChatDisplayMessage } from './types'
 import type { NWChatStreamEventVo } from '@/api/contracts'
+import {
+  COMPOSER_ACTION_LIST,
+  actionCodeSet,
+  filterActions,
+  matchActionByCode,
+  parseLeadingSlashToken
+} from './composerCommands'
 
 /** 构造一条空白助手消息。 */
 function blankMessage(): ChatDisplayMessage {
@@ -40,7 +49,7 @@ function streamEvent(overrides: Partial<NWChatStreamEventVo>): NWChatStreamEvent
   }
 }
 
-describe('流式对话链路', () => {
+describe('写作台对话链路', () => {
   it('报文解析：跨 chunk 断行与多事件粘包应正确拆分，非法行跳过，半行留存', () => {
     // 第一段：一个完整事件 + 一个被截断的半行
     const first = parseSseBuffer('data: {"seq":1,"event_type":"chunk"}\ndata: {"seq":2,"event_ty')
@@ -122,5 +131,38 @@ describe('流式对话链路', () => {
     const fifth = blankMessage()
     expect(applyStreamEvent(fifth, streamEvent({ event_type: 'unknown' }), '发送失败')).toBe(false)
     expect(fifth.content_text).toBe('')
+  })
+
+  it('斜杠命令：首 token 解析与正文剥离，注册表编码唯一且不与内置提示词撞车', () => {
+    // 解析口径必须与后端一致，否则同一句 /polish 在前后端会走向不同分支。
+    expect(parseLeadingSlashToken('/polish 加强画面感')).toEqual({
+      actionCode: 'polish',
+      remainderText: '加强画面感'
+    })
+    expect(parseLeadingSlashToken('  /clear  ')).toEqual({ actionCode: 'clear', remainderText: '' })
+    expect(parseLeadingSlashToken('续写 /continue')).toBeNull()
+    expect(parseLeadingSlashToken('/ 加强画面感')).toBeNull()
+    expect(parseLeadingSlashToken('/Polish 大写')).toBeNull()
+    expect(parseLeadingSlashToken('/po!lish')).toBeNull()
+    expect(parseLeadingSlashToken('')).toBeNull()
+    // 超长编码不匹配，避免把整段路径当命令
+    expect(parseLeadingSlashToken(`/${'a'.repeat(33)} 正文`)).toBeNull()
+
+    // 注册表：编码唯一、可按编码取回、关键词过滤命中编码与名称。
+    const codeSet = actionCodeSet()
+    expect(codeSet.size).toBe(COMPOSER_ACTION_LIST.length)
+    for (const action of COMPOSER_ACTION_LIST) {
+      expect(matchActionByCode(action.action_code)?.action_code).toBe(action.action_code)
+    }
+    expect(matchActionByCode('not_exist')).toBeNull()
+    expect(filterActions('clear').map((action) => action.action_code)).toContain('clear')
+    expect(filterActions('体检').map((action) => action.action_code)).toContain('check')
+    expect(filterActions('不存在的东西')).toHaveLength(0)
+
+    // 命名空间：动作编码一旦与内置提示词撞车，同一句输入会因实现顺序走向两种结果。
+    for (const promptCode of ['continue', 'polish', 'deai', 'review', 'hitscan', 'summary']) {
+      expect(codeSet.has(promptCode)).toBe(false)
+    }
+    expect(codeSet.has('snapshot')).toBe(true)
   })
 })

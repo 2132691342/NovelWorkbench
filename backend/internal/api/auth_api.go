@@ -83,11 +83,12 @@ func (a *AuthAPI) ChangePassword(c *gin.Context) {
 		respondErr(c, "profile.password.change", bindErr(err))
 		return
 	}
-	if err := a.svc.ChangePassword(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), &req); err != nil {
+	dto, err := a.svc.ChangePassword(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), &req)
+	if err != nil {
 		respondErr(c, "profile.password.change", err)
 		return
 	}
-	pkg.Ok(c, nil)
+	pkg.Ok(c, dto)
 }
 
 // Profile 返回当前登录用户信息（GET /auth/profile）。

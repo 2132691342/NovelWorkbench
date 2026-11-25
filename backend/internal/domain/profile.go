@@ -27,3 +27,9 @@ type UserPasswordChangeREQ struct {
 	OldPasswordText string `json:"old_password_text" binding:"required,min=6,max=64"` // 当前密码
 	NewPasswordText string `json:"new_password_text" binding:"required,min=6,max=64"` // 新密码
 }
+
+// UserPasswordChangeDTO 改密结果：返回新令牌，避免本人被自己刚改的密码踢下线。
+type UserPasswordChangeDTO struct {
+	AccessToken  string `json:"access_token"`   // 新 JWT 访问令牌
+	ExpiresInSec int64  `json:"expires_in_sec"` // 有效期（秒）
+}

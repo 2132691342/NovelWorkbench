@@ -9,6 +9,7 @@
   import type { NWProjectVo, NWStatsOverviewVo } from '@/api/contracts'
   import { usePageQuery } from '@/composables/usePageQuery'
   import { useProjectStore } from '@/store/modules/project'
+  import { useRowAction } from '@/composables/useRowAction'
   import BootstrapDialog from './components/BootstrapDialog.vue'
   import ProjectFormDialog from './components/ProjectFormDialog.vue'
   import TrendChart from './components/TrendChart.vue'
@@ -32,6 +33,7 @@
 
   const formDialog = ref<InstanceType<typeof ProjectFormDialog>>()
   const bootstrapDialog = ref<InstanceType<typeof BootstrapDialog>>()
+  const rowAction = useRowAction()
 
   const statusOptions = [
     { value: '', label: '全部状态' },
@@ -62,9 +64,11 @@
     } catch {
       return
     }
-    await deleteProject(row.project_ulid)
-    ElMessage.success(t('common.deleteSuccess'))
-    await refreshAll()
+    await rowAction.run(row.project_ulid, async () => {
+      await deleteProject(row.project_ulid)
+      ElMessage.success(t('common.deleteSuccess'))
+      await refreshAll()
+    })
   }
 
   const enterProject = (path: string, row: NWProjectVo) => {
@@ -161,7 +165,16 @@
           <ElButton size="small" plain @click="enterProject('material', row)">素材</ElButton>
           <div class="project-card__spacer" />
           <ElButton size="small" text @click="formDialog?.open(row)">编辑</ElButton>
-          <ElButton size="small" text type="danger" @click="remove(row)">删除</ElButton>
+          <ElButton
+            size="small"
+            text
+            type="danger"
+            :loading="rowAction.isPending(row.project_ulid)"
+            :disabled="rowAction.busyFlag.value"
+            @click="remove(row)"
+          >
+            删除
+          </ElButton>
         </div>
       </ElCard>
 

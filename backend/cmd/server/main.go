@@ -166,7 +166,7 @@ func main() {
 	loginLogService := service.NewLoginLogService(loginLogRepo)
 	jobService := service.NewJobService(jobRepo, knowledgeRepo, mqRepo)
 	authService := service.NewAuthService(userRepo, roleRepo, signer, tokenRepo, loginLogService, notificationService)
-	roleService := service.NewRoleService(roleRepo, userRepo, providerRepo)
+	roleService := service.NewRoleService(roleRepo, userRepo, menuRepo, providerRepo)
 	menuService := service.NewMenuService(menuRepo, roleService)
 	userAdminService := service.NewUserAdminService(userRepo, roleRepo, providerRepo, notificationService)
 	auditService := service.NewAuditService(auditRepo, userRepo)
@@ -247,12 +247,13 @@ func main() {
 		pkg.SLogger().Errorw("默认配置播种失败", "error", err)
 		os.Exit(1)
 	}
-	if err := roleService.SeedDefaults(ctx); err != nil {
-		pkg.SLogger().Errorw("内置角色播种失败", "error", err)
-		os.Exit(1)
-	}
 	if err := menuService.SeedDefaults(ctx); err != nil {
 		pkg.SLogger().Errorw("内置菜单播种失败", "error", err)
+		os.Exit(1)
+	}
+	// 角色播种兼修历史脏权限，依赖上面的菜单权限码登记，顺序不可颠倒。
+	if err := roleService.SeedDefaults(ctx); err != nil {
+		pkg.SLogger().Errorw("内置角色播种失败", "error", err)
 		os.Exit(1)
 	}
 	// 用户表为空时引导创建管理员账号，密码取自配置（生产必改）。
@@ -272,16 +273,22 @@ func main() {
 		}
 	}()
 
-	authMW := pkg.AuthMiddleware(signer, tokenRepo, func(checkCtx context.Context, userULID string) (bool, error) {
+	authMW := pkg.AuthMiddleware(signer, tokenRepo, func(checkCtx context.Context, userULID string) (bool, int64, error) {
 		user, err := userRepo.GetByULID(checkCtx, userULID)
 		if err != nil {
-			return false, err
+			return false, 0, err
 		}
-		return user != nil && user.UserStatusCode != domain.UserStatusDisabled, nil
+		if user == nil {
+			return false, 0, nil
+		}
+		return user.UserStatusCode != domain.UserStatusDisabled, user.PwdEpoch, nil
 	}, []string{"/api/v1/auth/login"})
 	auditMW := pkg.AuditMiddleware(auditService, []string{
 		"/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/chat/send",
 	})
+	// 幂等键缓存首响应 24 小时：足够覆盖用户重复点击、网络重试与弱网重发。
+	idempotencyMW := pkg.IdempotencyMiddleware(repo.NewIdempotencyRepo(rdb), 86400,
+		[]string{"/api/v1/auth/login", "/api/v1/auth/logout"})
 	statusService := service.NewSystemStatusService(service.SystemProbeDeps{
 		PostgresProbe: func(probeCtx context.Context) error {
 			sqlDB, err := db.DB()
@@ -323,9 +330,10 @@ func main() {
 	bootstrapService := service.NewBootstrapService(providerService, aiClient, projectRepo, volumeRepo,
 		chapterRepo, characterRepo, loreRepo, outlineRepo, db)
 	router := api.NewRouter(cfg.Server.Mode, api.RouterDeps{
-		AuthMW:      authMW,
-		AuditMW:     auditMW,
-		PermChecker: roleService,
+		AuthMW:        authMW,
+		AuditMW:       auditMW,
+		IdempotencyMW: idempotencyMW,
+		PermChecker:   roleService,
 		ReadyCheck: func() error {
 			sqlDB, err := db.DB()
 			if err != nil {

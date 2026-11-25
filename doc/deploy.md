@@ -126,7 +126,6 @@ flowchart LR
 | --- | --- | --- |
 | `server.port`（为 0 时） | `8080` | `NW_SERVER_PORT` |
 | `ai.protocol_code` | `openai` | `NW_AI_PROTOCOL_CODE` |
-| `ai.history_count`（≤0 时） | `5` | `NW_AI_HISTORY_COUNT` |
 | `app.rag_top_k`（≤0 时） | `6` | `NW_APP_RAG_TOP_K` |
 | `app.admin_password` | `Admin@123456`（生产必须覆盖） | `NW_APP_ADMIN_PASSWORD` |
 | `app.build_version` | `dev` | `NW_APP_BUILD_VERSION` |
@@ -194,18 +193,18 @@ flowchart LR
 | 3 | `signal.NotifyContext(SIGINT, SIGTERM)` | — |
 | 4 | `infra.NewPostgres`：DSN 连接 + 连接池 + `Ping` | 致命，退出码 1，日志「Postgres 连接失败」 |
 | 5 | `db.AutoMigrate` 建表 33 张（`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`、`PromptDO`、`ToolDO`、`ModelUserGrantDO`） | 致命，退出码 1，日志「数据库迁移失败」 |
-| 5.1 | 清理下线表列：删 `chat_sessions.summary_text` / `compact_at`，删表 `skills` / `skill_references` / `prompt_profiles` / `slash_commands`，删列 `chat_messages.skill_code` / `ref_message_json` / `ref_prompt_json` | 告警，不阻断启动（AutoMigrate 只补不删，残留由这一步清理） |
+| 5.1 | 清理遗留表列：删 `chat_sessions.summary_text` / `compact_at`，删表 `skills` / `skill_references` / `prompt_profiles` / `slash_commands`，删列 `chat_messages.skill_code` / `ref_message_json` / `ref_prompt_json` | 告警，不阻断启动（AutoMigrate 只补不删，残留由这一步清理） |
 | 6 | `infra.NewRedis`：构造客户端 + 5s `Ping` | 地址为空返回 `nil` 客户端 → 致命「Redis 配置无效」；Ping 失败 → 告警「令牌吊销降级」并继续 |
 | 7 | `infra.NewRabbitMQ` | 告警「异步任务降级」 |
 | 8 | `infra.NewMinIO`：构造客户端 + `BucketExists`，桶不存在则 `MakeBucket`；随后 `main` 再校验一次桶是否存在 | 告警「MinIO 初始化失败 / 桶健康检查失败 / 桶不存在，对象存储降级」 |
 | 9 | `infra.NewManticore` + `Ping`（`SELECT 1`，HTTP 超时 5s） | 告警「全文检索降级」 |
 | 10 | `pkg.NewJWTSigner(cfg.JWT.Secret, cfg.JWTExpireTTL())` | 致命，退出码 1 |
 | 11 | 装配 repo / service / `ai.NewClient`，`providerService.SeedDefault` 播种出厂供应商 | 播种失败 → 告警「默认模型供应商播种失败，可在页面手工添加」 |
-| 12 | `providerService.MigrateLegacyModels` 补齐模型目录 | 告警，不阻断 |
-| 13 | `promptService.SeedDefaults`（24 份内置指令 + 12 份内置身份）、`toolService.SeedDefaults`（6 个内置工具）与 `menuService.SeedDefaults`（含已下线菜单清理） | 致命，退出码 1 |
+| 12 | `providerService.MigrateLegacyModels`：模型目录为空时，把仅带 `chat_model_name` 的供应商行补成目录行 | 告警，不阻断 |
+| 13 | `toolService.SeedDefaults`（6 个内置工具）与 `promptService.SeedDefaults`（24 份内置指令 + 12 份内置身份） | 致命，退出码 1 |
 | 14 | `settingService.SeedDefaults`（默认应用配置） | 致命，退出码 1 |
-| 15 | `roleService.SeedDefaults`（内置角色与权限） | 致命，退出码 1 |
-| 16 | `menuService.SeedDefaults`（内置菜单与权限登记） | 致命，退出码 1 |
+| 15 | `menuService.SeedDefaults`（内置菜单与权限登记） | 致命，退出码 1 |
+| 16 | `roleService.SeedDefaults`（内置角色与权限修正，依赖上一步先登记完权限码） | 致命，退出码 1 |
 | 17 | `userAdminService.BootstrapAdmin(ctx, "admin", "admin@novelworkbench.local", cfg.App.AdminPassword)`，仅用户表为空时创建 | 致命，退出码 1 |
 | 18 | 启动 `service.NewKnowledgeWorker` goroutine 消费索引队列 | 异常退出 → 告警「知识库索引 worker 异常退出」 |
 | 19 | 装配 Auth/Audit 中间件与路由，`http.Server{ReadTimeout, WriteTimeout}` 后 `ListenAndServe` | 监听失败 → 进入关闭流程并记错误 |

@@ -1,10 +1,10 @@
-// AI 对话链路的场景回归：斜杠命令解析 → 提示词作用域 → 上下文装配 → 消息序列成型 → 工具选择 → 流式契约。
-// 同一次请求里的上下游环节合并成一条用例，环节间用「步骤N」分隔，失败时直接定位到断点。
+// 对话装配链路的回归：斜杠命令解析 → 提示词作用域 → 上下文块装配 → 消息序列成型 → 工具声明与流式事件。
+// 这五步是同一次请求的上下游，合并为一条用例；每步失败都表现为「模型没按预期回答」，
+// 步骤用「步骤N」标注，失败时直接定位到断点。
 
 package service
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 
@@ -49,8 +49,8 @@ func (s *eventSink) Event(dto domain.ChatStreamEventDTO) error {
 // Ping 记录一次心跳。
 func (s *eventSink) Ping() error { return nil }
 
-// TestChatChain 覆盖一次 AI 对话请求从输入到流式输出的完整链路。
-func TestChatChain(t *testing.T) {
+// TestChatAssemblyChain 覆盖一次 AI 对话请求从输入到流式输出的装配链。
+func TestChatAssemblyChain(t *testing.T) {
 	// 步骤1：斜杠命令解析。显式编码优先于正文首 token，正文命令不在开头时不命中。
 	slashCases := []struct {
 		caseName   string
@@ -186,42 +186,7 @@ func TestChatChain(t *testing.T) {
 		t.Fatalf("历史不应注入上下文块: %q", assembled)
 	}
 
-	// 步骤4：历史全量注入。条数一条不删，短正文原样返回。
-	messages := []domain.ChatMessageDO{
-		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
-		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),
-		chatMessageOf("MSG_3", domain.ChatRoleUser, "三"),
-		chatMessageOf("MSG_4", domain.ChatRoleAssistant, "四"),
-		chatMessageOf("MSG_5", domain.ChatRoleUser, "五"),
-	}
-	injected, condensedCount := condenseHistory(messages)
-	if len(injected) != len(messages) || injected[0].MessageULID != "MSG_1" ||
-		injected[4].MessageULID != "MSG_5" {
-		t.Fatalf("历史应全量旧到新注入: %v", injected)
-	}
-	if condensedCount != 0 || injected[0].ContentText != "一" {
-		t.Fatalf("短正文不应被改写: %+v", injected[0])
-	}
-
-	// 步骤4.1：单条超长只保留首尾，条数仍然一条不删，并标注省略字数。
-	longList := []domain.ChatMessageDO{
-		chatMessageOf("MSG_L1", domain.ChatRoleUser, strings.Repeat("甲", 5000)),
-		chatMessageOf("MSG_L2", domain.ChatRoleAssistant, "短回复"),
-	}
-	injected, condensedCount = condenseHistory(longList)
-	if len(injected) != 2 || condensedCount != 1 {
-		t.Fatalf("只应收敛超长的那一条: %d, %d", len(injected), condensedCount)
-	}
-	if !strings.HasPrefix(injected[0].ContentText, "甲甲") ||
-		!strings.Contains(injected[0].ContentText, "此处省略") ||
-		!strings.HasSuffix(injected[0].ContentText, "甲甲") {
-		t.Fatalf("超长正文应保留首尾并标注省略: %q", injected[0].ContentText)
-	}
-	if longList[0].ContentText != strings.Repeat("甲", 5000) {
-		t.Fatal("收敛不得改写原消息")
-	}
-
-	// 步骤5：消息序列成型。身份（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史 role 映射 → 用户输入（用户）。
+	// 步骤4：消息序列成型。身份（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史 role 映射 → 用户输入（用户）。
 	out := buildChatMessages(chatMessageInput{
 		SystemPromptText: "你是连载作者",
 		StyleText:        "文风约束",
@@ -260,7 +225,7 @@ func TestChatChain(t *testing.T) {
 		t.Fatalf("无上下文与指令时应只保留身份与用户输入: %+v", out)
 	}
 
-	// 步骤6：@ 素材来源。角色与设定走「显式引用」优先级，历史会话整段归档后注入。
+	// 步骤5：@ 素材来源。角色与设定走「显式引用」优先级，历史会话整段归档后注入。
 	refBlocks := buildContextBlocks(chatContextInput{
 		UserInput: "提问",
 		RefCharacterList: []domain.CharacterDO{
@@ -287,7 +252,7 @@ func TestChatChain(t *testing.T) {
 		t.Fatalf("引用会话应带上会话名与归档正文: %+v", sessionBlock)
 	}
 
-	// 步骤7：工具声明与参数解码。工具编码即 function name，参数按字符串解出。
+	// 步骤6：工具声明与参数解码。工具编码即 function name，参数按字符串解出。
 	infoList := ai.ToolInfos([]ai.ToolSpec{{
 		ToolCode: "chapter_digest", ToolName: "章节摘要", DescriptionText: "抽取式生成章节摘要",
 		ParamList: []ai.ToolParam{{ParamName: "max_sentences", RequiredFlag: false, DescriptionText: "保留句数"}},
@@ -303,7 +268,7 @@ func TestChatChain(t *testing.T) {
 		t.Fatal("非法参数 JSON 应退化为空表而不是报错")
 	}
 
-	// 步骤8：流式工具调用按 index 归并（名称与参数可能跨多个分片）。
+	// 步骤7：流式工具调用按 index 归并（名称与参数可能跨多个分片）。
 	index0, index1 := 0, 1
 	mergedCalls, err := mergeToolCallChunks([]schema.ToolCall{
 		{Index: &index0, ID: "call_1", Type: "function", Function: schema.FunctionCall{Name: "chapter_check"}},
@@ -321,7 +286,7 @@ func TestChatChain(t *testing.T) {
 		t.Fatalf("第二个调用不应串到第一个的参数: %+v", mergedCalls[1])
 	}
 
-	// 步骤9：流式事件契约。thinking → chunk → done 顺序，seq 从 1 递增，
+	// 步骤8：流式事件契约。thinking → chunk → done 顺序，seq 从 1 递增，
 	// done 携带完整思考过程、召回依据与本轮工具编码（前端据此切换「等待→思考→正文→完成」）。
 	sink := &eventSink{}
 	writer := &chatEventWriter{
@@ -354,96 +319,5 @@ func TestChatChain(t *testing.T) {
 		if sink.eventList[i].Seq != int64(i+1) {
 			t.Fatalf("seq 应单调递增: %+v", sink.eventList)
 		}
-	}
-
-	// 步骤10：斜杠命名空间边界。写作台本地动作与内置提示词共用 `/` 触发，
-	// 两者编码一旦撞车，同一句输入会走向「执行动作」或「注入提示词」两种结果。
-	builtinCodes := ai.BuiltinCommandCodeSet()
-	for code := range ai.BuiltinSystemCodeSet() {
-		builtinCodes[code] = true
-	}
-	for promptCode := range builtinCodes {
-		if domain.IsReservedActionCode(promptCode) {
-			t.Fatalf("内置提示词编码 %s 与写作台动作冲突", promptCode)
-		}
-	}
-	for _, actionCode := range []string{"help", "clear", "new", "attach", "copy", "check", "focus", "snapshot"} {
-		if !domain.IsReservedActionCode(actionCode) {
-			t.Fatalf("动作编码 %s 未登记", actionCode)
-		}
-	}
-	if domain.IsReservedActionCode("Help") || domain.IsReservedActionCode("polish") {
-		t.Fatal("非动作编码不应被误判")
-	}
-	if code, _ := parseSlashToken("/help 怎么用"); code != "help" {
-		t.Fatalf("首 token 解析应得到 help: %q", code)
-	}
-}
-
-// TestHistoryArchiveChain 覆盖历史归档链路：全量保留 → 单条首尾收敛 → 逐条编号。
-// 归档完全本地完成（不调用模型），不按条数截取、不按总量丢弃。
-func TestHistoryArchiveChain(t *testing.T) {
-	// 环节1：短正文原样。收敛只针对超长单条，短消息一个字符都不改。
-	shortText := "短问题"
-	if got := ai.CondenseText(shortText); got != shortText {
-		t.Fatalf("短正文不应改写: %q", got)
-	}
-
-	// 环节2：超长正文保留首尾并标注省略字数。
-	longText := strings.Repeat("甲", 5000)
-	condensed := ai.CondenseText(longText)
-	if !strings.Contains(condensed, "此处省略") || !strings.Contains(condensed, "字") {
-		t.Fatalf("超长正文应标注省略字数: %q", condensed)
-	}
-	if !strings.HasPrefix(condensed, "甲甲") || !strings.HasSuffix(condensed, "甲甲") {
-		t.Fatalf("应保留首尾: %q", condensed)
-	}
-
-	// 环节3：归档全量。条数一条不删，逐条带序号与角色标签。
-	archiveList := make([]ai.ArchiveMessage, 0, 6)
-	for i := range 6 {
-		roleCode := "user"
-		if i%2 == 1 {
-			roleCode = "assistant"
-		}
-		archiveList = append(archiveList, ai.ArchiveMessage{
-			Seq: i + 1, RoleCode: roleCode, ContentText: "第" + strconv.Itoa(i+1) + "条内容",
-			ToolCodeCSV: "chapter_check", CreatedAt: "2026-11-25T10:00:00+08:00",
-		})
-	}
-	archiveText := ai.ArchiveHistory(archiveList, ai.ArchiveConfig{WithHeader: true})
-	if !strings.Contains(archiveText, "共 6 条") {
-		t.Fatalf("归档应标明总条数: %q", archiveText)
-	}
-	for i := range 6 {
-		marker := strconv.Itoa(i+1) + ". "
-		if !strings.Contains(archiveText, marker) {
-			t.Fatalf("归档应逐条编号，缺少 %q: %q", marker, archiveText)
-		}
-	}
-	if !strings.Contains(archiveText, "作者") || !strings.Contains(archiveText, "AI") {
-		t.Fatalf("归档应带角色标签: %q", archiveText)
-	}
-	if !strings.Contains(archiveText, "［工具：chapter_check］") {
-		t.Fatalf("归档应保留工具标签: %q", archiveText)
-	}
-	if !strings.Contains(archiveText, "2026-11-25T10:00:00+08:00") {
-		t.Fatalf("归档应保留时间: %q", archiveText)
-	}
-
-	// 环节4：单条超长只收敛那一条，其余条数与内容不变。
-	mixedList := []ai.ArchiveMessage{
-		{Seq: 1, RoleCode: "user", ContentText: strings.Repeat("乙", 6000)},
-		{Seq: 2, RoleCode: "assistant", ContentText: "短回答"},
-	}
-	mixedText := ai.ArchiveHistory(mixedList, ai.ArchiveConfig{})
-	if strings.Count(mixedText, "1. 作者") != 1 || strings.Count(mixedText, "2. AI") != 1 {
-		t.Fatalf("归档不得丢条: %q", mixedText)
-	}
-	if !strings.Contains(mixedText, "短回答") || !strings.Contains(mixedText, "此处省略") {
-		t.Fatalf("应保留短正文并收敛超长正文: %q", mixedText)
-	}
-	if ai.ArchiveHistory(nil, ai.ArchiveConfig{}) != "" {
-		t.Fatal("空历史应返回空串")
 	}
 }

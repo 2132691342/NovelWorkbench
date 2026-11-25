@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
@@ -105,19 +106,22 @@ func (s *UserAdminService) Update(ctx context.Context, req *domain.UserAdminUpda
 		return domain.UserAdminVO{}, pkg.NewBizError(domain.RespCodeBizFailed, "不能禁用自己")
 	}
 	updates := map[string]any{}
-	if req.UserEmail != "" {
-		if existing, err := s.userRepo.GetByEmail(ctx, req.UserEmail); err != nil {
+	if req.UserEmail != nil && *req.UserEmail != do.UserEmail {
+		if *req.UserEmail == "" {
+			return domain.UserAdminVO{}, pkg.NewBizError(domain.RespCodeInvalidParam, "邮箱不能为空")
+		}
+		if existing, err := s.userRepo.GetByEmail(ctx, *req.UserEmail); err != nil {
 			return domain.UserAdminVO{}, err
 		} else if existing != nil && existing.UserULID != req.UserULID {
 			return domain.UserAdminVO{}, pkg.NewBizError(domain.RespCodeConflict, "邮箱已被占用")
 		}
-		updates["user_email"] = req.UserEmail
+		updates["user_email"] = *req.UserEmail
 	}
-	if req.AvatarURL != "" {
-		updates["avatar_url"] = req.AvatarURL
+	if req.AvatarURL != nil {
+		updates["avatar_url"] = *req.AvatarURL
 	}
-	if req.RemarkText != "" {
-		updates["remark_text"] = req.RemarkText
+	if req.RemarkText != nil {
+		updates["remark_text"] = *req.RemarkText
 	}
 	if req.UserStatusCode != "" {
 		updates["user_status_code"] = req.UserStatusCode
@@ -127,23 +131,25 @@ func (s *UserAdminService) Update(ctx context.Context, req *domain.UserAdminUpda
 			return domain.UserAdminVO{}, err
 		}
 	}
-	roleCodes := req.RoleCodes
-	if roleCodes != nil {
-		roleULIDs, err := s.roleULIDsByCodes(ctx, roleCodes)
+	roleCodes, err := s.roleRepo.ListRoleCodesByUserULID(ctx, req.UserULID)
+	if err != nil {
+		return domain.UserAdminVO{}, err
+	}
+	if req.RoleCodes != nil {
+		roleULIDs, err := s.roleULIDsByCodes(ctx, *req.RoleCodes)
 		if err != nil {
 			return domain.UserAdminVO{}, err
 		}
 		if err := s.roleRepo.ReplaceUserRoles(ctx, req.UserULID, roleULIDs); err != nil {
 			return domain.UserAdminVO{}, err
 		}
-	} else if roleCodes, err = s.roleRepo.ListRoleCodesByUserULID(ctx, req.UserULID); err != nil {
+		roleCodes = *req.RoleCodes
+	}
+	updated, err := s.mustGetUser(ctx, req.UserULID)
+	if err != nil {
 		return domain.UserAdminVO{}, err
 	}
-	do.UserEmail = pickUpdateStr(updates, "user_email", do.UserEmail)
-	do.AvatarURL = pickUpdateStr(updates, "avatar_url", do.AvatarURL)
-	do.RemarkText = pickUpdateStr(updates, "remark_text", do.RemarkText)
-	do.UserStatusCode = pickUpdateStr(updates, "user_status_code", do.UserStatusCode)
-	return toUserAdminVO(do, roleCodes), nil
+	return toUserAdminVO(updated, roleCodes), nil
 }
 
 // Delete 删除用户（禁止删除自己；级联清理角色挂载、模型直授与站内通知）。
@@ -151,8 +157,12 @@ func (s *UserAdminService) Delete(ctx context.Context, req *domain.UserAdminDele
 	if req.UserULID == operatorULID {
 		return pkg.NewBizError(domain.RespCodeBizFailed, "不能删除自己")
 	}
-	if _, err := s.mustGetUser(ctx, req.UserULID); err != nil {
+	existing, err := s.userRepo.GetByULID(ctx, req.UserULID)
+	if err != nil {
 		return err
+	}
+	if existing == nil {
+		return nil // 幂等：账号已不存在，视为删除成功
 	}
 	if err := s.roleRepo.DeleteUserRoles(ctx, req.UserULID); err != nil {
 		return err
@@ -179,7 +189,11 @@ func (s *UserAdminService) ResetPassword(ctx context.Context, req *domain.UserRe
 	if err != nil {
 		return pkg.WrapBizError(domain.RespCodeInternalError, "加密密码失败", err)
 	}
-	if err := s.userRepo.Update(ctx, req.UserULID, map[string]any{"password_hash": string(hashBytes)}); err != nil {
+	// 管理员重置密码同样递增版本，旧令牌立即失效
+	if err := s.userRepo.Update(ctx, req.UserULID, map[string]any{
+		"password_hash": string(hashBytes),
+		"pwd_epoch":     gorm.Expr("pwd_epoch + 1"),
+	}); err != nil {
 		return err
 	}
 	s.notify(ctx, domain.NotificationCreateDTO{
@@ -321,12 +335,4 @@ func toUserAdminVO(do *domain.UserDO, roleCodes []string) domain.UserAdminVO {
 		vo.UserStatusCode = domain.UserStatusActive // 历史数据兜底
 	}
 	return vo
-}
-
-// pickUpdateStr 从更新 map 取值，未更新时保留原值。
-func pickUpdateStr(updates map[string]any, key string, fallback string) string {
-	if value, ok := updates[key].(string); ok {
-		return value
-	}
-	return fallback
 }

@@ -88,8 +88,12 @@ func (s *OutlineService) DeleteNode(ctx context.Context, userULID string, req *d
 	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID); err != nil {
 		return err
 	}
-	if _, err := s.loadOwnedNode(ctx, req.ProjectULID, req.OutlineULID); err != nil {
+	node, err := s.outlineRepo.GetNodeByULID(ctx, req.ProjectULID, req.OutlineULID)
+	if err != nil {
 		return err
+	}
+	if node == nil {
+		return nil // 幂等：节点已不存在，视为删除成功
 	}
 	childCount, err := s.outlineRepo.CountNodesByParent(ctx, req.ProjectULID, req.OutlineULID)
 	if err != nil {
@@ -197,8 +201,12 @@ func (s *OutlineService) DeleteScene(ctx context.Context, userULID string, req *
 	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID); err != nil {
 		return err
 	}
-	if _, err := s.loadOwnedScene(ctx, req.ProjectULID, req.SceneULID); err != nil {
+	scene, err := s.outlineRepo.GetSceneByULID(ctx, req.ProjectULID, req.SceneULID)
+	if err != nil {
 		return err
+	}
+	if scene == nil {
+		return nil // 幂等：场景卡片已不存在，视为删除成功
 	}
 	return s.outlineRepo.DeleteScene(ctx, req.ProjectULID, req.SceneULID)
 }

@@ -75,7 +75,7 @@ flowchart LR
 | 15 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`、`service/chat_context.go`、`service/chat_loader.go`、`service/chat_stream.go` |
 | 16 | 提示词资产 | `prompts` | `service/prompt_service.go`、`ai/prompt_assets.go` |
 | 17 | 工具资产 | `tools` | `service/tool_service.go`、`service/tool_executor.go`、`ai/builtin_tools.go`、`ai/check/chapter_check.go` |
-| 18 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants` | `service/model_provider_service.go`、`service/model_access_service.go` |
+| 18 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants` | `service/model_provider_service.go`、`service/model_access_service.go`、`service/model_catalog_service.go` |
 | 19 | 数据总览 | `word_count_stats`、`projects` | `service/stats_service.go` |
 | 20 | 用量分析 | `model_usage_stats` | `service/model_usage_service.go` |
 | 21 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
@@ -111,17 +111,17 @@ flowchart LR
 backend/
 ├── cmd/server        装配启动、迁移播种、路由、优雅关闭
 ├── configs/          配置模板（凭据留空，环境变量注入）
-└── internal/
+├── internal/
     ├── api           HTTP 处理器与路由注册（26 个文件）
-    ├── service       业务规则、事务边界、上下文装配（40 个文件）
-    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，26 个文件）
+    ├── service       业务规则、事务边界、上下文装配（37 个文件）
+    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，27 个文件）
     ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（23 个文件）
     ├── ai            模型网关、提示词装配、内置提示词资产、用量契约（21 个文件）
     ├── infra         配置加载、连接构造、启动校验
     └── pkg           ULID、包络、错误、JWT、中间件、密钥封存、审计字段回调与时间工具
 ```
 
-`pkg` 各文件：`ulid.go`（带业务前缀的 ULID 生成）、`errors.go`（业务码与 HTTP 状态映射）、`logger.go`（Zap 全局日志）、`time.go`（RFC3339 格式化）、`text.go`（字数统计与文本工具）、`actor.go`（GORM 审计字段回调）、`jwt.go`（签名与校验）、`secret.go`（密钥封存）、`access_middleware.go`（鉴权、权限、审计）、`middleware.go`（请求 ID、CORS、方法白名单）、`response.go`（统一包络）。
+`pkg` 各文件：`ulid.go`（带业务前缀的 ULID 生成）、`errors.go`（业务码与 HTTP 状态映射）、`logger.go`（Zap 全局日志）、`time.go`（RFC3339 格式化）、`text.go`（字数统计与文本工具）、`actor.go`（GORM 审计字段回调）、`jwt.go`（签名与校验，含密码版本声明）、`secret.go`（密钥封存）、`access_middleware.go`（鉴权、权限、审计）、`idempotency.go`（写请求幂等）、`middleware.go`（请求 ID、CORS、方法白名单）、`response.go`（统一包络）。
 
 `ai` 目录的 `domain_<域>.go` 共 12 个文件，一个流程域一个文件，与 [prompts.md](prompts.md) 的域矩阵一一对应。
 
@@ -147,7 +147,7 @@ backend/
 
 中间件顺序（`api.NewRouter`）：
 
-`Recovery → RequestID → Logger → CORS → MethodWhitelist → Auth → Audit → RequirePerm`
+`Recovery → RequestID → Logger → CORS → MethodWhitelist → Auth → Idempotency → Audit → RequirePerm`
 
 | 中间件 | 行为 |
 | --- | --- |
@@ -156,11 +156,12 @@ backend/
 | Logger | 出口层记录方法、路径、状态码、耗时、请求 ID |
 | CORS | 放行前端访问；`OPTIONS` 预检不进入业务 |
 | MethodWhitelist | 仅放行 GET / POST |
-| Auth | 解析 Bearer 令牌 → 查黑名单 → 校验用户状态 → 注入 `user_ulid` |
-| Audit | POST 且不在跳过名单时落审计（失败只告警） |
+| Auth | 解析 Bearer 令牌 → 查黑名单 → 校验用户状态与密码版本 → 注入 `user_ulid` |
+| Idempotency | 写动作带 `Idempotency-Key` 时只执行一次并缓存 2xx 首响应；查询类 POST 直接放行 |
+| Audit | POST 且不在跳过名单时落审计（请求体 + 响应体，失败只告警） |
 | RequirePerm | 按权限码收口管理接口，缺失返回 `ERR_FORBIDDEN` |
 
-白名单：免鉴权仅 `/api/v1/auth/login`；免审计为登录、登出与 `/api/v1/chat/send`（会话正文不入审计）。`/health`、`/ready` 挂在根引擎，不经过鉴权与审计。
+白名单：免鉴权仅 `/api/v1/auth/login`；免审计为登录、登出与 `/api/v1/chat/send`（会话正文不入审计）；免幂等同为登录与登出（重放登录会把旧令牌再发一次）。`/health`、`/ready` 挂在根引擎，不经过鉴权、幂等与审计。
 
 统一响应包络（`pkg.Ok` / `pkg.Fail`）：
 

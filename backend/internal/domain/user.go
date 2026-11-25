@@ -18,6 +18,7 @@ type UserDO struct {
 	AvatarURL      string `json:"avatar_url" gorm:"size:256"`                                                   // 头像地址
 	RemarkText     string `json:"remark_text" gorm:"size:256"`                                                  // 备注
 	UserStatusCode string `json:"user_status_code" gorm:"column:user_status_code;size:16;index;default:active"` // 状态：active/disabled
+	PwdEpoch       int64  `json:"pwd_epoch" gorm:"column:pwd_epoch;default:0"`                                  // 密码版本（改密递增，旧令牌立即失效）
 }
 
 // TableName 指定表名。
@@ -64,13 +65,14 @@ type UserAdminCreateREQ struct {
 }
 
 // UserAdminUpdateREQ 管理端更新用户请求。
+// 邮箱/头像/备注/状态为三态：字段缺省表示不修改，传空串表示清空（状态为空串按不修改处理）。
 type UserAdminUpdateREQ struct {
-	UserULID       string   `json:"user_ulid" form:"user_ulid" binding:"required,max=40"`                // 用户 ULID
-	UserEmail      string   `json:"user_email" form:"user_email" binding:"omitempty,email,max=128"`      // 邮箱
-	AvatarURL      string   `json:"avatar_url" form:"avatar_url" binding:"omitempty,max=256"`            // 头像地址
-	RemarkText     string   `json:"remark_text" form:"remark_text" binding:"omitempty,max=256"`          // 备注
-	UserStatusCode string   `json:"user_status_code" form:"user_status_code" binding:"omitempty,max=16"` // 状态：active/disabled
-	RoleCodes      []string `json:"role_codes" form:"role_codes" binding:"omitempty,max=16"`             // 角色编码列表（整体覆盖）
+	UserULID       string    `json:"user_ulid" form:"user_ulid" binding:"required,max=40"`                // 用户 ULID
+	UserEmail      *string   `json:"user_email" form:"user_email" binding:"omitempty,email,max=128"`      // 邮箱
+	AvatarURL      *string   `json:"avatar_url" form:"avatar_url" binding:"omitempty,max=256"`            // 头像地址
+	RemarkText     *string   `json:"remark_text" form:"remark_text" binding:"omitempty,max=256"`          // 备注
+	UserStatusCode string    `json:"user_status_code" form:"user_status_code" binding:"omitempty,max=16"` // 状态：active/disabled
+	RoleCodes      *[]string `json:"role_codes" form:"role_codes"`                                        // 角色编码列表（整体覆盖；缺省不修改）
 }
 
 // UserAdminDeleteREQ 管理端删除用户请求。

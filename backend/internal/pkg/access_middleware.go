@@ -88,8 +88,8 @@ var auditSecretKeys = map[string]bool{
 // auditBodyLimitBytes 审计 body 采样上限（超出只记动作码）。
 const auditBodyLimitBytes = 32 * 1024
 
-// auditRespLimitBytes 审计响应采样上限（只需解析包络与说明）。
-const auditRespLimitBytes = 8 * 1024
+// auditRespLimitBytes 审计响应采样上限（超出标注截断，只影响详情展示）。
+const auditRespLimitBytes = 32 * 1024
 
 // AuditMiddleware 记录变更类请求的审计日志（POST 且不在跳过名单内，无论成败）。
 func AuditMiddleware(recorder AuditRecorder, skipPaths []string) gin.HandlerFunc {
@@ -109,7 +109,8 @@ func AuditMiddleware(recorder AuditRecorder, skipPaths []string) gin.HandlerFunc
 		c.Next()
 		c.Writer = recorderWriter.ResponseWriter
 
-		respCode, respMessage := parseAuditResp(recorderWriter.buffer.Bytes())
+		rawResp := recorderWriter.buffer.Bytes()
+		respCode, respMessage := parseAuditResp(rawResp)
 		status := recorderWriter.Status()
 		do := &domain.AuditLogDO{
 			LogLevelCode:  AuditLevelOf(status),
@@ -123,6 +124,7 @@ func AuditMiddleware(recorder AuditRecorder, skipPaths []string) gin.HandlerFunc
 			TargetULID:    "",
 			RespCode:      respCode,
 			RespMessage:   TruncateText(respMessage, 512),
+			RespBody:      sanitizeAuditResp(rawResp, recorderWriter.truncated),
 			HTTPStatus:    status,
 			LatencyMs:     time.Since(startedAt).Milliseconds(),
 			IPAddr:        c.ClientIP(),
@@ -139,10 +141,11 @@ func AuditMiddleware(recorder AuditRecorder, skipPaths []string) gin.HandlerFunc
 	}
 }
 
-// auditResponseWriter 捕获响应体片段（只留前 8KB，够解析包络即可）。
+// auditResponseWriter 捕获响应体片段（上限 32KB，超出置截断标记）。
 type auditResponseWriter struct {
 	gin.ResponseWriter
-	buffer *bytes.Buffer
+	buffer    *bytes.Buffer // 采样缓冲
+	truncated bool          // 是否因超出上限被截断
 }
 
 // Write 先落业务缓冲再透传，捕获失败不影响响应。
@@ -150,9 +153,12 @@ func (w *auditResponseWriter) Write(data []byte) (int, error) {
 	if remain := auditRespLimitBytes - w.buffer.Len(); remain > 0 {
 		if len(data) > remain {
 			w.buffer.Write(data[:remain])
+			w.truncated = true
 		} else {
 			w.buffer.Write(data)
 		}
+	} else if len(data) > 0 {
+		w.truncated = true
 	}
 	return w.ResponseWriter.Write(data)
 }
@@ -167,6 +173,19 @@ func AuditLevelOf(status int) string {
 	default:
 		return domain.AuditLevelInfo
 	}
+}
+
+// readAndRestoreBody 读取请求体并还原，供审计与幂等中间件共用（两者可同时挂载）。
+func readAndRestoreBody(c *gin.Context, limitBytes int64) ([]byte, error) {
+	if c.Request.Body == nil {
+		return nil, nil
+	}
+	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, limitBytes))
+	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 // readAuditBody 读取并还原请求体：上传类请求不采样，凭据字段脱敏后落库。
@@ -213,6 +232,24 @@ func sanitizeAuditBody(raw []byte) string {
 		return ""
 	}
 	return TruncateText(string(sanitized), 4000)
+}
+
+// sanitizeAuditResp 把响应体裁剪为可读的落库文本：包络 data 保留原文，非 JSON 与流式响应给占位说明。
+func sanitizeAuditResp(raw []byte, truncated bool) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	if !json.Valid(raw) {
+		if truncated {
+			return "[响应超过 32KB 或为流式输出，未完整采样]"
+		}
+		return TruncateText(string(raw), 2000)
+	}
+	text := TruncateText(string(raw), auditBodyLimitBytes)
+	if truncated {
+		text = text + "…[响应超过 32KB，已截断]"
+	}
+	return text
 }
 
 // parseAuditResp 从响应体解析业务码与说明（非 JSON 包络时留空）。
