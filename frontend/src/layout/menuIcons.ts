@@ -1,6 +1,5 @@
 /**
- * 后端菜单 icon_code → 离线图标表键。
- * 后端只存语义编码（dashboard / book / tree …），前端决定具体图形；
+ * 后端菜单 icon_code → 离线图标表键。后端只存语义编码，前端决定具体图形；
  * 未登记的编码回落到通用图标，菜单不会因此丢图标。
  */
 const ICON_CODE_MAP: Record<string, string> = {

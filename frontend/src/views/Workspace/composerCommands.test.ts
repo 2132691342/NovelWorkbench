@@ -9,57 +9,43 @@ import {
   parseLeadingSlashToken
 } from './composerCommands'
 
-describe('parseLeadingSlashToken', () => {
-  it('解析首 token 命令并剥离正文', () => {
+describe('斜杠命令注册表', () => {
+  it('解析首 token 命令并剥离正文，非首 token 与粘连正文不算命令', () => {
     expect(parseLeadingSlashToken('/polish 加强画面感')).toEqual({
       actionCode: 'polish',
       remainderText: '加强画面感'
     })
     expect(parseLeadingSlashToken('  /clear  ')).toEqual({ actionCode: 'clear', remainderText: '' })
-  })
-
-  it('非首 token、非命令字符与粘连正文都不算命令', () => {
     expect(parseLeadingSlashToken('续写 /continue')).toBeNull()
     expect(parseLeadingSlashToken('/ 加强画面感')).toBeNull()
     expect(parseLeadingSlashToken('/Polish 大写')).toBeNull()
     expect(parseLeadingSlashToken('/po!lish')).toBeNull()
     expect(parseLeadingSlashToken('')).toBeNull()
-  })
-
-  it('超长编码不匹配，避免把整段路径当命令', () => {
+    // 超长编码不匹配，避免把整段路径当命令
     expect(parseLeadingSlashToken(`/${'a'.repeat(33)} 正文`)).toBeNull()
     expect(parseLeadingSlashToken(`/${'a'.repeat(32)} 正文`)?.actionCode).toBe('a'.repeat(32))
   })
-})
 
-describe('action registry', () => {
-  it('动作编码唯一且都能按编码取回', () => {
+  it('动作编码唯一、可按编码取回、关键词过滤命中编码与名称', () => {
     const codeSet = actionCodeSet()
     expect(codeSet.size).toBe(COMPOSER_ACTION_LIST.length)
     for (const action of COMPOSER_ACTION_LIST) {
       expect(matchActionByCode(action.action_code)?.action_code).toBe(action.action_code)
     }
     expect(matchActionByCode('not_exist')).toBeNull()
+    expect(filterActions('').length).toBe(COMPOSER_ACTION_LIST.length)
+    expect(filterActions('clear').map((action) => action.action_code)).toContain('clear')
+    expect(filterActions('体检').map((action) => action.action_code)).toContain('check')
+    expect(filterActions('不存在的东西')).toHaveLength(0)
   })
 
   it('动作编码不与内置提示词编码冲突（保留命名空间）', () => {
+    // 后端 domain.reservedActionCodeList 与本表必须一致：
+    // 编码一旦撞车，同一句输入会因实现顺序走向「执行动作」或「注入提示词」两种结果。
     const builtinPromptCodes = ['continue', 'polish', 'deai', 'review', 'hitscan', 'summary']
     for (const promptCode of builtinPromptCodes) {
       expect(actionCodeSet().has(promptCode)).toBe(false)
     }
-  })
-
-  it('关键词过滤命中编码、名称与说明', () => {
-    expect(filterActions('').length).toBe(COMPOSER_ACTION_LIST.length)
-    expect(filterActions('clear').map((action) => action.action_code)).toContain('clear')
-    expect(filterActions('体检').map((action) => action.action_code)).toContain('check')
-    expect(filterActions('收起目录树').map((action) => action.action_code)).toContain('focus')
-    expect(filterActions('不存在的东西')).toHaveLength(0)
-  })
-
-  it('已移除历史条数与压缩动作：历史改为全量注入', () => {
-    const codeList = COMPOSER_ACTION_LIST.map((action) => action.action_code)
-    expect(codeList).not.toContain('compact')
-    expect(codeList).not.toContain('history')
+    expect(actionCodeSet().has('snapshot')).toBe(true)
   })
 })

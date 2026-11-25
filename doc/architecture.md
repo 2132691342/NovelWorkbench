@@ -66,19 +66,20 @@ flowchart LR
 | 6 | 站内通知 | `notifications` | `service/notification_service.go` |
 | 7 | 任务中心 | `jobs` | `service/job_service.go`、`service/knowledge_worker.go` |
 | 8 | 项目 / 卷 / 章节 | `projects`、`volumes`、`chapters`、`chapter_snapshots`、`word_count_stats` | `service/project_service.go`、`service/volume_service.go`、`service/chapter_service.go` |
-| 8.1 | AI 开书 | 同模块 8（+ `outline_nodes`） | `service/bootstrap_service.go`、`ai/bootstrap.go` |
-| 9 | 角色卡与关系图 | `characters`、`character_relations` | `service/character_service.go` |
-| 10 | 世界观设定与创作笔记 | `lore_settings` | `service/lore_service.go` |
-| 11 | 大纲树与场景卡 | `outline_nodes`、`detailed_scenes` | `service/outline_service.go` |
-| 12 | 连续性 | `temporal_facts`、`foreshadow_hooks`、`chapter_summaries` | `service/continuity_service.go` |
-| 13 | 知识库 | `knowledge_documents`、`knowledge_chunks` + MinIO + Manticore | `service/knowledge_service.go`、`service/knowledge_worker.go` |
-| 14 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`、`service/chat_context.go`、`service/chat_stream.go` |
-| 16.1 | 工具资产 | `tools` | `service/tool_service.go`、`service/tool_command.go`、`service/tool_helper.go`、`ai/builtin_tools.go`、`ai/check/chapter_check.go` |
-| 17 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants` | `service/model_provider_service.go`、`service/model_access_service.go` |
-| 18 | 数据总览 | `word_count_stats`、`projects` | `service/stats_service.go` |
-| 19 | 用量分析 | `model_usage_stats` | `service/model_usage_service.go` |
-| 20 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
-| 21 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/store`、`frontend/src/views/Workspace` |
+| 9 | AI 开书 | 同模块 8（+ `outline_nodes`） | `service/bootstrap_service.go`、`ai/bootstrap.go` |
+| 10 | 角色卡与关系图 | `characters`、`character_relations` | `service/character_service.go` |
+| 11 | 世界观设定与创作笔记 | `lore_settings` | `service/lore_service.go` |
+| 12 | 大纲树与场景卡 | `outline_nodes`、`detailed_scenes` | `service/outline_service.go` |
+| 13 | 连续性 | `temporal_facts`、`foreshadow_hooks`、`chapter_summaries` | `service/continuity_service.go` |
+| 14 | 知识库 | `knowledge_documents`、`knowledge_chunks` + MinIO + Manticore | `service/knowledge_service.go`、`service/knowledge_worker.go` |
+| 15 | AI 对话 | `chat_sessions`、`chat_messages` | `service/chat_service.go`、`service/chat_context.go`、`service/chat_loader.go`、`service/chat_stream.go` |
+| 16 | 提示词资产 | `prompts` | `service/prompt_service.go`、`ai/prompt_assets.go` |
+| 17 | 工具资产 | `tools` | `service/tool_service.go`、`service/tool_executor.go`、`ai/builtin_tools.go`、`ai/check/chapter_check.go` |
+| 18 | 模型生态 | `model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants` | `service/model_provider_service.go`、`service/model_access_service.go` |
+| 19 | 数据总览 | `word_count_stats`、`projects` | `service/stats_service.go` |
+| 20 | 用量分析 | `model_usage_stats` | `service/model_usage_service.go` |
+| 21 | 运行状态 | 无（实时探测） | `service/system_status_service.go` |
+| 22 | 前端工作台装配 | 无（消费上述接口） | `frontend/src/layout`、`frontend/src/store`、`frontend/src/views/Workspace` |
 
 ## 3. 技术选型
 
@@ -112,7 +113,7 @@ backend/
 ├── configs/          配置模板（凭据留空，环境变量注入）
 └── internal/
     ├── api           HTTP 处理器与路由注册（26 个文件）
-    ├── service       业务规则、事务边界、上下文装配（38 个文件）
+    ├── service       业务规则、事务边界、上下文装配（40 个文件）
     ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，26 个文件）
     ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（23 个文件）
     ├── ai            模型网关、提示词装配、内置提示词资产、用量契约（21 个文件）

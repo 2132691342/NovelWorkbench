@@ -2,24 +2,14 @@
 <script setup lang="ts">
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
-  import {
-    createChatSession,
-    deleteChatSession,
-    getChatHistory,
-    listChatSessions
-  } from '@/api/chat'
   import { getModelCapability, type NWModelCapabilityVo, type NWModelOptionVo } from '@/api/model'
   import { listPrompts } from '@/api/prompt'
 
-  import type {
-    NWChapterBriefVo,
-    NWChatSendReqVo,
-    NWChatSessionVo,
-    NWPromptVo
-  } from '@/api/contracts'
+  import type { NWChapterBriefVo, NWChatSendReqVo, NWPromptVo } from '@/api/contracts'
   import { useSSE } from '@/composables/useSSE'
   import { applyStreamEvent } from './chatStream'
   import { COMPOSER_ACTION_LIST } from './composerCommands'
+  import { useChatSessions } from './useChatSessions'
   import ChatComposer from './ChatComposer.vue'
   import ChatMessage from './ChatMessage.vue'
   import type { ChatDisplayMessage, ChatSendPayload } from './types'
@@ -41,15 +31,10 @@
   const { streamingFlag, startStream, stopStream } = useSSE()
 
   const composerRef = ref<InstanceType<typeof ChatComposer> | null>(null)
-  const messageList = ref<ChatDisplayMessage[]>([])
-  const sessionList = ref<NWChatSessionVo[]>([])
-  const currentSessionUlid = ref('')
   const capability = ref<NWModelCapabilityVo | null>(null)
   const selectedModelUlid = ref('')
   const attachChapter = ref(true)
-  const historyLoading = ref(false)
   const commandPromptList = ref<NWPromptVo[]>([])
-
   const systemPromptList = ref<NWPromptVo[]>([])
   const messagesHost = ref<HTMLDivElement | null>(null)
 
@@ -61,6 +46,9 @@
       if (messagesHost.value) messagesHost.value.scrollTop = messagesHost.value.scrollHeight
     })
   }
+
+  const { sessionList, currentSessionUlid, messageList, historyLoading, loadHistory, loadSessions, createSession, deleteSession } =
+    useChatSessions(props.projectUlid, scrollToBottom)
 
   const loadModelOptions = async () => {
     try {
@@ -87,70 +75,6 @@
       commandPromptList.value = []
       systemPromptList.value = []
     }
-  }
-
-  const loadHistory = async (sessionUlid: string) => {
-    currentSessionUlid.value = sessionUlid
-    historyLoading.value = true
-    try {
-      const page = await getChatHistory({ session_ulid: sessionUlid, page_num: 1, page_size: 50 })
-      messageList.value = (page.items ?? []).map((message) => ({
-        message_ulid: message.message_ulid,
-        role_code: message.role_code,
-        content_text: message.content_text,
-        reasoning_text: message.reasoning_text ?? '',
-        prompt_code: message.prompt_code,
-        tool_code_list: message.tool_code_list ?? [],
-        created_at: message.created_at,
-        reference_list: [],
-        error_message: '',
-        streaming_flag: false,
-        waited_ms: 0,
-        retry_payload: null
-      }))
-    } catch {
-      messageList.value = []
-    } finally {
-      historyLoading.value = false
-      scrollToBottom()
-    }
-  }
-
-  const loadSessions = async () => {
-    try {
-      sessionList.value = await listChatSessions(props.projectUlid)
-      if (!currentSessionUlid.value && sessionList.value.length > 0) {
-        await loadHistory(sessionList.value[0].session_ulid)
-      }
-      if (sessionList.value.length === 0) {
-        currentSessionUlid.value = ''
-        messageList.value = []
-      }
-    } catch {
-      sessionList.value = []
-    }
-  }
-
-  const createSession = async () => {
-    const session = await createChatSession({ project_ulid: props.projectUlid })
-    sessionList.value.unshift(session)
-    await loadHistory(session.session_ulid)
-    composerRef.value?.focus()
-  }
-
-  const deleteSession = async () => {
-    if (!currentSessionUlid.value) return
-    try {
-      await ElMessageBox.confirm('将删除该会话及其全部消息，确定吗？', '删除会话', {
-        type: 'warning'
-      })
-    } catch {
-      return
-    }
-    await deleteChatSession(currentSessionUlid.value)
-    messageList.value = []
-    currentSessionUlid.value = ''
-    await loadSessions()
   }
 
   /** 组装 /chat/send 请求体（当前章节按开关自动并入引用） */

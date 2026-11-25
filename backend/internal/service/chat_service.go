@@ -20,12 +20,12 @@ import (
 
 // 对话链路常量。
 const (
-	settingKeyRAGTopK          = "rag_top_k"          // 应用配置键：知识库默认召回条数
-	globalDocProjectID         = "0"                  // 全局知识库文档的项目标识
-	chatPingInterval           = 15 * time.Second     // 流式无输出心跳间隔
-	chatStreamIdleTimeout      = 6 * time.Minute      // 流式连续无分片的上限：超时判定网关已断
-	docFullTextPageSize        = 200                  // 文档切片全量拼接分页大小
-	chatToolRoundLimit         = 4                    // 工具往返轮数上限：防模型反复调用同一工具打转
+	settingKeyRAGTopK     = "rag_top_k"      // 应用配置键：知识库默认召回条数
+	globalDocProjectID    = "0"              // 全局知识库文档的项目标识
+	chatPingInterval      = 15 * time.Second // 流式无输出心跳间隔
+	chatStreamIdleTimeout = 6 * time.Minute  // 流式连续无分片的上限：超时判定网关已断
+	docFullTextPageSize   = 200              // 文档切片全量拼接分页大小
+	chatToolRoundLimit    = 4                // 工具往返轮数上限：防模型反复调用同一工具打转
 )
 
 // ChatStreamWriter SSE 输出接口（api 层实现为 text/event-stream 写入）。
@@ -222,11 +222,11 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 	}
 	// 工具不由命令注入：模型拿到工具声明后自行决定是否调用，作者无需（也无法）手动点名
 	userMessage := &domain.ChatMessageDO{
-		MessageULID:    pkg.NewULID(domain.IDPrefixMessage),
-		SessionULID:    session.SessionULID,
-		RoleCode:       domain.ChatRoleUser,
-		ContentText:    req.ContentText,
-		PromptCode:     promptCode,
+		MessageULID:      pkg.NewULID(domain.IDPrefixMessage),
+		SessionULID:      session.SessionULID,
+		RoleCode:         domain.ChatRoleUser,
+		ContentText:      req.ContentText,
+		PromptCode:       promptCode,
 		ToolCodeJSON:     "[]",
 		RefDocJSON:       encodeStringList(req.RefDocULIDList),
 		RefChapterJSON:   encodeStringList(req.RefChapterULIDList),
@@ -279,12 +279,12 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		return nil // 客户端断开或生成失败：不落 assistant 消息，用户消息保留对话痕迹
 	}
 	assistantMessage := &domain.ChatMessageDO{
-		MessageULID:    events.messageULID,
-		SessionULID:    session.SessionULID,
-		RoleCode:       domain.ChatRoleAssistant,
-		ContentText:    replyText,
-		ReasoningText:  reasoningText,
-		PromptCode:     promptCode,
+		MessageULID:      events.messageULID,
+		SessionULID:      session.SessionULID,
+		RoleCode:         domain.ChatRoleAssistant,
+		ContentText:      replyText,
+		ReasoningText:    reasoningText,
+		PromptCode:       promptCode,
 		ToolCodeJSON:     encodeStringList(events.toolCodeList),
 		RefDocJSON:       encodeStringList(req.RefDocULIDList),
 		RefChapterJSON:   encodeStringList(req.RefChapterULIDList),

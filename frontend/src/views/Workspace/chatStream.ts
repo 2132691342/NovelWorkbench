@@ -6,8 +6,7 @@ import type { NWChatStreamEventVo } from '@/api/contracts'
 import type { ChatDisplayMessage } from './types'
 
 /**
- * 把一条流式事件归并到消息展示态上。
- * 返回 false 表示该事件不改写消息（未知事件类型）。
+ * 把一条流式事件归并到消息展示态上。返回 false 表示该事件不改写消息（未知事件类型）。
  */
 export function applyStreamEvent(
   message: ChatDisplayMessage,

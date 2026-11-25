@@ -154,7 +154,7 @@ flowchart LR
 | `RabbitMQConfig` | url, queue_doc_index | `NW_RABBITMQ_URL`（空，AMQP 连接串）<br>`NW_RABBITMQ_QUEUE_DOC_INDEX`（`nw_doc_index`，索引队列名） |
 | `MinIOConfig` | endpoint, access_key, secret_key, bucket, use_ssl | `NW_MINIO_ENDPOINT`（空，`host:port`）<br>`NW_MINIO_ACCESS_KEY`（空，AccessKey）<br>`NW_MINIO_SECRET_KEY`（空，SecretKey）<br>`NW_MINIO_BUCKET`（`novelworkbench`，桶名）<br>`NW_MINIO_USE_SSL`（`false`，是否 SSL） |
 | `ManticoreConfig` | base_url, table_chunks | `NW_MANTICORE_BASE_URL`（空，HTTP SQL API 地址）<br>`NW_MANTICORE_TABLE_CHUNKS`（`nw_chunks`，切片全文表名） |
-| `AIConfig` | protocol_code, base_url, api_key, chat_model, temperature, max_tokens, timeout_sec, history_count | `NW_AI_PROTOCOL_CODE`（`openai`，`openai` / `anthropic`）<br>`NW_AI_BASE_URL`（空，OpenAI 兼容含 `/v1`；Anthropic 填根地址）<br>`NW_AI_API_KEY`（空，网关密钥）<br>`NW_AI_CHAT_MODEL`（空，对话模型名）<br>`NW_AI_TEMPERATURE`（`0.7`，采样温度）<br>`NW_AI_MAX_TOKENS`（`2048`，单次输出上限）<br>`NW_AI_TIMEOUT_SEC`（`120`，调用超时（秒），≤0 时 `main` 兜底 60）<br>`NW_AI_HISTORY_COUNT`（`5`，历史消息注入条数） |
+| `AIConfig` | protocol_code, base_url, api_key, chat_model, temperature, max_tokens, timeout_sec | `NW_AI_PROTOCOL_CODE`（`openai`，`openai` / `anthropic`）<br>`NW_AI_BASE_URL`（空，OpenAI 兼容含 `/v1`；Anthropic 填根地址）<br>`NW_AI_API_KEY`（空，网关密钥）<br>`NW_AI_CHAT_MODEL`（空，对话模型名）<br>`NW_AI_TEMPERATURE`（`0.7`，采样温度）<br>`NW_AI_MAX_TOKENS`（`2048`，单次输出上限）<br>`NW_AI_TIMEOUT_SEC`（`120`，调用超时（秒），≤0 时 `main` 兜底 60） |
 | `AppConfig` | upload_max_mb, chunk_size, chunk_overlap, rag_top_k, admin_password, build_version | `NW_APP_UPLOAD_MAX_MB`（`20`，上传大小上限（MB））<br>`NW_APP_CHUNK_SIZE`（`800`，切片字符数）<br>`NW_APP_CHUNK_OVERLAP`（`120`，切片重叠字符数）<br>`NW_APP_RAG_TOP_K`（`6`，默认召回条数）<br>`NW_APP_ADMIN_PASSWORD`（`Admin@123456`，引导管理员密码，仅用户表为空时生效）<br>`NW_APP_BUILD_VERSION`（`dev`，运行状态页展示的构建版本） |
 
 `ai.*` 组只在 `model_providers` 表为空时写入一条「默认模型网关」记录（`providerService.SeedDefault`），播种后由页面维护，配置不再参与。
@@ -193,7 +193,8 @@ flowchart LR
 | 2 | `infra.LoadConfig("")`：读 YAML、应用 `NW_*`、`validate()` | 致命，退出码 1，日志「加载配置失败」 |
 | 3 | `signal.NotifyContext(SIGINT, SIGTERM)` | — |
 | 4 | `infra.NewPostgres`：DSN 连接 + 连接池 + `Ping` | 致命，退出码 1，日志「Postgres 连接失败」 |
-| 5 | `db.AutoMigrate` 建表 33 张（`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`SkillDO`、`SkillReferenceDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`、`PromptProfileDO`、`ToolDO`、`ModelUserGrantDO`） | 致命，退出码 1，日志「数据库迁移失败」 |
+| 5 | `db.AutoMigrate` 建表 33 张（`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`、`PromptDO`、`ToolDO`、`ModelUserGrantDO`） | 致命，退出码 1，日志「数据库迁移失败」 |
+| 5.1 | 清理下线表列：删 `chat_sessions.summary_text` / `compact_at`，删表 `skills` / `skill_references` / `prompt_profiles` / `slash_commands`，删列 `chat_messages.skill_code` / `ref_message_json` / `ref_prompt_json` | 告警，不阻断启动（AutoMigrate 只补不删，残留由这一步清理） |
 | 6 | `infra.NewRedis`：构造客户端 + 5s `Ping` | 地址为空返回 `nil` 客户端 → 致命「Redis 配置无效」；Ping 失败 → 告警「令牌吊销降级」并继续 |
 | 7 | `infra.NewRabbitMQ` | 告警「异步任务降级」 |
 | 8 | `infra.NewMinIO`：构造客户端 + `BucketExists`，桶不存在则 `MakeBucket`；随后 `main` 再校验一次桶是否存在 | 告警「MinIO 初始化失败 / 桶健康检查失败 / 桶不存在，对象存储降级」 |
@@ -287,7 +288,8 @@ flowchart TD
   D --> E["清理陈旧 CNI DNAT"]
   E --> F["podman-compose up -d --force-recreate"]
   F -->|"失败"| Y["tail 日志后 die"]
-  F --> G["轮询 /health /ready /healthz"]
+  F --> F2["按当前容器 IP 修复 DNAT 跳转"]
+  F2 --> G["轮询 /health /ready /healthz"]
   G -->|"通过"| H["打印 podman ps 并退出 0"]
   G -->|"30 次超时"| X
 ```
@@ -300,13 +302,23 @@ flowchart TD
 | 4 构建镜像 | `podman build -f Dockerfile.backend --build-arg BASE_IMAGE=${BASE_PREFIX}/alpine:3.20`，前端同理用 `nginx:1.27-alpine` | `set -e` 中止 |
 | 5 清理 DNAT | `cleanup_port_dnat` 删除指向 `127.0.0.1` 的空规则与该端口名下的 `CNI-DN-*` 跳转链 | 无 `iptables` 命令时跳过 |
 | 6 重建容器 | `podman-compose up -d --force-recreate`，输出重定向到 `COMPOSE_LOG` | 打印日志尾部 40 行后 `die` |
+| 6.1 修复 DNAT | `repair_port_dnat <端口> nw-frontend`：按当前容器 IP 补齐跳转并从链首插入 | 无 `iptables` 命令时静默跳过 |
 | 7 健康自检 | 最多 30 次、间隔 2 秒，检查 `podman exec nw-backend ... /health`、`/ready`、`curl .../healthz` | 超时打印 `podman ps` 与后端日志尾部（过滤 `password` 行）后退出非 0 |
 
 两处设计取舍：输出重定向是因为 `podman-compose` 会把含明文口令的 `podman run` 命令打到 stdout，日志只落服务器本地文件；`--force-recreate` 是因为 `podman-compose` 1.x 不会因镜像 ID 变化自动重建容器。
 
 ### 8.4 DNAT 与 rootless Podman
 
-rootless podman 在容器重建后可能残留旧容器的 `CNI-HOSTPORT-DNAT` 规则，导致宿主端口指向已失效的容器 IP。`deploy.sh` 在重建前后各清理一次：`cleanup_port_dnat <port>` 先循环删除指向 `127.0.0.1` 的空跳转（它不按端口划分，任何一次重建都会残留），再按 `--dports` 找出该端口的 `CNI-DN-*` 链并逐条删除 `CNI-HOSTPORT-DNAT` 中的跳转；容器启动时 podman 只为新容器写入唯一规则。
+rootless podman 在容器重建后可能残留旧容器的 `CNI-HOSTPORT-DNAT` 规则，导致宿主端口指向已失效的容器 IP；更麻烦的是清理动作本身会删掉 podman 刚写好的跳转（podman 认为端口已分配，不会重写）。
+
+`deploy.sh` 因此分两步处理：
+
+| 时机 | 函数 | 行为 |
+| --- | --- | --- |
+| 重建容器**前** | `cleanup_port_dnat <port>` | 先循环删除指向 `127.0.0.1` 的空跳转（它不按端口划分，任何一次重建都会残留），再按 `--dports` 找出该端口的 `CNI-DN-*` 链并逐条删除 `CNI-HOSTPORT-DNAT` 中的跳转 |
+| 重建容器**后** | `repair_port_dnat <port> <container>` | 取当前容器的 IP，删掉该端口名下所有旧跳转（无论指向哪个容器 IP），再只为当前 IP 从链首插一条新跳转（避免旧容器残留规则抢先匹配） |
+
+两步缺一不可：只清理不修复，端口在 podman 不重写规则时就不可达；只修复不清理，旧规则会与新规则并存并抢先匹配。
 
 由于后端不映射宿主端口，探活一律用 `podman exec` 进容器访问 `127.0.0.1:8080`，不受 DNAT 影响。
 

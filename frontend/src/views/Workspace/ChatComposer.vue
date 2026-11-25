@@ -1,5 +1,5 @@
 <!-- 对话输入区：/ 唤起斜杠命令（本地动作 + 指令提示词），@ 引用素材库与历史会话。
-     # 工具钩子已移除：工具由模型自行决定是否调用，界面上不再提供手动点名入口。 -->
+     工具由模型自行决定是否调用，界面不提供手动点名入口。 -->
 <script setup lang="ts">
   import { computed, nextTick, ref, watch } from 'vue'
   import type { NWPromptVo } from '@/api/contracts'

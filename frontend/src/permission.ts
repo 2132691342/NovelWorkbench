@@ -14,7 +14,7 @@ NProgress.configure({ showSpinner: false })
 
 /**
  * 动态路由注册：后端导航树 → 路由记录 → router.addRoute。
- * 已注册过返回 false；本次新注册返回 true（调用方需重新导航一次，否则首帧会落到 Fallback）。
+ * 已注册过返回 false；新注册返回 true（调用方需重新导航一次，否则首帧会落到 Fallback）。
  */
 export const ensureDynamicRoutes = async (): Promise<boolean> => {
   const permissionStore = usePermissionStoreWithOut()

@@ -90,9 +90,9 @@
 
 ### 1.4 编码与前端入口的契约
 
-`/continue`、`/polish`、`/summary`、`/deai` 四个编码被写作台与体检面板直接引用
-（`frontend/src/views/Workspace/index.vue`、`ChapterCheckPanel.vue`），改编码等于改前端契约，必须同步改前端。
-其余编码只在提示词库与 `/` 菜单出现，不构成硬编码依赖。
+`/continue`、`/polish`、`/summary`、`/deai` 四个编码被写作台直接引用
+（`frontend/src/views/Workspace/index.vue` 的 `openAiWithPrompt` 与体检面板的「让 AI 修」），
+改编码等于改前端契约，必须同步改前端。其余编码只在提示词库与 `/` 菜单出现，不构成硬编码依赖。
 
 ## 2. 工具：确定性事实，由模型自行取用
 
@@ -151,7 +151,7 @@
 结果作为 tool 消息回填给模型（不是上下文块）：模型能看到自己调了什么、拿到了什么，
 下一轮据此作答，而不是被服务端预先塞进一段它没要过的「工具结果」。
 
-工具由 `service/tool_service.go` 播种与执行，`ai/builtin_tools.go` 定义出厂内容与指纹；
+工具由 `service/tool_service.go` 播种、由 `service/tool_executor.go` 执行，`ai/builtin_tools.go` 定义出厂内容与指纹；
 作者可改名称、说明、参数与启停，改过即 `customized_flag=true`，代码升级不再覆盖；内置工具不可删。
 
 ## 3. 提示词的构造规则

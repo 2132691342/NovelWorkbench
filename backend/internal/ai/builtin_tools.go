@@ -140,4 +140,3 @@ func BuiltinToolHashOf(toolCode string) string {
 	}
 	return ""
 }
-

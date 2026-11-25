@@ -70,10 +70,10 @@ func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter,
 
 // streamOutcome 单轮流式结果：正文、思考、待执行的工具调用与是否正常结束。
 type streamOutcome struct {
-	contentText  string         // 本轮正文（可能与工具调用并存）
-	reasoningText string        // 本轮思考过程
-	toolCallList []schema.ToolCall // 模型请求调用的工具
-	ok           bool           // 是否正常结束（断开或失败为 false）
+	contentText   string            // 本轮正文（可能与工具调用并存）
+	reasoningText string            // 本轮思考过程
+	toolCallList  []schema.ToolCall // 模型请求调用的工具
+	ok            bool              // 是否正常结束（断开或失败为 false）
 }
 
 // streamOnce 跑一轮流式生成，把增量事件转发给前端并累积完整消息。
@@ -236,8 +236,7 @@ func mergeToolCallChunks(chunkList []schema.ToolCall) ([]schema.ToolCall, error)
 
 // executeToolCalls 执行模型请求的工具：返回回填用的 assistant 消息、tool 结果消息与执行的编码。
 // 单个工具失败不中止对话：把失败原因写进 tool 消息，让模型自己决定如何说明。
-// 同一轮里重复调用「相同工具 + 相同参数」只执行一次，其余复用首次结果：
-// 否则模型在拿不到新信息时会反复重试，把往返轮数打满却一个正文都不产出。
+// 同一轮里重复调用「相同工具 + 相同参数」只执行一次，其余复用首次结果，避免把往返轮数打满。
 func (s *ChatService) executeToolCalls(ctx context.Context, events *chatEventWriter, outcome streamOutcome,
 	providerSpec ai.ProviderSpec) (*schema.Message, []*schema.Message, []string, error) {
 	assistantTurn := &schema.Message{

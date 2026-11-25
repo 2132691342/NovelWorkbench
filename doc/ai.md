@@ -30,7 +30,8 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | `ai.ProviderSpec` | 同上 | 单次调用所需供应商快照；`APIKey` 明文只存在于内存 |
 | `ai.UsageRecorder` | `backend/internal/ai/usage.go` | 用量上报接口，由 `service.ModelUsageService` 实现 |
 | `ai.AssembleContext` / `ai.RenderPrompt` / `ai.SystemPrompt` / `ai.TemplatePlaceholders` | `backend/internal/ai/prompt.go` | 上下文装配、模板渲染与校验、系统提示词 |
-| `ai.BuiltinDomains` / `ai.BuiltinCommandPrompts` / `ai.BuiltinSystemPrompts` | `backend/internal/ai/prompt_assets.go` + `domain_<域>.go` | 12 个流程域的身份提示词与 24 份指令提示词、下线集合与内容指纹，与持久化结构解耦 |
+| `ai.BuiltinDomains` / `ai.BuiltinCommandCodeSet` / `ai.BuiltinSystemCodeSet` | `backend/internal/ai/prompt_assets.go` + `domain_<域>.go` | 12 个流程域的身份提示词与 24 份指令提示词、下线集合与内容指纹，与持久化结构解耦 |
+| `ai.ToolSpec` / `ai.ToolInfos` / `ai.DecodeToolArguments` | `backend/internal/ai/toolcall.go` | 工具声明构造、参数解码 |
 
 `ProviderSpec` 字段：`ProviderULID`、`ProviderName`、`ProtocolCode`、`BaseURL`、`APIKey`、`ChatModelName`、`Temperature`、`MaxTokens`、`Timeout`。密钥由 `ModelProviderService.specOf` 解密后传入，`ai` 包不接触存储。
 
@@ -82,7 +83,7 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 ### 2.5 重排解析
 
-`parseRerankIDs` 的规则：
+`ai.ParseRerankIDs` 的规则：
 
 1. 回复以 Markdown 代码围栏开头 → 直接判失败（拒绝包裹输出）。
 2. 取首个 `{` 到末个 `}` 之间文本，`json.Unmarshal` 为 `{"ids":[...]}`。
@@ -106,34 +107,21 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 内置资产按「流程域 = 1 份身份 + 2 份指令」组织，完整矩阵见 [prompts.md](prompts.md)。
 
-| 身份编码 | 名称 | 定位 |
-| --- | --- | --- |
-| `novelist` | 长篇连载作者 | 默认身份：只交稿不解释、具体优先、章末留钩 |
-| `architect` | 故事架构师 | 六层结构自上而下、每层给最薄弱处与补齐顺序 |
-| `stylist` | 文字打磨师 | 只改怎么说不动说什么、事实锁与声线锁 |
-| `deai_editor` | 去 AI 味修订 | 五层对抗、命中必引原句、误杀防护 |
-| `editor` | 连载责任编辑 | 先判后改、P0/P1/P2 分级、给可直接替换的改法 |
-| `continuity` | 设定守门人 | 只依据给定上下文作答、缺失即明说、冲突给三种收敛方案 |
-| `final_editor` | 定稿编辑 | 只做归档与对账、不改稿、不把推测写成事实 |
-| `serial_editor` | 连载平台主编 | 按第三章/第三十章/第一百章判断留存与商业化 |
-| `pitch_analyst` | 选题策划 | 开书前只答值不值得写、判断必带代价 |
-| `platform_operator` | 平台运营 | 书名与简介只对点击负责、不承诺数据 |
-| `short_story_author` | 短篇作者 | 一次完整呼吸、结尾留余震、禁 cliffhanger |
-| `screenwriter` | 改编编剧 | 可见优先、保留情感功能、材料不足即声明假设 |
+12 份身份提示词（`novelist` / `architect` / `stylist` / `deai_editor` / `editor` / `continuity` / `final_editor` / `serial_editor` / `pitch_analyst` / `platform_operator` / `short_story_author` / `screenwriter`）与 24 份指令提示词统一落在一张 `prompts` 表上，由 `PromptService.SeedDefaults` 幂等播种并做指纹升级，管理端在「提示词库」页维护；完整矩阵见 [prompts.md](prompts.md)。
 
-提示词表 `prompts` 统一承载身份与指令（作用域 + 编码唯一 + 内置不可删 + 可停用），由 `PromptService.SeedDefaults` 幂等播种并做指纹升级，管理端在「提示词库」页维护。
+默认身份是 `novelist`（长篇连载作者），未指定身份提示词的对话都用它。
 
 ### 3.2 块优先级
 
 | 优先级 | 常量 | BlockKey | 内容来源 |
 | --- | --- | --- | --- |
 | 100 | `PriorityCurrentChapter` | `current_chapter` | 当前编辑章节正文 |
-| 90 | `PriorityExplicitRef` | `ref_chapter` / `ref_doc` / `ref_summary` / `ref_character` / `ref_lore` / `ref_session` | @引用章节 / 文档全文 / 章节摘要 / 角色卡 / 设定条目 / 历史会话摘要 |
+| 90 | `PriorityExplicitRef` | `ref_chapter` / `ref_doc` / `ref_summary` / `ref_character` / `ref_lore` / `ref_session` | @引用章节 / 文档全文 / 章节摘要 / 角色卡 / 设定条目 / 历史会话归档 |
 | 70 | `PriorityRAG` | `rag` | 知识库召回切片 |
 | 60 | `PriorityChapterSummary` | `chapter_summary` | 相邻章节梗概 |
 | 50 | `PriorityCharacter` | `character` / `lore` | 角色卡 / 设定条目（`note` 排除） |
 
-历史不进上下文块：它以原生角色消息追加到消息序列，两处同时注入会让模型看到两份对话。
+历史不进上下文块：它以原生角色消息追加到消息序列，两处同时注入会让模型看到两份对话。工具结果也不进上下文块：它以原生 `tool` 消息回给模型。
 
 ### 3.3 装配规则
 
@@ -152,21 +140,18 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 | ≥ `PriorityExplicitRef`(90) | 20000 | 当前章、引用章节/文档/摘要/角色/设定/会话 |
 | 其余 | 6000 | 知识库召回、章节梗概、全量角色与设定 |
 
+收敛按 `limit*3/5` 保留开头、`limit*2/5` 保留结尾，中间标注省略字数。
+
 块文本格式（`buildContextBlocks`）：
 
 | 块 | 格式 |
 | --- | --- |
-| `current_chapter` | `【当前章节】{名}\n{正文}` |
-| `ref_chapter` | `【引用章节】{名}\n{正文}` |
-| `ref_doc` | `【引用文档】{名}\n{全文}` |
-| `ref_summary` | `【引用章节摘要】\n` + 摘要换行拼接 |
-| `ref_character` | `【角色卡】` + 每条 `\n姓名：{名}｜性格：{性格}｜背景：{背景}` |
-| `ref_lore` | `【设定条目】` + 每条 `\n设定名：{名}｜内容：{内容}` |
-| `ref_session` | `【引用历史会话】` + 每条 `\n《{会话名}》\n{逐条归档}` |
-| `rag` | `【知识库召回】` + 每条 `\n《{文档名}》{切片}` |
-| `chapter_summary` | `【章节梗概】\n` + 梗概换行拼接 |
-| `character` | `【角色卡】`（项目全量） |
-| `lore` | `【设定条目】`（项目全量，`note` 排除） |
+| `current_chapter` / `ref_chapter` / `ref_doc` | `【当前章节】` / `【引用章节】` / `【引用文档】` + 名称 + 正文 |
+| `ref_summary` / `chapter_summary` | `【引用章节摘要】` / `【章节梗概】` + 摘要换行拼接 |
+| `ref_character` / `character` | `【角色卡】` + 每条 `姓名：{名}｜性格：{性格}｜背景：{背景}` |
+| `ref_lore` / `lore` | `【设定条目】` + 每条 `设定名：{名}｜内容：{内容}` |
+| `ref_session` | `【引用历史会话】` + 每条 `《{会话名}》` + 逐条归档 |
+| `rag` | `【知识库召回】` + 每条 `《{文档名}》{切片}` |
 
 ### 3.4 单项截断
 
@@ -254,8 +239,8 @@ flowchart LR
 | 4… | 按历史顺序 | 逐条历史（全量，超长单条保留首尾），`chatRoleOf` 映射角色 |
 | 末 | `user` | 用户输入（去命令后的正文） |
 
-关键约束：**注入内容一律是系统级消息，用户输入一律是用户级消息**。这让"约束"与"要求"在模型侧与界面侧都可区分，
-也避免了旧版把上下文塞进 `user` 消息、与真实用户输入混淆的问题。
+关键约束：**注入内容一律是系统级消息，用户输入一律是用户级消息**。这让「约束」与「要求」在模型侧与界面侧都可区分，
+模型看到的请求结构是确定的，界面也不会把上下文误显示成作者发言。
 
 `chatRoleOf`：`assistant` → `Assistant`；`system` → `System`；其余（含未知值）→ `User`。
 
@@ -271,99 +256,49 @@ streamChat 循环（≤ chatToolRoundLimit = 4）
 
 消息序列因此是「系统消息 → 历史 → 用户 → (assistant tool_calls → tool result)* → assistant 正文」。
 工具结果以原生 `tool` 消息回给模型，不再额外塞进上下文块——模型只该看到自己主动要来的事实。
-
-防打转三道机制：单轮内「同工具同参数」去重；相邻两轮调用签名相同即摘掉工具声明；
-轮数上限触发后若仍无正文则发 `error` 事件而不是静默返回空串。
+防打转的三道机制见 [modules.md](modules.md) 的工具资产一节。
 
 ## 5. 提示词
 
 ### 5.1 数据模型
 
-提示词 = 作用域 + 种类 + 正文，落一张表：
+提示词 = 作用域 + 种类 + 正文，落一张 `prompts` 表（列定义见 [database.md](database.md)）：
 
-| 列 | 说明 |
-| --- | --- |
-| `prompt_ulid`(`PRM_`) | 主键 |
-| `prompt_code` | 编码（对话中以 `/code` 触发），同作用域内唯一 |
-| `prompt_name` | 名称 |
-| `prompt_kind_code` | `system`（身份）/ `command`（指令） |
-| `scope_code` / `project_ulid` | `global` / `project`；同编码项目提示词覆盖全局 |
-| `domain_code` | 流程域编码（内置资产按域分组展示） |
-| `category_code` | `write` / `revise` / `outline` / `setting` / `review` / `other` |
-| `description_text` | 一句话说明 |
-| `prompt_text` | 提示词正文（可含 `{{占位符}}`） |
-| `enabled_flag` / `builtin_flag` | 启停与内置标记 |
-| `asset_hash_text` / `customized_flag` | 出厂指纹与作者改动标记 |
-| `sort_order` | 排序号 |
+- `prompt_code`：对话中以 `/code` 触发，同作用域内唯一。
+- `prompt_kind_code`：`system`（身份）/ `command`（指令）。
+- `scope_code` + `project_ulid`：`global` / `project`；同编码项目提示词覆盖全局。
+- `domain_code` / `category_code`：流程域与分类，内置资产按域分组展示。
+- `prompt_text`：提示词正文，可含 `{{占位符}}`。
+- `asset_hash_text` + `customized_flag`：出厂指纹与作者改动标记。
 
-旧版的 `skills` + `skill_references` + `prompt_profiles` 三张表已被 `prompts` 一张表取代：
-技能与提示词本是同一种东西（一段可编辑的提示词），拆成两张表只会让"哪一段真的生效"变得难查。
-技能参考资料（关键词命中的长资料）随技能一并删除，改为 `@` 引用提示词——作者显式挑选，链路更短、行为更可预期。
+技能与提示词本是同一种东西（一段可编辑的提示词），拆成两张表只会让「哪一段真的生效」变得难查，
+因此统一落在一张 `prompts` 表上，用 `prompt_kind_code` 区分身份与指令。
 
 ### 5.2 内置提示词（12 份身份 + 24 份指令）
 
 由 `ai.BuiltinDomains()` 汇总 12 个流程域（`backend/internal/ai/domain_<域>.go`，一个域一个文件），
 `PromptService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种并做指纹升级。
-完整矩阵见 [prompts.md](prompts.md)，此处只列编码与用途：
-
-| code | 种类 | 名称 | 所属域 | 用途 |
-| --- | --- | --- | --- | --- |
-| `continue` | command | 续写正文 | draft | 承接当前章节往下写：衔接、具体、推进、章末留钩 |
-| `conflict` | command | 冲突加码 | draft | 目标互斥 + 代价递增 + 不可逆选择的重写 |
-| `outline` | command | 搭建大纲 | architect | 卖点 / 世界观 / 主线 / 人物 / 分卷 / 章纲六层，附结构风险 |
-| `worldrule` | command | 世界观规则卡 | architect | 规则 / 边界 / 代价 / 例外四栏 + 一致性检查 |
-| `polish` | command | 润色文字 | style | 只改「怎么说」：去翻译腔、去重复、把定性换成现场 |
-| `dialogue` | command | 对白打磨 | style | 每句台词争夺信息、权力或关系；去寒暄留潜台词 |
-| `deai` | command | 去 AI 味 | deai | 五层对抗诊断 + 改写全文 + 改动说明 |
-| `humanness` | command | 活人感改写 | deai | 材料 / 位置 / 语气 / 不完美四步 |
-| `review` | command | 章节质检 | review | 六道检查出 P0-P2 与可发结论 |
-| `hitscan` | command | 量化门禁 | review | 八项硬指标给实测值与最小修复 |
-| `foreshadow` | command | 伏笔台账 | continuity | 伏笔台账六列 + 悬空与过期预警 |
-| `ledger` | command | 连续性台账 | continuity | 五本台账 + 冲突清单 + 三种收敛方案 |
-| `summary` | command | 章节梗概 | finalize | 四段式事实条目，供上下文注入 |
-| `finalcheck` | command | 终审对账 | finalize | 六维对账 + 不一致清单 + 待补项 |
-| `golden3` | command | 开篇体检 | operation | 八项字位指标 + 三个最贵问题 |
-| `platform` | command | 平台适配 | operation | 调性对齐 / 开篇改造 / 节奏排布 / 包装四组结论 |
-| `pitch` | command | 立项评估 | pitch | 十二维打分 + 总分门槛 + 最弱两维补法 |
-| `deconstruct` | command | 拆书 | pitch | 前三百字逐句 / 章节卡 / 可迁移配方 |
-| `screenplay` | command | 剧本拆场 | adapt | 场次表 + 可读剧本 + 改编标注 |
-| `voiceover` | command | 有声旁白 | adapt | 去视觉依赖、补听觉线索、控口播节奏 |
-| `title` | command | 标题封面 | publish | 书名候选 + 点击力排序 + 避雷检查 |
-| `blurb` | command | 上架文案 | publish | 四句简介 + 标签三组 + 合规申报 |
-| `shortdraft` | command | 短篇起稿 | short | 形态判定 + 情绪曲线 + 一次成稿 |
-| `ending` | command | 结尾余震 | short | 结尾问题判定 + 余震改写 |
-| `pitch_analyst` | system | 选题策划 | pitch | 立项判断的身份与纪律 |
-| `architect` | system | 故事架构师 | architect | 分层结构的身份与纪律 |
-| `novelist` | system | 长篇连载作者 | draft | 默认身份：只交稿不解释 |
-| `stylist` | system | 文字打磨师 | style | 只改说法不改事实 |
-| `deai_editor` | system | 去 AI 味修订 | deai | 改变生成分布而非删词 |
-| `editor` | system | 连载责任编辑 | review | 先判后改、分级给改法 |
-| `continuity` | system | 设定守门人 | continuity | 只依据给定上下文作答 |
-| `final_editor` | system | 定稿编辑 | finalize | 只归档对账不改稿 |
-| `serial_editor` | system | 连载平台主编 | operation | 按平台口径判断留存 |
-| `platform_operator` | system | 平台运营 | publish | 只对点击负责 |
-| `short_story_author` | system | 短篇作者 | short | 一次完整呼吸 |
-| `screenwriter` | system | 改编编剧 | adapt | 可见优先、标注改编 |
+完整编码矩阵见 [prompts.md](prompts.md)，此处只说明判据与升级机制。
 
 判据均可核对：卖点必须能填满「一个什么人，因为什么事，必须做到什么，否则失去什么」；世界观只认「规则 / 边界 / 代价」三栏；质检每条判定必须引原句，给不出原句的判定删掉；去 AI 味只看可机检指标（句长分布、套话密度、情绪直给次数），不做主观评价。
 
 **指纹升级**：内置提示词属于产品资产，但允许作者改。每行存 `asset_hash_text`（出厂内容指纹）与 `customized_flag`。
 启动时按「不存在→插入 / 已自改→不动 / 指纹一致→不动 / 其余→覆盖并写新指纹」处理，
-所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/ai_chain_test.go` 断言域形状、编码唯一、占位符合法与指纹长度。
+所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/ai_chain_test.go` 断言域形状、编码唯一与占位符合法。
 
 ### 5.3 解析与覆盖
 
 1. 请求体 `prompt_code` 非空 → 直接按编码解析。
 2. 否则 `parseSlashToken` 解析正文首 token：trim 后以 `/` 开头，取到首个空白符为止；命中启用提示词则剥离命令，未命中（编码不存在、已停用、非首 token）则正文原样保留并按自由对话处理。
 3. `resolveByCode`：先查 `(project, code)` 且启用，再回退 `(global, code)`；都未命中返回「提示词不存在或已停用」。
-4. 列表页用 `isOverriddenGlobalPrompt` 给被项目版覆盖的全局提示词打 `overridden_flag`，避免"改了半天不生效"。
+4. 列表页用 `isOverriddenGlobalPrompt` 给被项目版覆盖的全局提示词打 `overridden_flag`，避免「改了半天不生效」。
 
 ### 5.4 占位符
 
 - 内置白名单（`ai.BuiltinPlaceholders`）：`user_input`、`chapter_content`、`context`、`prompt_code`，装配时自动注入。
 - 保存时 `validatePromptPlaceholders` 用 `ai.TemplatePlaceholders` 校验：出现白名单外的占位符直接 `ERR_INVALID_PARAM`。
   未登记的占位符会被渲染成空串，等于静默丢上下文，因此必须在保存期拦下。
-- 作者要注入长资料时，用 `@` 引用提示词，而不是把资料塞进正文模板。
+- 作者要注入长资料时，用 `@` 引用素材或历史会话，而不是把资料塞进正文模板。
 
 ### 5.5 生命周期
 
@@ -405,11 +340,10 @@ flowchart LR
 | --- | --- | --- |
 | 上传 | `KnowledgeService.Upload` | 原文写 MinIO（对象键 = `doc_ulid`），文档行 `pending`，投递索引任务；落库失败时回滚对象 |
 | 任务投递 | `enqueueIndexJob` | 先写 `jobs` 行（`queued`）再投递；投递失败置 `failed` |
-| 文本提取 | `extractDocumentText` | txt/md 直读并剥 BOM；docx 读 `word/document.xml` 去标签还原实体；pdf 用纯 Go 解析 |
+| 文本提取 | `extractDocumentText` | txt/md 直读剥 BOM；docx 读 `word/document.xml` 去标签还原实体；pdf 纯 Go 解析 |
 | 切片 | `chunkText` | 见 6.3 |
 | 增量复用 | `indexDocument` | 与既有切片内容哈希相同且未占用 → 复用原 `chunk_ulid` |
-| 落库 | `repo.WithTx` | 同一事务内先删该文档旧切片再插新切片 |
-| 索引同步 | `syncManticoreChunks` | 先按 `doc_ulid` 删除该文档全部行，再逐条 INSERT |
+| 落库与索引 | `repo.WithTx` + `syncManticoreChunks` | 事务内先删该文档旧切片再插新切片；Manticore 侧先删该文档全部行再逐条 INSERT |
 | 状态 | `UpdateDocument` | 置 `indexed` 并写 `chunk_count`、`total_token_count` |
 
 失败处理：`handleIndexJob` 最多重试 `maxIndexRetryCount = 3` 次（第 n 次重试前等待 n 秒），仍失败则文档置 `failed` 并记录原因（截断 500 rune），消息 ack，避免毒消息阻塞队列；文档已删除的滞留消息直接 ack。索引成功/失败都会给项目所有者写站内通知。
@@ -490,6 +424,7 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 | `content_text` | string | 增量思考（thinking）、增量正文（chunk）或完整回复（done） |
 | `reasoning_text` | string | 完整思考过程，仅 `done`（模型未返回推理内容时为空串） |
 | `reference_list` | []KnowledgeChunkVO | RAG 召回依据，仅 `done` |
+| `tool_code_list` | []string | 本轮模型实际调用的工具编码，仅 `done` |
 | `error_message` | string | 错误说明，仅 `error` |
 
 ### 7.2 序列
@@ -501,7 +436,7 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 | 生成启动失败 | `error`：`AI 生成启动失败：{err}` |
 | 生成异常 | `error`：`AI 生成失败，请稍后重试` |
 | 助手消息落库失败 | `error`：`回复保存失败，请重试` |
-| 正常结束 | `done`（完整文本 + `reasoning_text` + `reference_list`） |
+| 正常结束 | `done`（完整文本 + `reasoning_text` + `reference_list` + `tool_code_list`） |
 
 ### 7.3 错误边界
 
@@ -525,7 +460,7 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 | nginx | `/api/` 段 `proxy_buffering off`、`proxy_read_timeout 3600s` |
 | 服务写超时 | `write_timeout_sec: 0`（不限） |
 
-客户端断开 → 请求 context 取消 → `streamChat` 返回 `finish(false)` → 不落助手消息（用户消息保留），仍补记用量。
+客户端断开 → 请求 context 取消 → `streamChat` 的 `completed` 返回 false → 不落助手消息（用户消息保留），仍补记用量。
 
 ### 7.5 token 估算
 
@@ -556,7 +491,6 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 | 明文生命周期 | 仅存在于 `specOf` 解封后的 `ProviderSpec.APIKey` |
 | 写权限 | `/model/provider/*` 与 `/model/catalog/*` 需 `system:model:manage`；`capability` 对所有登录用户开放 |
 | 项目隔离 | Manticore 查询恒带 `project_ulid`；检索入口先校验项目归属 |
-| 引用归属 | 引用章节须属当前项目；引用文档须属当前项目或全局库（`project_ulid = "0"`）；引用消息须属当前会话，去重保序 |
-| 会话归属 | 会话须属当前用户且项目匹配 |
+| 引用归属 | 引用章节须属当前项目；引用文档须属当前项目或全局库（`project_ulid = "0"`）；引用会话须属当前用户 |
 | 私人笔记 | `lore_type_code = note` 不进上下文；全部为 note 时整块不生成 |
 | 显式插入 | AI 产出只写 `chat_messages`，插入章节由前端显式触发 |

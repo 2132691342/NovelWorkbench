@@ -23,6 +23,7 @@
 | `src/components/` | 通用组件（`Menu`、`ContentWrap`、`CountTo`、`Footer`、`LocaleDropdown`、Logo、Breadcrumb、TagsView、ContextMenu、Collapse、Echart、ConfigGlobal、UserInfo、Backtop、Error） |
 | `src/views/` | 业务页面目录 |
 | `src/composables/` | `usePageQuery.ts`（分页列表状态）、`useSSE.ts`（流式请求） |
+| `src/views/Workspace/useChatSessions.ts` | AI 面板的会话与历史装配（会话列表、当前会话、消息加载与增删） |
 | `src/utils/` | `storage.ts`、`time.ts`、`table.ts`（表格行类型还原）、`routerHelper.ts` |
 | `src/locales/` | 界面壳文案（`zh-CN.ts`），业务文案由后端数据提供 |
 | `packages/components` | `Icon`（按名称渲染已注册图标）与 `ThemeSwitch`（明暗切换）、图标注册表 |
@@ -155,16 +156,22 @@
 
 `composables/useSSE.ts` 用 `fetch` + `ReadableStream`（axios 不支持流式响应）：`parseSseBuffer` 只消费完整行，跨 chunk 断行与多事件粘包都能处理；`useSSE()` 暴露 `streamingFlag` / `startStream` / `stopStream`（AbortController 中止）。
 
+### 3.4 写作台会话装配
+
+`views/Workspace/useChatSessions.ts` 把「有哪些会话、当前是哪个、消息有哪些」从面板里拆出来：
+`useChatSessions(projectUlid, onLoaded)` 返回会话列表、当前会话 ULID、消息列表、加载态与 `loadHistory` / `loadSessions` / `createSession` / `deleteSession`。
+后端消息视图对象到面板展示态的转换（补 `reference_list`、清 `streaming_flag`）也在该文件内，面板只管流式渲染与结果处置。
+
 ### 3.5 写作台 AI 面板
 
 输入区两个触发符共用同一个弹层，语义按「谁执行」划分：
 
 | 触发符 | 内容 | 执行方 | 是否耗模型 |
 | --- | --- | --- | --- |
-| `/` | 本地动作（10 个）+ 指令提示词 | 前端就地执行 / 后端注入系统级消息 | 否 / 是 |
+| `/` | 本地动作（9 个）+ 指令提示词 | 前端就地执行 / 后端注入系统级消息 | 否 / 是 |
 | `@` | 素材库（角色/设定/章节/摘要/文档）+ 历史会话 | 后端按 ULID 装配进上下文块，会话逐条归档 | 否 |
 
-- **斜杠动作**：`composerCommands.ts` 是唯一事实来源，`/help` `/clear` `/new` `/attach` `/copy` `/check` `/focus` `/snapshot`。
+- **斜杠动作**：`composerCommands.ts` 是唯一事实来源，`/help` `/clear` `/new` `/attach` `/copy` `/check` `/focus` `/snapshot` 共 9 个。
   动作编码在客户端保留，后端 `domain.IsReservedActionCode` 同步拒绝同编码的指令提示词保存（否则同一句 `/help` 会依实现顺序走向两个分支）。
   弹层里动作排在前、标「本地」，提示词排在后、标「注入」，一眼可辨哪条会调用模型。
 - **动作分发**：输入区自理 `/clear`；`/help` `/new` `/attach` `/copy` 交给 `AiPanel`；`/check` `/focus` `/snapshot` 冒泡到写作台用当前章执行。
@@ -182,7 +189,7 @@
 - **等待态**：每 200ms 刷新已等待时长，界面始终显示仍在工作。
 - **结果处置**：助手回复可复制（`/copy`）、插入编辑器光标处、或替换整章正文（编辑器同一自动保存通道）。
 - **工具不可手动点名**：`#` 触发符已移除。服务端把启用的工具声明随请求下发，模型自行决定调不调、调哪个；
-  消息头用 `#编码` 徽标标出本轮模型实际调用的工具，历史回看同样保留。
+  消息头用工具编码徽标标出本轮模型实际调用的工具，历史回看同样保留。
 - **历史不压缩**：会话历史全量按原生角色注入，不做条数截取、不做摘要替代；只有单条正文超 4000 字时保留首尾并标注省略字数。
   因此界面上没有「历史条数」选择器，也没有 `/compact` 动作——压缩率刻意做低，为的是不丢作者与模型之间的上下文。
 - **体检联动**：写作台「体检」（或 `/check`）打开 `ChapterCheckPanel`，跑完可点「让 AI 修」，把问题清单写入 AI 输入框并预选 `/deai` 与当前章节引用。
@@ -191,7 +198,7 @@
 
 ### 4.1 动态路由：后端菜单即路由
 
-页面组件不再静态声明在路由表里。`src/router/index.ts` 只保留登录、404 与业务外壳（`Layout` + `redirect` 子路由）；
+页面组件由后端菜单动态注册，不静态声明在路由表里。`src/router/index.ts` 只保留登录、404 与业务外壳（`Layout` + `redirect` 子路由）；
 业务页面全部由 `src/utils/routerHelper.ts` 从 `/menu/nav` 生成：
 
 ```
@@ -261,7 +268,7 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 
 | 页面 | 关键实现 |
 | --- | --- |
-| 仪表盘 | 统计卡（项目数/总字数/今日新增/AI 产出）+ 近 30 天趋势（ECharts）+ 项目卡片网格（进入写作台/大纲/素材、编辑、删除）+ 分页 + **AI 开书向导**（`components/BootstrapDialog.vue`：创意 → 方案预览与逐字段修改 → 一次性落库并进入写作台） |
+| 仪表盘 | 统计卡（项目数/总字数/今日新增/AI 产出）+ 近 30 天趋势（ECharts）+ 项目卡片网格（进入写作台/大纲/素材、编辑、删除）+ 分页 + **AI 开书向导**（`views/Dashboard/components/BootstrapDialog.vue`：创意 → 方案预览与逐字段修改 → 一次性落库并进入写作台） |
 | 写作台 | 三栏：目录树（卷/章增删改、搜索、折叠）/ CodeMirror 正文编辑器（2s 防抖自动保存、字数实时、梗概折叠）/ AI 面板（模型与会话切换、`/` 提示词、`#` 工具、`@` 引用、流式、插入/替换）；顶栏「体检」打开 `ChapterCheckPanel`（量化门禁结果 + 问题清单 + 一键交给 AI 修） |
 | 创作规划 | 大纲树 + 场景卡（左侧节点、右侧场景列表与编辑器） |
 | 连续性看板 | 三个页签：时间事实（主体+谓词+客体+来源章节，复核确认/推翻）、伏笔台账（计划→埋设→呼应→回收）、章节摘要（可由事实一键起草）；顶部统计待确认事实与未回收伏笔。事实与伏笔的表单在 `views/Continuity/components/EntityDialogs.vue` |

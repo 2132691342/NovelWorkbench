@@ -22,8 +22,8 @@ const settingKeyRetiredChatHistory = "chat_history_count"
 
 // settingRangeMap 配置值合法区间（最小、最大）。
 var settingRangeMap = map[string][2]int{
-	"rag_top_k":          {1, 20},
-	"daily_word_goal":    {100, 100000},
+	"rag_top_k":       {1, 20},
+	"daily_word_goal": {100, 100000},
 }
 
 // SettingService 应用配置业务：默认值播种、查询与更新（值须为正整数）。

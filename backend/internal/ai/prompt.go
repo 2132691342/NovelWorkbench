@@ -51,8 +51,8 @@ func AssembleContext(blocks []ContextBlock) (string, []string) {
 // 单块收敛上限（rune）：显式引用给足原文，背景类素材收紧一些。
 // 数值刻意宽松：宁可上下文长，也不把成段素材压成摘要句。
 const (
-	blockRunesExplicit  = 20000 // 当前章与显式引用
-	blockRunesDefault   = 6000  // 召回、梗概、角色与设定
+	blockRunesExplicit = 20000 // 当前章与显式引用
+	blockRunesDefault  = 6000  // 召回、梗概、角色与设定
 )
 
 // CondenseBlock 按块优先级收敛单块正文：未超上限原样返回，超长保留首尾并标注省略字数。

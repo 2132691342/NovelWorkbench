@@ -17,20 +17,20 @@ func (ChatSessionDO) TableName() string { return "chat_sessions" }
 // ChatMessageDO 聊天消息持久化对象。
 type ChatMessageDO struct {
 	BaseDO
-	MessageULID    string `json:"message_ulid" gorm:"column:message_ulid;primaryKey;size:40"` // 消息 ULID（MSG_ 前缀）
-	SessionULID    string `json:"session_ulid" gorm:"column:session_ulid;size:40;index"`      // 所属会话
-	RoleCode       string `json:"role_code" gorm:"size:16"`                                   // 角色：user/assistant/system
-	ContentText    string `json:"content_text" gorm:"type:text"`                              // 消息正文
-	ReasoningText  string `json:"reasoning_text" gorm:"type:text"`                            // 思考过程（推理模型返回，可为空）
-	PromptCode     string `json:"prompt_code" gorm:"column:prompt_code;size:32"`              // 命中的斜杠命令提示词编码（空为自由对话）
-	ToolCodeJSON   string `json:"tool_code_json" gorm:"type:text"`                            // 本轮执行的工具编码列表（JSON 数组）
-	RefDocJSON       string `json:"ref_doc_json" gorm:"type:text"`        // @文档 ULID 列表（JSON 数组）
-	RefChapterJSON   string `json:"ref_chapter_json" gorm:"type:text"`    // @章节 ULID 列表（JSON 数组）
-	RefSummaryJSON   string `json:"ref_summary_json" gorm:"type:text"`    // @章节摘要 ULID 列表（JSON 数组）
-	RefCharacterJSON string `json:"ref_character_json" gorm:"type:text"`  // @角色卡 ULID 列表（JSON 数组）
-	RefLoreJSON      string `json:"ref_lore_json" gorm:"type:text"`       // @设定条目 ULID 列表（JSON 数组）
-	RefSessionJSON   string `json:"ref_session_json" gorm:"type:text"`    // @历史会话 ULID 列表（JSON 数组，注入时压缩）
-	TokenUsedCount   int    `json:"token_used_count"`                     // 本条消耗的估算 token
+	MessageULID      string `json:"message_ulid" gorm:"column:message_ulid;primaryKey;size:40"` // 消息 ULID（MSG_ 前缀）
+	SessionULID      string `json:"session_ulid" gorm:"column:session_ulid;size:40;index"`      // 所属会话
+	RoleCode         string `json:"role_code" gorm:"size:16"`                                   // 角色：user/assistant/system
+	ContentText      string `json:"content_text" gorm:"type:text"`                              // 消息正文
+	ReasoningText    string `json:"reasoning_text" gorm:"type:text"`                            // 思考过程（推理模型返回，可为空）
+	PromptCode       string `json:"prompt_code" gorm:"column:prompt_code;size:32"`              // 命中的斜杠命令提示词编码（空为自由对话）
+	ToolCodeJSON     string `json:"tool_code_json" gorm:"type:text"`                            // 本轮执行的工具编码列表（JSON 数组）
+	RefDocJSON       string `json:"ref_doc_json" gorm:"type:text"`                              // @文档 ULID 列表（JSON 数组）
+	RefChapterJSON   string `json:"ref_chapter_json" gorm:"type:text"`                          // @章节 ULID 列表（JSON 数组）
+	RefSummaryJSON   string `json:"ref_summary_json" gorm:"type:text"`                          // @章节摘要 ULID 列表（JSON 数组）
+	RefCharacterJSON string `json:"ref_character_json" gorm:"type:text"`                        // @角色卡 ULID 列表（JSON 数组）
+	RefLoreJSON      string `json:"ref_lore_json" gorm:"type:text"`                             // @设定条目 ULID 列表（JSON 数组）
+	RefSessionJSON   string `json:"ref_session_json" gorm:"type:text"`                          // @历史会话 ULID 列表（JSON 数组，注入时压缩）
+	TokenUsedCount   int    `json:"token_used_count"`                                           // 本条消耗的估算 token
 }
 
 // TableName 指定表名。
@@ -39,18 +39,18 @@ func (ChatMessageDO) TableName() string { return "chat_messages" }
 // ChatSendREQ 发送聊天消息请求（POST，流式以 SSE 响应）。
 // @ 引用两类来源：素材库（角色/设定/文档/章节/摘要）与历史会话（整段压缩后注入）。
 type ChatSendREQ struct {
-	SessionULID           string   `json:"session_ulid" binding:"omitempty"`               // 会话 ULID，空则自动创建
-	ProjectULID           string   `json:"project_ulid" binding:"required"`                // 所属项目
-	ContentText           string   `json:"content_text" binding:"required,max=8000"`       // 消息正文
-	PromptCode            string   `json:"prompt_code" binding:"omitempty,max=32"`         // 提示词编码（对话中以 /code 触发）
-	RefDocULIDList        []string `json:"ref_doc_ulid_list"`                              // @文档
-	RefChapterULIDList    []string `json:"ref_chapter_ulid_list"`                          // @章节
-	RefSummaryULIDList    []string `json:"ref_summary_ulid_list"`                          // @章节摘要
-	RefCharacterULIDList  []string `json:"ref_character_ulid_list"`                        // @角色卡
-	RefLoreULIDList       []string `json:"ref_lore_ulid_list"`                             // @设定条目
-	RefSessionULIDList    []string `json:"ref_session_ulid_list"`                          // @历史会话（注入时逐条归档）
-	ModelULID             string   `json:"model_ulid" binding:"omitempty,max=40"`          // 指定模型，空用默认
-	SystemPromptCode      string   `json:"system_prompt_code" binding:"omitempty,max=32"`  // 指定身份提示词编码，空用默认全局身份提示词
+	SessionULID          string   `json:"session_ulid" binding:"omitempty"`              // 会话 ULID，空则自动创建
+	ProjectULID          string   `json:"project_ulid" binding:"required"`               // 所属项目
+	ContentText          string   `json:"content_text" binding:"required,max=8000"`      // 消息正文
+	PromptCode           string   `json:"prompt_code" binding:"omitempty,max=32"`        // 提示词编码（对话中以 /code 触发）
+	RefDocULIDList       []string `json:"ref_doc_ulid_list"`                             // @文档
+	RefChapterULIDList   []string `json:"ref_chapter_ulid_list"`                         // @章节
+	RefSummaryULIDList   []string `json:"ref_summary_ulid_list"`                         // @章节摘要
+	RefCharacterULIDList []string `json:"ref_character_ulid_list"`                       // @角色卡
+	RefLoreULIDList      []string `json:"ref_lore_ulid_list"`                            // @设定条目
+	RefSessionULIDList   []string `json:"ref_session_ulid_list"`                         // @历史会话（注入时逐条归档）
+	ModelULID            string   `json:"model_ulid" binding:"omitempty,max=40"`         // 指定模型，空用默认
+	SystemPromptCode     string   `json:"system_prompt_code" binding:"omitempty,max=32"` // 指定身份提示词编码，空用默认全局身份提示词
 }
 
 // ChatHistoryREQ 拉取会话历史。

@@ -13,8 +13,7 @@ export interface SseParseResult {
 }
 
 /**
- * 纯函数：从累积文本中解析 SSE 事件。
- * 只消费完整行（以 \n 结尾），末尾半行留在 restText，跨 chunk 断行与多事件粘包都能正确处理。
+ * 纯函数：从累积文本中解析 SSE 事件。只消费完整行（以 \n 结尾），末尾半行留在 restText。
  */
 export function parseSseBuffer(bufferText: string): SseParseResult {
   const eventList: NWChatStreamEventVo[] = []
@@ -45,8 +44,7 @@ export interface SseStreamHandlers {
 }
 
 /**
- * 以 fetch 流式 POST 发起 SSE 请求并逐块解析。
- * 网络异常/HTTP 异常走 onError，主动 abort 静默结束。
+ * 以 fetch 流式 POST 发起 SSE 请求并逐块解析。网络异常/HTTP 异常走 onError，主动 abort 静默结束。
  */
 export async function streamSsePost(
   urlPath: string,
@@ -92,8 +90,7 @@ export async function streamSsePost(
 }
 
 /**
- * SSE 流式请求 composable：管理流式状态与中止（停止生成按钮）。
- * 重复调用 startStream 会先中止上一条流。
+ * SSE 流式请求 composable：管理流式状态与中止（停止生成按钮）。重复调用 startStream 会先中止上一条流。
  */
 export function useSSE(): {
   streamingFlag: Ref<boolean>

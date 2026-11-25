@@ -1,7 +1,6 @@
 // 前端装配链路回归：路由路径拼接 → 路由名生成 → 项目占位替换。
-// 这三者是同一次「后端导航树 → vue-router 路由表」装配的上下游：
-// 拼接多一个结尾斜杠会让 strict 路由整片落到 404，路由名重复会让后者覆盖前者，
-// 占位替换失败会让项目作用域页面拿不到当前项目。
+// 这三者是同一次「后端导航树 → vue-router 路由表」装配的上下游：拼接多一个结尾斜杠会让 strict
+// 路由整片落到 404，路由名重复会让后者覆盖前者，占位替换失败会让项目作用域页面拿不到当前项目。
 
 import { describe, expect, it } from 'vitest'
 import { pathResolve, routeNameOf, substituteProject } from '@/utils/routerHelper'

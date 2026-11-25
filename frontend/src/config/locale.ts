@@ -3,8 +3,7 @@ import zhCNMessages from '@/locales/zh-CN'
 import zhCNElement from 'element-plus/es/locale/lang/zh-cn'
 
 /**
- * 语言注册表：当前只交付简体中文。
- * 业务文案来自数据库（中文），界面壳文案在 locales/zh-CN.ts；
+ * 语言注册表：当前只交付简体中文。业务文案来自数据库，界面壳文案在 locales/zh-CN.ts。
  * 新增语言时在此登记，并把缺失键补齐后再开放切换入口。
  */
 export const localeRegistry = {
