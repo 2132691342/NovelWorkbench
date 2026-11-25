@@ -1,6 +1,6 @@
 declare module 'vue' {
   export interface GlobalComponents {
-    Icon: (typeof import('@vea/components'))['Icon']
+    Icon: (typeof import('@novelworkbench/components'))['Icon']
   }
 }
 

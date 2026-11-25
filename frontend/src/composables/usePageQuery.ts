@@ -9,8 +9,7 @@ export interface PageQuery {
 }
 
 /**
- * 分页列表通用状态：查询参数、页码、总数、加载态与错误。
- * 只做状态与请求编排，不含表格/表单 UI —— 各页面自行决定渲染形态。
+ * 分页列表通用状态：查询参数、页码、总数、加载态与错误。不含表格/表单 UI，各页面自行决定渲染形态。
  */
 export const usePageQuery = <Row, Query extends object>(
   fetcher: (query: Query & PageQuery) => Promise<NWPageDto<Row>>,

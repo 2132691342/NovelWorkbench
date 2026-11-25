@@ -96,7 +96,7 @@ docker-compose.yml  应用编排与本地中间件 profile（对外 14399）
 ## 约定
 
 - 依赖方向单向：`api → service → repo → domain`；`ai` / `infra` / `pkg` 为叶子能力层。
-- ID 为带业务前缀的 ULID（`USR_` / `PRJ_` / `SKL_` / `MNU_` …）；业务响应码为字符串（`SUCCESS` / `ERR_*`），HTTP 状态码仍为 int。
+- ID 为带业务前缀的 ULID（`USR_` / `PRJ_` / `CHP_` / `MNU_` …）；业务响应码为字符串（`SUCCESS` / `ERR_*`），HTTP 状态码仍为 int。
 - 业务路由只开放 GET / POST；路径参数放在末尾（`/menu/detail/{MenuULID}`）。
 - 字段带明确后缀（`project_name`、`genre_code`、`created_at`）并有注释；时间出参统一为 RFC3339 字符串。
 - 源文件控制在 500 行内，导出符号有注释，大页面拆分子组件。

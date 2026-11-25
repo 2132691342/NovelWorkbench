@@ -18,32 +18,31 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 )
 
-// permCheckerFunc 让测试用闭包实现 PermChecker。
-type permCheckerFunc func(ctx context.Context, userULID string, permCode string) (bool, error)
+// permStub 是 PermChecker 的测试替身：按权限码判定是否放行。
+type permStub map[string]bool
 
 // HasPerm 实现 PermChecker 接口。
-func (f permCheckerFunc) HasPerm(ctx context.Context, userULID string, permCode string) (bool, error) {
-	return f(ctx, userULID, permCode)
+func (s permStub) HasPerm(_ context.Context, _ string, permCode string) (bool, error) {
+	return s[permCode], nil
 }
 
-// auditRecorderFunc 让测试用闭包实现 AuditRecorder。
-type auditRecorderFunc func(ctx context.Context, do *domain.AuditLogDO) error
+// auditStub 是 AuditRecorder 的测试替身：记住最后一条审计记录。
+type auditStub struct{ last *domain.AuditLogDO }
 
 // Record 实现 AuditRecorder 接口。
-func (f auditRecorderFunc) Record(ctx context.Context, do *domain.AuditLogDO) error {
-	return f(ctx, do)
+func (s *auditStub) Record(_ context.Context, do *domain.AuditLogDO) error {
+	s.last = do
+	return nil
 }
 
-// revokedTokenStore 测试用令牌吊销存储（仅标记一个被吊销的令牌）。
-type revokedTokenStore struct {
-	revoked string
-}
+// revokeStub 是 TokenStore 的测试替身：标记一个被吊销的令牌。
+type revokeStub struct{ revoked string }
 
 // Revoke 实现 TokenStore 接口（测试不写黑名单）。
-func (s revokedTokenStore) Revoke(context.Context, string, time.Duration) error { return nil }
+func (s revokeStub) Revoke(context.Context, string, time.Duration) error { return nil }
 
 // IsRevoked 实现 TokenStore 接口。
-func (s revokedTokenStore) IsRevoked(_ context.Context, tokenString string) bool {
+func (s revokeStub) IsRevoked(_ context.Context, tokenString string) bool {
 	return tokenString == s.revoked
 }
 
@@ -60,17 +59,11 @@ func TestAccessControlChain(t *testing.T) {
 	}
 
 	// 步骤1：放行链路。请求 ID 透传 → 鉴权注入用户 → 权限判定 → 审计落库 → 响应包络。
-	var auditAction, auditTargetType, auditTargetULID string
-	recorder := auditRecorderFunc(func(_ context.Context, do *domain.AuditLogDO) error {
-		auditAction, auditTargetType, auditTargetULID = do.ActionCode, do.TargetType, do.TargetULID
-		return nil
-	})
+	recorder := &auditStub{}
 	router := gin.New()
 	router.Use(RequestIDMiddleware())
 	router.Use(AuthMiddleware(signer, nil, func(context.Context, string) (bool, error) { return true, nil }, nil))
-	router.Use(RequirePermMiddleware(permCheckerFunc(func(_ context.Context, _, permCode string) (bool, error) {
-		return permCode == "system:user:manage", nil
-	}), "system:user:manage"))
+	router.Use(RequirePermMiddleware(permStub{"system:user:manage": true}, "system:user:manage"))
 	router.Use(AuditMiddleware(recorder, nil))
 	router.POST("/api/v1/admin/user/update", func(c *gin.Context) {
 		Ok(c, gin.H{"user_ulid": c.GetString(ContextKeyUserULID)})
@@ -99,12 +92,12 @@ func TestAccessControlChain(t *testing.T) {
 	if envelope.RespCode != "SUCCESS" || envelope.TraceID != "REQ_INJECTED" || envelope.Data.UserULID != "USR_TEST" {
 		t.Fatalf("包络或鉴权注入不符: %+v", envelope)
 	}
-	if auditAction != "admin/user/update" || auditTargetType != "user" || auditTargetULID != "USR_TARGET" {
-		t.Fatalf("审计内容不符: %s/%s/%s", auditAction, auditTargetType, auditTargetULID)
+	if recorder.last == nil || recorder.last.ActionCode != "admin/user/update" ||
+		recorder.last.TargetType != "user" || recorder.last.TargetULID != "USR_TARGET" {
+		t.Fatalf("审计内容不符: %+v", recorder.last)
 	}
 
 	// 步骤2：拒绝链路。缺失令牌 / 令牌已吊销 / 账号已禁用 → 401，权限不足 → 403。
-	const revoked = "REVOKED_TOKEN"
 	rejectCases := []struct {
 		caseName     string
 		authHeader   string
@@ -115,7 +108,7 @@ func TestAccessControlChain(t *testing.T) {
 		wantRespCode string
 	}{
 		{"无令牌", "", "", true, true, http.StatusUnauthorized, "ERR_UNAUTHORIZED"},
-		{"令牌已吊销", "Bearer " + revoked, revoked, true, true, http.StatusUnauthorized, "ERR_UNAUTHORIZED"},
+		{"令牌已吊销", "Bearer REVOKED_TOKEN", "REVOKED_TOKEN", true, true, http.StatusUnauthorized, "ERR_UNAUTHORIZED"},
 		{"账号已禁用", "Bearer " + token, "", false, true, http.StatusUnauthorized, "ERR_UNAUTHORIZED"},
 		{"权限不足", "Bearer " + token, "", true, false, http.StatusForbidden, "ERR_FORBIDDEN"},
 	}
@@ -123,11 +116,9 @@ func TestAccessControlChain(t *testing.T) {
 		rejectRouter := gin.New()
 		rejectRouter.Use(RequestIDMiddleware())
 		rejectRouter.Use(AuthMiddleware(signer,
-			revokedTokenStore{revoked: testCase.revokedToken},
+			revokeStub{revoked: testCase.revokedToken},
 			func(context.Context, string) (bool, error) { return testCase.userActive, nil }, nil))
-		rejectRouter.Use(RequirePermMiddleware(permCheckerFunc(func(context.Context, string, string) (bool, error) {
-			return testCase.permGranted, nil
-		}), "system:user:manage"))
+		rejectRouter.Use(RequirePermMiddleware(permStub{"system:user:manage": testCase.permGranted}, "system:user:manage"))
 		rejectRouter.GET("/api/v1/admin/user/list", func(c *gin.Context) { Ok(c, gin.H{"ok": true}) })
 
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/user/list", nil)

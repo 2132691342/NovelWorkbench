@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -87,6 +88,23 @@ func main() {
 	}
 	if err := db.Migrator().DropColumn(&domain.ChatSessionDO{}, "compact_at"); err != nil {
 		pkg.SLogger().Warnw("清理会话压缩时间列失败", "error", err)
+	}
+	// 已下线模块的遗留表与列：AutoMigrate 只补不删，这些残留在库里是死数据，读写均已不再使用
+	for _, retiredTable := range []string{"skills", "skill_references", "prompt_profiles", "slash_commands"} {
+		if db.Migrator().HasTable(retiredTable) {
+			if err := db.Migrator().DropTable(retiredTable); err != nil {
+				pkg.SLogger().Warnw("清理下线表失败", "table", retiredTable, "error", err)
+			}
+		}
+	}
+	for _, retiredColumn := range []string{"chat_messages.skill_code", "chat_messages.ref_message_json", "chat_messages.ref_prompt_json"} {
+		parts := strings.SplitN(retiredColumn, ".", 2)
+		if !db.Migrator().HasColumn(parts[0], parts[1]) {
+			continue
+		}
+		if err := db.Migrator().DropColumn(parts[0], parts[1]); err != nil {
+			pkg.SLogger().Warnw("清理下线列失败", "column", retiredColumn, "error", err)
+		}
 	}
 
 	// 其余基础设施 Ping 失败仅降级告警，不阻断启动（PG 失败已在上面退出）。

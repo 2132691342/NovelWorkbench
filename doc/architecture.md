@@ -58,10 +58,10 @@ flowchart LR
 
 | # | 模块 | 主要表 | 主要入口 |
 | --- | --- | --- | --- |
-| 1 | 认证与会话 | `users` | `api/auth_api.go`、`service/auth_service.go` |
+| 1 | 认证与会话 | `users`、`login_logs` | `api/auth_api.go`、`service/auth_service.go` |
 | 2 | 用户与角色权限 | `users`、`roles`、`user_roles` | `service/user_admin_service.go`、`service/role_service.go` |
 | 3 | 菜单与导航 | `menus` | `service/menu_service.go`、`service/menu_permission.go` |
-| 4 | 审计与登录日志 | `audit_logs`、`login_logs` | `pkg/access_middleware.go`、`service/audit_service.go`、`service/login_log_service.go` |
+| 4 | 审计与登录日志 | `audit_logs`、`login_logs` | `pkg/access_middleware.go`、`service/audit_service.go` |
 | 5 | 应用配置 | `app_settings` | `service/setting_service.go` |
 | 6 | 站内通知 | `notifications` | `service/notification_service.go` |
 | 7 | 任务中心 | `jobs` | `service/job_service.go`、`service/knowledge_worker.go` |
@@ -111,31 +111,31 @@ backend/
 ├── cmd/server        装配启动、迁移播种、路由、优雅关闭
 ├── configs/          配置模板（凭据留空，环境变量注入）
 └── internal/
-    ├── api           HTTP 处理器与路由注册（27 个文件）
+    ├── api           HTTP 处理器与路由注册（26 个文件）
     ├── service       业务规则、事务边界、上下文装配（38 个文件）
-    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，27 个文件）
-    ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（24 个文件）
-    ├── ai            模型网关、提示词装配、内置提示词资产、用量契约（19 个文件）
+    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，26 个文件）
+    ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（23 个文件）
+    ├── ai            模型网关、提示词装配、内置提示词资产、用量契约（21 个文件）
     ├── infra         配置加载、连接构造、启动校验
     └── pkg           ULID、包络、错误、JWT、中间件、密钥封存、审计字段回调与时间工具
 ```
 
 `pkg` 各文件：`ulid.go`（带业务前缀的 ULID 生成）、`errors.go`（业务码与 HTTP 状态映射）、`logger.go`（Zap 全局日志）、`time.go`（RFC3339 格式化）、`text.go`（字数统计与文本工具）、`actor.go`（GORM 审计字段回调）、`jwt.go`（签名与校验）、`secret.go`（密钥封存）、`access_middleware.go`（鉴权、权限、审计）、`middleware.go`（请求 ID、CORS、方法白名单）、`response.go`（统一包络）。
 
-`ai` 目录的 `domain_<域>.go` 共 12 个文件，一个流程域一个文件，与 `prompts.md` 的域矩阵一一对应。
+`ai` 目录的 `domain_<域>.go` 共 12 个文件，一个流程域一个文件，与 [prompts.md](prompts.md) 的域矩阵一一对应。
 
 | 约束 | 原因 |
 | --- | --- |
 | 请求/响应结构只在 `domain` 定义 | 前后端契约单一事实源 |
 | SQL 只写在 `repo` | service 只调仓储方法，不拼查询条件 |
 | service 持有 `*gorm.DB` 仅作事务入口 | 跨表写入需同一事务，`repo.WithTx` 是唯一封装 |
-| 判定与装配规则下沉为纯函数 | 可见性过滤、作用域优先级、变量取值、关键词命中、预算裁剪可独立单测，不依赖数据库 |
+| 判定与装配规则下沉为纯函数 | 可见性过滤、作用域优先级、占位符校验、历史收敛可独立单测，不依赖数据库 |
 | Manticore 客户端只在知识库相关 service 使用 | 融合、重排、追踪属于业务语义，不是通用数据访问 |
 | service 不写 HTTP 状态码 | 业务码到状态码的映射集中在 `pkg.HTTPStatusForCode` |
 | api 不写业务判断 | 避免同一规则散落多个处理器 |
 | 业务路由只开放 GET/POST | 删除走 `POST /xxx/delete`，方法白名单强制 |
 | 路径参数放末尾 | `/menu/detail/{MenuULID}`、`/knowledge/content/{DocULID}` |
-| ID 为带业务前缀的 ULID | `PRJ_` / `CHP_` / `SKL_` …，日志可定位业务类型 |
+| ID 为带业务前缀的 ULID | `PRJ_` / `CHP_` / `MSG_` …，日志可定位业务类型 |
 | 字段使用显式后缀 | `project_name`、`genre_code`、`created_at`、`created_by` |
 | 时间出参为 RFC3339 字符串 | VO/DTO 的时间字段一律 `string`，由 `pkg.FormatTime` 转换；不用毫秒整数，避免与 `time.Time` 同名字段语义冲突 |
 | 审计字段自动填充 | `BaseDO` 带 `created_by` / `updated_by`；`AuthMiddleware` 把用户 ULID 注入 context，GORM 回调在写入前补齐，service 不手写 |
@@ -194,10 +194,10 @@ backend/
 `backend/cmd/server/main.go` 的顺序：
 
 1. 初始化 Zap 与配置（`infra.LoadConfig`，启动期校验关键项）。
-2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 33 张表（失败即退出）。
+2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 33 张表（失败即退出）→ 清理已下线的列（会话摘要列）。
 3. 连接 Redis / RabbitMQ / MinIO / Manticore；失败只告警并降级。
 4. 构造仓储 → 服务 → 中间件 → 路由。
-5. 播种：内置提示词（24 份指令 + 12 份身份，按内容指纹升级）、6 个内置工具、默认配置、内置角色、内置菜单（失败即退出）；用户表为空时创建引导管理员。
+5. 播种：内置提示词（24 份指令 + 12 份身份，按内容指纹升级）、6 个内置工具、默认配置、内置角色、内置菜单 28 行（失败即退出）；用户表为空时创建引导管理员。
 6. 可选播种出厂模型供应商（配置了网关地址与模型名且供应商表为空时）。
 7. 启动知识库索引 worker（RabbitMQ 消费）。
 8. 监听端口；收到 SIGINT/SIGTERM 后优雅关闭 HTTP、worker、连接池。
@@ -235,13 +235,13 @@ sequenceDiagram
   SVC->>SVC: 提示词解析（项目提示词覆盖全局）
   SVC->>RAG: 混合检索（词法 + RRF + 可选重排）
   RAG-->>SVC: 召回切片与追踪
-  SVC->>SVC: 上下文装配（优先级 + 12000 字节预算）
+  SVC->>SVC: 上下文装配（优先级排序，不丢块）
   SVC->>SVC: 落库用户消息
-  SVC->>AI: Stream(system + 上下文 + 历史 + 指令)
+  SVC->>AI: Stream(身份 + 上下文 + 指令 + 历史 + 用户输入)
   AI-->>SVC: 增量文本
   SVC-->>API: SSE chunk（seq 递增）
   SVC->>SVC: 事务落库助手消息与 AI 字数
-  SVC-->>API: SSE done（含召回依据）
+  SVC-->>API: SSE done（含召回依据与本轮工具编码）
 ```
 
 关键机制见 [ai.md](ai.md)。设计取舍：单链路（所有生成走 `/chat/send` + 提示词码）保证上下文、容错与审计只有一处实现。
@@ -330,6 +330,7 @@ frontend/
 | 无数据库外键 | 迁移与批量写入不受约束校验拖累 | 引用完整性只能由 service 保证 |
 | 菜单即权限登记 | 新增权限零代码改动 | 菜单表承担两重语义，改动需谨慎 |
 | 静态路由 + 后端菜单 | 改菜单无需前端发版 | 新增页面必须同时改前端路由表 |
+| 历史全量注入 | 不丢任何一条上下文，行为确定 | 上下文变长、token 消耗上升 |
 
 ## 11. 质量约束
 

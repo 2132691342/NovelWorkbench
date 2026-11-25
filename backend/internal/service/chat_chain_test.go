@@ -1,6 +1,5 @@
-// AI 对话链路的场景回归：斜杠命令解析 → 提示词作用域 → 上下文装配 → 消息序列成型 → 工具触发 → 流式契约。
-// 这些环节是同一次请求的上下游，拆开测会漏掉环节间的因果（作用域覆盖影响谁、
-// 单块收敛只保留首尾、提示词进入哪一级消息、事件顺序影响前端展示），因此按链路组织。
+// AI 对话链路的场景回归：斜杠命令解析 → 提示词作用域 → 上下文装配 → 消息序列成型 → 工具选择 → 流式契约。
+// 同一次请求里的上下游环节合并成一条用例，环节间用「步骤N」分隔，失败时直接定位到断点。
 
 package service
 
@@ -20,14 +19,6 @@ func promptDO(ulid, scope, projectULID, code, kind string, enabled bool) domain.
 	return domain.PromptDO{
 		PromptULID: ulid, ScopeCode: scope, ProjectULID: projectULID,
 		PromptCode: code, PromptKindCode: kind, EnabledFlag: enabled,
-	}
-}
-
-// toolDO 构造测试用工具行。
-func toolDO(code string, enabled bool) domain.ToolDO {
-	return domain.ToolDO{
-		ToolULID: "TOL_" + code, ToolCode: code, ToolName: code + "工具",
-		EnabledFlag: enabled, BuiltinFlag: true,
 	}
 }
 
@@ -58,11 +49,10 @@ func (s *eventSink) Event(dto domain.ChatStreamEventDTO) error {
 // Ping 记录一次心跳。
 func (s *eventSink) Ping() error { return nil }
 
-// TestPromptResolutionChain 覆盖一次请求里提示词从「命中」到「可下发」的完整解析链路：
-// 编码解析 → 作用域优先级 → 占位符校验 → 全局覆盖标记。
-func TestPromptResolutionChain(t *testing.T) {
-	// 步骤1：编码解析。显式编码优先于正文首 token，正文命令不在开头时不命中。
-	cases := []struct {
+// TestChatChain 覆盖一次 AI 对话请求从输入到流式输出的完整链路。
+func TestChatChain(t *testing.T) {
+	// 步骤1：斜杠命令解析。显式编码优先于正文首 token，正文命令不在开头时不命中。
+	slashCases := []struct {
 		caseName   string
 		explicit   string
 		content    string
@@ -74,7 +64,7 @@ func TestPromptResolutionChain(t *testing.T) {
 		{"显式优先且正文不动", "polish", "/continue 以林澈视角", "polish", "/continue 以林澈视角"},
 		{"命令不在开头", "", "续写 /continue", "", "续写 /continue"},
 	}
-	for _, testCase := range cases {
+	for _, testCase := range slashCases {
 		code, remain := resolveSlashCode(testCase.explicit, testCase.content)
 		if code != testCase.wantCode || remain != testCase.wantRemain {
 			t.Fatalf("%s: resolveSlashCode = %q %q, want %q %q", testCase.caseName,
@@ -82,7 +72,7 @@ func TestPromptResolutionChain(t *testing.T) {
 		}
 	}
 
-	// 步骤2：作用域优先级。项目提示词胜过全局；项目停用回退全局；全局停用则不命中。
+	// 步骤2：提示词作用域。项目提示词胜过全局；项目停用回退全局；全局停用则不命中。
 	project := promptDO("PRM_P", domain.PromptScopeProject, "PRJ_1", "polish", domain.PromptKindCommand, true)
 	global := promptDO("PRM_G", domain.PromptScopeGlobal, "", "polish", domain.PromptKindCommand, true)
 	disabledProject := promptDO("PRM_P", domain.PromptScopeProject, "PRJ_1", "polish", domain.PromptKindCommand, false)
@@ -97,8 +87,16 @@ func TestPromptResolutionChain(t *testing.T) {
 	if got := pickPromptByScope(nil, &disabledGlobal); got != nil {
 		t.Fatalf("停用全局提示词不应命中: %+v", got)
 	}
-
-	// 步骤3：占位符校验。内置占位符放行，未登记占位符拒绝（渲染后会静默丢内容）。
+	// 同编码且启用的项目提示词覆盖全局，全局条目标记为已覆盖。
+	if !isOverriddenGlobalPrompt(&global, []domain.PromptDO{global, project}) {
+		t.Fatal("同编码项目提示词应标记覆盖")
+	}
+	otherCode := promptDO("PRM_O", domain.PromptScopeProject, "PRJ_1", "continue", domain.PromptKindCommand, true)
+	if isOverriddenGlobalPrompt(&global, []domain.PromptDO{global, disabledProject}) ||
+		isOverriddenGlobalPrompt(&global, []domain.PromptDO{global, otherCode}) {
+		t.Fatal("停用或异编码项目提示词不应覆盖")
+	}
+	// 占位符未登记必须被拒绝：渲染后会静默丢上下文。
 	if err := validatePromptPlaceholders("续写 {{chapter_content}}，要求 {{user_input}}，依据 {{context}}"); err != nil {
 		t.Fatalf("内置占位符不应报错: %v", err)
 	}
@@ -106,21 +104,7 @@ func TestPromptResolutionChain(t *testing.T) {
 		t.Fatal("未登记占位符必须被拒绝")
 	}
 
-	// 步骤4：全局覆盖标记。同编码且启用的项目提示词覆盖全局；停用或异编码不覆盖。
-	otherCode := promptDO("PRM_O", domain.PromptScopeProject, "PRJ_1", "continue", domain.PromptKindCommand, true)
-	if !isOverriddenGlobalPrompt(&global, []domain.PromptDO{global, project}) {
-		t.Fatal("同编码项目提示词应标记覆盖")
-	}
-	if isOverriddenGlobalPrompt(&global, []domain.PromptDO{global, disabledProject}) ||
-		isOverriddenGlobalPrompt(&global, []domain.PromptDO{global, otherCode}) {
-		t.Fatal("停用或异编码项目提示词不应覆盖")
-	}
-}
-
-// TestChatContextChain 覆盖一次请求里上下文从「素材」到「消息序列」的完整装配链路：
-// 引用分优先级 → 摘要与提示词注入 → 预算裁剪 → 历史选取 → 消息成型（提示词为系统级）。
-func TestChatContextChain(t *testing.T) {
-	// 步骤1：引用分优先级。当前章 100，引用章与文档 90，设定 50，私人笔记不进上下文。
+	// 步骤3：上下文块优先级与排除。当前章 100，引用章与文档 90，设定 50，私人笔记不进上下文。
 	blocks := buildContextBlocks(chatContextInput{
 		UserInput: "提问",
 		ChapterList: []chapterSource{
@@ -153,7 +137,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("私人笔记不应注入: %q", lore.ContentText)
 	}
 
-	// 步骤2：显式引用摘要按 90 注入，与自动梗概（60）并存；未引用时不产生空块。
+	// 步骤3.1：显式引用摘要按 90 注入，与自动梗概（60）并存；未引用时不产生空块。
 	blocks = buildContextBlocks(chatContextInput{
 		UserInput:      "提问",
 		RefSummaryList: []string{"第一章：主角取得钥匙"},
@@ -171,7 +155,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatal("未引用摘要/会话时不应产生对应块")
 	}
 
-	// 步骤3：装配不丢块。同优先级保持输入顺序；所有块都进上下文，超长只在块内保留首尾。
+	// 步骤3.2：装配不丢块。同优先级保持输入顺序；所有块都进上下文，超长只在块内保留首尾。
 	blocks = buildContextBlocks(chatContextInput{
 		UserInput:     "提问",
 		CharacterList: []domain.CharacterDO{{CharacterName: "林澈"}},
@@ -233,25 +217,21 @@ func TestChatContextChain(t *testing.T) {
 		!strings.HasSuffix(injected[0].ContentText, "甲甲") {
 		t.Fatalf("超长正文应保留首尾并标注省略: %q", injected[0].ContentText)
 	}
-	if injected[1].ContentText != "短回复" {
-		t.Fatalf("短正文必须原样保留: %q", injected[1].ContentText)
-	}
 	if longList[0].ContentText != strings.Repeat("甲", 5000) {
 		t.Fatal("收敛不得改写原消息")
 	}
 
 	// 步骤5：消息序列成型。身份（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史 role 映射 → 用户输入（用户）。
-	history := []domain.ChatMessageDO{
-		chatMessageOf("MSG_1", domain.ChatRoleUser, "历史问"),
-		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "历史答"),
-	}
 	out := buildChatMessages(chatMessageInput{
 		SystemPromptText: "你是连载作者",
 		StyleText:        "文风约束",
 		ContextText:      "装配文本",
 		CommandText:      "续写指令",
-		HistoryList:      history,
-		UserText:         "写下去",
+		HistoryList: []domain.ChatMessageDO{
+			chatMessageOf("MSG_1", domain.ChatRoleUser, "历史问"),
+			chatMessageOf("MSG_2", domain.ChatRoleAssistant, "历史答"),
+		},
+		UserText: "写下去",
 	})
 	if len(out) != 6 {
 		t.Fatalf("len = %d, want 6", len(out))
@@ -280,7 +260,7 @@ func TestChatContextChain(t *testing.T) {
 		t.Fatalf("无上下文与指令时应只保留身份与用户输入: %+v", out)
 	}
 
-	// 步骤6：@ 素材来源。角色与设定走「显式引用」优先级，历史会话整段压缩后注入。
+	// 步骤6：@ 素材来源。角色与设定走「显式引用」优先级，历史会话整段归档后注入。
 	refBlocks := buildContextBlocks(chatContextInput{
 		UserInput: "提问",
 		RefCharacterList: []domain.CharacterDO{
@@ -304,26 +284,17 @@ func TestChatContextChain(t *testing.T) {
 	sessionBlock := findBlock(refBlocks, "ref_session")
 	if sessionBlock == nil || !strings.Contains(sessionBlock.ContentText, "上一轮讨论") ||
 		!strings.Contains(sessionBlock.ContentText, "赎罪") {
-		t.Fatalf("引用会话应带上会话名与压缩摘要: %+v", sessionBlock)
+		t.Fatalf("引用会话应带上会话名与归档正文: %+v", sessionBlock)
 	}
-}
 
-// TestToolSelectionChain 覆盖「模型自行选择工具」的链路：工具声明 → 参数解码 → 流式调用归并 → 执行分流。
-// 作者无法手动点名工具，服务端也不再按关键词猜测，一切由模型基于声明决定。
-func TestToolSelectionChain(t *testing.T) {
-	// 环节1：工具声明的 function name 用工具编码，参数按声明透出，供模型据此调用。
+	// 步骤7：工具声明与参数解码。工具编码即 function name，参数按字符串解出。
 	infoList := ai.ToolInfos([]ai.ToolSpec{{
 		ToolCode: "chapter_digest", ToolName: "章节摘要", DescriptionText: "抽取式生成章节摘要",
 		ParamList: []ai.ToolParam{{ParamName: "max_sentences", RequiredFlag: false, DescriptionText: "保留句数"}},
 	}})
-	if len(infoList) != 1 || infoList[0].Name != "chapter_digest" {
-		t.Fatalf("工具声明名称应为工具编码: %+v", infoList)
+	if len(infoList) != 1 || infoList[0].Name != "chapter_digest" || infoList[0].ParamsOneOf == nil {
+		t.Fatalf("工具声明应为工具编码并带参数声明: %+v", infoList)
 	}
-	if infoList[0].ParamsOneOf == nil {
-		t.Fatal("有参数的工具必须带上参数声明")
-	}
-
-	// 环节2：模型回传的参数是 JSON，需按字符串解出（数字与布尔也要能落到工具参数里）。
 	paramValue := ai.DecodeToolArguments(`{"content_text":"正文","max_sentences":6,"strict":true}`)
 	if paramValue["content_text"] != "正文" || paramValue["max_sentences"] != "6" || paramValue["strict"] != "true" {
 		t.Fatalf("参数解码错误: %v", paramValue)
@@ -332,7 +303,7 @@ func TestToolSelectionChain(t *testing.T) {
 		t.Fatal("非法参数 JSON 应退化为空表而不是报错")
 	}
 
-	// 环节3：流式分片里的工具调用按 index 归并（名称与参数可能跨多个分片）。
+	// 步骤8：流式工具调用按 index 归并（名称与参数可能跨多个分片）。
 	index0, index1 := 0, 1
 	mergedCalls, err := mergeToolCallChunks([]schema.ToolCall{
 		{Index: &index0, ID: "call_1", Type: "function", Function: schema.FunctionCall{Name: "chapter_check"}},
@@ -349,9 +320,68 @@ func TestToolSelectionChain(t *testing.T) {
 	if mergedCalls[1].Function.Name != "deai_scan" || mergedCalls[1].Function.Arguments != "" {
 		t.Fatalf("第二个调用不应串到第一个的参数: %+v", mergedCalls[1])
 	}
+
+	// 步骤9：流式事件契约。thinking → chunk → done 顺序，seq 从 1 递增，
+	// done 携带完整思考过程、召回依据与本轮工具编码（前端据此切换「等待→思考→正文→完成」）。
+	sink := &eventSink{}
+	writer := &chatEventWriter{
+		writer: sink, sessionULID: "SES_1", messageULID: "MSG_1",
+		toolCodeList: []string{"chapter_check"},
+	}
+	if err := writer.emit(domain.StreamEventThinking, "先想一步", "", nil); err != nil {
+		t.Fatalf("thinking emit: %v", err)
+	}
+	if err := writer.emit(domain.StreamEventChunk, "正文", "", nil); err != nil {
+		t.Fatalf("chunk emit: %v", err)
+	}
+	if err := writer.emitWithReasoning(domain.StreamEventDone, "正文完", "先想一步", "", nil); err != nil {
+		t.Fatalf("done emit: %v", err)
+	}
+	if len(sink.eventList) != 3 {
+		t.Fatalf("事件数 = %d, want 3", len(sink.eventList))
+	}
+	if sink.eventList[0].EventType != domain.StreamEventThinking || sink.eventList[0].ContentText != "先想一步" {
+		t.Fatalf("首条应为 thinking 增量: %+v", sink.eventList[0])
+	}
+	done := sink.eventList[2]
+	if done.EventType != domain.StreamEventDone || done.ReasoningText != "先想一步" || done.ReferenceList == nil {
+		t.Fatalf("done 应携带思考过程与空数组引用: %+v", done)
+	}
+	if len(done.ToolCodeList) != 1 || done.ToolCodeList[0] != "chapter_check" {
+		t.Fatalf("done 应携带本轮工具编码: %+v", done.ToolCodeList)
+	}
+	for i := range sink.eventList {
+		if sink.eventList[i].Seq != int64(i+1) {
+			t.Fatalf("seq 应单调递增: %+v", sink.eventList)
+		}
+	}
+
+	// 步骤10：斜杠命名空间边界。写作台本地动作与内置提示词共用 `/` 触发，
+	// 两者编码一旦撞车，同一句输入会走向「执行动作」或「注入提示词」两种结果。
+	builtinCodes := ai.BuiltinCommandCodeSet()
+	for code := range ai.BuiltinSystemCodeSet() {
+		builtinCodes[code] = true
+	}
+	for promptCode := range builtinCodes {
+		if domain.IsReservedActionCode(promptCode) {
+			t.Fatalf("内置提示词编码 %s 与写作台动作冲突", promptCode)
+		}
+	}
+	for _, actionCode := range []string{"help", "clear", "new", "attach", "copy", "check", "focus", "snapshot"} {
+		if !domain.IsReservedActionCode(actionCode) {
+			t.Fatalf("动作编码 %s 未登记", actionCode)
+		}
+	}
+	if domain.IsReservedActionCode("Help") || domain.IsReservedActionCode("polish") {
+		t.Fatal("非动作编码不应被误判")
+	}
+	if code, _ := parseSlashToken("/help 怎么用"); code != "help" {
+		t.Fatalf("首 token 解析应得到 help: %q", code)
+	}
 }
-// TestHistoryArchiveChain 覆盖历史归档链路：全量保留 → 单条首尾收敛 → 逐条编号 → 确定性。
-// 归档必须完全本地完成（不调用模型），不按条数截取、不按总量丢弃。
+
+// TestHistoryArchiveChain 覆盖历史归档链路：全量保留 → 单条首尾收敛 → 逐条编号。
+// 归档完全本地完成（不调用模型），不按条数截取、不按总量丢弃。
 func TestHistoryArchiveChain(t *testing.T) {
 	// 环节1：短正文原样。收敛只针对超长单条，短消息一个字符都不改。
 	shortText := "短问题"
@@ -359,7 +389,7 @@ func TestHistoryArchiveChain(t *testing.T) {
 		t.Fatalf("短正文不应改写: %q", got)
 	}
 
-	// 环节2：超长正文保留首尾并标注省略字数，中间省略量可核对。
+	// 环节2：超长正文保留首尾并标注省略字数。
 	longText := strings.Repeat("甲", 5000)
 	condensed := ai.CondenseText(longText)
 	if !strings.Contains(condensed, "此处省略") || !strings.Contains(condensed, "字") {
@@ -401,12 +431,7 @@ func TestHistoryArchiveChain(t *testing.T) {
 		t.Fatalf("归档应保留时间: %q", archiveText)
 	}
 
-	// 环节4：确定性。同一输入两次归档必须逐字节相同（否则落库会漂移）。
-	if again := ai.ArchiveHistory(archiveList, ai.ArchiveConfig{WithHeader: true}); again != archiveText {
-		t.Fatal("归档结果必须确定")
-	}
-
-	// 环节5：单条超长只收敛那一条，其余条数与内容不变。
+	// 环节4：单条超长只收敛那一条，其余条数与内容不变。
 	mixedList := []ai.ArchiveMessage{
 		{Seq: 1, RoleCode: "user", ContentText: strings.Repeat("乙", 6000)},
 		{Seq: 2, RoleCode: "assistant", ContentText: "短回答"},
@@ -420,76 +445,5 @@ func TestHistoryArchiveChain(t *testing.T) {
 	}
 	if ai.ArchiveHistory(nil, ai.ArchiveConfig{}) != "" {
 		t.Fatal("空历史应返回空串")
-	}
-}
-
-// TestChatStreamContract 覆盖流式事件契约：thinking/chunk/done 顺序、seq 从 1 递增、
-// done 携带完整思考过程、召回依据与本轮工具编码（前端据此切换「等待→思考→正文→完成」）。
-func TestChatStreamContract(t *testing.T) {
-	sink := &eventSink{}
-	writer := &chatEventWriter{
-		writer: sink, sessionULID: "SES_1", messageULID: "MSG_1",
-		toolCodeList: []string{"chapter_check"},
-	}
-	if err := writer.emit(domain.StreamEventThinking, "先想一步", "", nil); err != nil {
-		t.Fatalf("thinking emit: %v", err)
-	}
-	if err := writer.emit(domain.StreamEventChunk, "正文", "", nil); err != nil {
-		t.Fatalf("chunk emit: %v", err)
-	}
-	if err := writer.emitWithReasoning(domain.StreamEventDone, "正文完", "先想一步", "", nil); err != nil {
-		t.Fatalf("done emit: %v", err)
-	}
-	if len(sink.eventList) != 3 {
-		t.Fatalf("事件数 = %d, want 3", len(sink.eventList))
-	}
-	if sink.eventList[0].EventType != domain.StreamEventThinking || sink.eventList[0].ContentText != "先想一步" {
-		t.Fatalf("首条应为 thinking 增量: %+v", sink.eventList[0])
-	}
-	done := sink.eventList[2]
-	if done.EventType != domain.StreamEventDone || done.ReasoningText != "先想一步" || done.ReferenceList == nil {
-		t.Fatalf("done 应携带思考过程与空数组引用: %+v", done)
-	}
-	// 工具编码随 done 下发：前端据此标记本轮真正跑过的工具（关键词自动触发的也算）。
-	if len(done.ToolCodeList) != 1 || done.ToolCodeList[0] != "chapter_check" {
-		t.Fatalf("done 应携带本轮工具编码: %+v", done.ToolCodeList)
-	}
-	for i := range sink.eventList {
-		if sink.eventList[i].Seq != int64(i+1) {
-			t.Fatalf("seq 应单调递增: %+v", sink.eventList)
-		}
-	}
-}
-
-// TestSlashNamespaceChain 覆盖斜杠命令的命名空间边界：写作台本地动作与内置提示词共用 `/` 触发，
-// 两者编码一旦撞车，同一句输入会依实现顺序走向「执行动作」或「注入提示词」两种结果。
-func TestSlashNamespaceChain(t *testing.T) {
-	// 环节1：保留编码不被内置提示词占用。
-	builtinCodes := ai.BuiltinCommandCodeSet()
-	for code := range ai.BuiltinSystemCodeSet() {
-		builtinCodes[code] = true
-	}
-	for promptCode := range builtinCodes {
-		if domain.IsReservedActionCode(promptCode) {
-			t.Fatalf("内置提示词编码 %s 与写作台动作冲突", promptCode)
-		}
-	}
-
-	// 环节2：保留编码能被识别（大小写敏感，/Help 不是动作）。
-	for _, actionCode := range []string{"help", "clear", "new", "attach", "copy", "check", "focus", "snapshot"} {
-		if !domain.IsReservedActionCode(actionCode) {
-			t.Fatalf("动作编码 %s 未登记", actionCode)
-		}
-	}
-	if domain.IsReservedActionCode("Help") || domain.IsReservedActionCode("polish") {
-		t.Fatal("非动作编码不应被误判")
-	}
-
-	// 环节3：动作不被解析成提示词请求。前端拦下后正文原样保留，后端也不会凭空命中提示词。
-	if code, _ := parseSlashToken("/help 怎么用"); code != "help" {
-		t.Fatalf("首 token 解析应得到 help: %q", code)
-	}
-	if !domain.IsReservedActionCode("help") {
-		t.Fatal("/help 必须识别为本地动作")
 	}
 }

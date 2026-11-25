@@ -155,7 +155,7 @@
 
 `composables/useSSE.ts` 用 `fetch` + `ReadableStream`（axios 不支持流式响应）：`parseSseBuffer` 只消费完整行，跨 chunk 断行与多事件粘包都能处理；`useSSE()` 暴露 `streamingFlag` / `startStream` / `stopStream`（AbortController 中止）。
 
-### 3.4 写作台 AI 面板
+### 3.5 写作台 AI 面板
 
 输入区两个触发符共用同一个弹层，语义按「谁执行」划分：
 

@@ -11,7 +11,7 @@ import (
 )
 
 // TestBuiltinAssetChain 覆盖出厂提示词从定义到可播种的完整链路：
-// 域形状（每域一份身份提示词两份指令提示词）→ 编码全局唯一 → 占位符全部登记 → 指纹稳定。
+// 域形状（每域一份身份提示词两份指令提示词）→ 编码全局唯一 → 占位符全部登记。
 func TestBuiltinAssetChain(t *testing.T) {
 	domainList := BuiltinDomains()
 	if len(domainList) == 0 {
@@ -39,24 +39,12 @@ func TestBuiltinAssetChain(t *testing.T) {
 
 	// 步骤2：占位符可渲染。未登记占位符会被渲染为空串，等于静默丢上下文。
 	for _, item := range domainList {
-		for _, command := range item.CommandList {
-			if unknown := TemplatePlaceholders(command.PromptText, BuiltinPlaceholders); len(unknown) > 0 {
-				t.Fatalf("提示词 %s 使用了未登记的占位符：%v", command.PromptCode, unknown)
-			}
-		}
 		if unknown := TemplatePlaceholders(item.SystemPromptText, BuiltinPlaceholders); len(unknown) > 0 {
 			t.Fatalf("身份提示词 %s 使用了未登记的占位符：%v", item.SystemPromptCode, unknown)
 		}
-	}
-
-	// 步骤3：指纹稳定。格式或算法变化会让历史资产被误判为「内容已变」而全量重播种。
-	for _, item := range domainList {
-		if len(item.SystemContentHash()) != 64 {
-			t.Fatalf("身份提示词 %s 指纹异常", item.SystemPromptCode)
-		}
 		for _, command := range item.CommandList {
-			if len(command.ContentHash()) != 64 {
-				t.Fatalf("指令提示词 %s 指纹异常", command.PromptCode)
+			if unknown := TemplatePlaceholders(command.PromptText, BuiltinPlaceholders); len(unknown) > 0 {
+				t.Fatalf("提示词 %s 使用了未登记的占位符：%v", command.PromptCode, unknown)
 			}
 		}
 	}

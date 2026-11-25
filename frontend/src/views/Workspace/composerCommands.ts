@@ -19,7 +19,7 @@ export const COMPOSER_ACTION_LIST: ComposerAction[] = [
   {
     action_code: 'help',
     action_name: '命令速查',
-    action_desc: '查看全部 / 动作、/ 提示词、# 工具与 @ 引用范围',
+    action_desc: '查看全部 / 动作、/ 提示词与 @ 引用范围',
     action_icon: 'mdi:help-circle-outline',
     action_scope: 'panel'
   },
@@ -63,6 +63,13 @@ export const COMPOSER_ACTION_LIST: ComposerAction[] = [
     action_name: '专注模式',
     action_desc: '收起目录树与 AI 面板，只留正文',
     action_icon: 'mdi:book-open-variant',
+    action_scope: 'workspace'
+  },
+  {
+    action_code: 'snapshot',
+    action_name: '章节快照',
+    action_desc: '为当前章节留档，可随时回滚',
+    action_icon: 'mdi:content-save-outline',
     action_scope: 'workspace'
   }
 ]

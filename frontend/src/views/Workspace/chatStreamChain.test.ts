@@ -20,7 +20,7 @@ function blankMessage(): ChatDisplayMessage {
     error_message: '',
     streaming_flag: true,
     waited_ms: 0,
-    retry_payload: null,
+    retry_payload: null
   }
 }
 
@@ -36,7 +36,7 @@ function streamEvent(overrides: Partial<NWChatStreamEventVo>): NWChatStreamEvent
     reference_list: [],
     tool_code_list: [],
     error_message: '',
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -53,9 +53,9 @@ describe('流式对话链路', () => {
       `${first.restText}pe":"done","content_text":"完成"}\n` +
         'data: {"seq":3,"event_type":"chunk"}\r\n' +
         'data: {非法 JSON}\n' +
-        ': ping\n',
+        ': ping\n'
     )
-    expect(second.eventList.map(item => item.seq)).toEqual([2, 3])
+    expect(second.eventList.map((item) => item.seq)).toEqual([2, 3])
     expect(second.eventList[0].content_text).toBe('完成')
     expect(second.restText).toBe('')
 
@@ -91,11 +91,11 @@ describe('流式对话链路', () => {
             chunk_text: '命中片段',
             chunk_index: 0,
             score_value: 0.5,
-            source_mode: 'hybrid',
-          },
-        ],
+            source_mode: 'hybrid'
+          }
+        ]
       }),
-      '发送失败',
+      '发送失败'
     )
     expect(message.content_text).toBe('最终正文')
     expect(message.reasoning_text).toBe('完整思考')
