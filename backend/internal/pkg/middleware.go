@@ -30,6 +30,8 @@ func RequestIDMiddleware() gin.HandlerFunc {
 		}
 		c.Set(ContextKeyRequestID, requestID)
 		c.Header("X-Request-ID", requestID)
+		// 同时放进请求 context：后台链路（工作流运行）复用同一链路 ID，审计可按链路串起来
+		c.Request = c.Request.WithContext(WithRequestID(c.Request.Context(), requestID))
 		c.Next()
 	}
 }

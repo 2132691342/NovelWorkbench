@@ -120,12 +120,15 @@ Authorization: Bearer <token>
 ### 4.1 审计日志
 
 - 所有 POST 请求（除登录、登出、`/chat/send`）记录一条审计，无论成败。
+- **存储位置是 Manticore 全文表**（`nw_audit`），不在 PostgreSQL。全文表天然支持 CJK ngram 检索与毫秒时间范围过滤，列表页的关键字、动作模糊与链路查询都由它直接完成；PostgreSQL 里的历史审计表在启动时自动清理。
+- 每日 03:00 由后台任务清理超过留存天数的记录（默认 30 天，`audit_retention_days` 可调），审计页也提供「立即清理」。
 - 字段：级别（`info` / `warn` / `error`，按 HTTP 状态推导）、链路 ID（与响应包络 `trace_id` 同值）、操作者 ULID 与登录名快照、动作码（路径去掉 `/api/v1/`）、请求路径与方法、脱敏请求体、**脱敏响应体**、目标类型与目标 ULID、业务响应码与说明、HTTP 状态、耗时、IP、UA。
 - 请求体与响应体都采样落库（各 32KB 上限，超限追加截断标记）；响应体非 JSON（SSE 流、上传回执）记占位说明。详情接口 `AuditDetailVO` 同时返回 `request_body` 与 `resp_body`，前端抽屉并列展示——「只记请求不记响应」无法回答「这次写到底改成了什么」。
 - 所有 POST 都读取 body 提取目标，上限 32KB，读后还原供 handler 绑定；`multipart` 请求不采样。
 - 目标提取白名单覆盖 user / role / menu / project / chapter / document / prompt / tool / model / provider / chat_session / notification，取第一个命中的键。
 - 凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）一律替换为 `***`，审计表即使被读也不泄露口令。
-- 写入失败只告警（`audit_record_failed`），不阻断业务。
+- 写入失败只告警（`audit_record_failed`），不阻断业务；Manticore 不可用时审计静默丢弃并告警，业务照常。
+- **链路时间线**：同一 `trace_id` 的全部审计行可用 `/admin/audit/trace/{TraceID}` 一次取回，前端按时间升序画成时间线；工作流运行复用创建它的那次请求的链路 ID，因此一次「启动工作流」能顺着链路查到后续所有步骤。
 
 ### 4.2 登录日志
 

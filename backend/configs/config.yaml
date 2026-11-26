@@ -39,6 +39,7 @@ minio:
 manticore:
   base_url: ""            # NW_MANTICORE_BASE_URL（http://host:9308）
   table_chunks: "nw_chunks"
+  table_audit: "nw_audit"     # 审计全文表（链路检索与 30 天留存清理）
 
 ai:
   # 出厂默认供应商：仅在 model_providers 表为空时播种一条记录，

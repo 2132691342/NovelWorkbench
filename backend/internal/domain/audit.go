@@ -81,3 +81,30 @@ type AuditListREQ struct {
 type AuditDetailREQ struct {
 	AuditULID string `json:"audit_ulid" form:"audit_ulid" binding:"required,max=40"` // 审计 ULID
 }
+
+// AuditTraceREQ 按链路 ID 拉取时间线请求。
+type AuditTraceREQ struct {
+	TraceID string `json:"trace_id" form:"trace_id" binding:"required,max=40"` // 链路追踪 ID
+}
+
+// AuditTraceVO 一条链路下的完整调用时间线（同一请求内的全部审计行）。
+type AuditTraceVO struct {
+	TraceID  string    `json:"trace_id"`  // 链路追踪 ID
+	Total    int       `json:"total"`     // 记录条数
+	ItemList []AuditVO `json:"item_list"` // 记录列表（时间升序）
+}
+
+// AuditActionOptionVO 动作码筛选项（下拉用，带条数）。
+type AuditActionOptionVO struct {
+	ActionCode string `json:"action_code"` // 动作码
+	Total      int64  `json:"total"`       // 该动作的记录条数
+}
+
+// AuditRetentionVO 审计留存策略视图（设置页展示与手动清理反馈）。
+type AuditRetentionVO struct {
+	RetentionDays   int    `json:"retention_days"`   // 留存天数
+	TotalCount      int64  `json:"total_count"`      // 当前总条数
+	PurgedCount     int    `json:"purged_count"`     // 本次清理删除条数
+	LastPurgedAt    string `json:"last_purged_at"`   // 上次清理时间（RFC3339）
+	NextPurgeAtText string `json:"next_purge_at_text"` // 下次清理说明（每日固定时刻）
+}

@@ -78,9 +78,18 @@ func main() {
 		&domain.LoginLogDO{},
 		&domain.PromptDO{},
 		&domain.ToolDO{},
+		&domain.WorkflowTemplateDO{},
+		&domain.WorkflowRunDO{},
+		&domain.WorkflowStepDO{},
 	); err != nil {
 		pkg.SLogger().Errorw("数据库迁移失败", "error", err)
 		os.Exit(1)
+	}
+	// 审计日志已迁到 Manticore：PG 里的历史审计表不再被读写，启动时清掉避免两份数据打架。
+	if db.Migrator().HasTable(&domain.AuditLogDO{}) {
+		if err := db.Migrator().DropTable(&domain.AuditLogDO{}); err != nil {
+			pkg.SLogger().Warnw("清理旧审计表失败", "error", err)
+		}
 	}
 	// 已下线的会话摘要列：历史改为全量注入后不再有「压缩摘要」概念，留着只会成为死数据
 	if err := db.Migrator().DropColumn(&domain.ChatSessionDO{}, "summary_text"); err != nil {
@@ -141,7 +150,7 @@ func main() {
 	tokenRepo := repo.NewTokenRepo(rdb)
 	userRepo := repo.NewUserRepo(db)
 	roleRepo := repo.NewRoleRepo(db)
-	auditRepo := repo.NewAuditRepo(db)
+	auditRepo := repo.NewAuditRepo(manticoreClient, cfg.Manticore.TableAudit)
 	projectRepo := repo.NewProjectRepo(db)
 	volumeRepo := repo.NewVolumeRepo(db)
 	chapterRepo := repo.NewChapterRepo(db)
@@ -169,7 +178,7 @@ func main() {
 	roleService := service.NewRoleService(roleRepo, userRepo, menuRepo, providerRepo)
 	menuService := service.NewMenuService(menuRepo, roleService)
 	userAdminService := service.NewUserAdminService(userRepo, roleRepo, providerRepo, notificationService)
-	auditService := service.NewAuditService(auditRepo, userRepo)
+	auditService := service.NewAuditService(auditRepo, userRepo, settingRepo)
 	outlineService := service.NewOutlineService(outlineRepo, projectRepo)
 	continuityService := service.NewContinuityService(continuityRepo, projectRepo)
 	projectService := service.NewProjectService(projectRepo, volumeRepo, chapterRepo, db, service.ProjectCascadeDeps{
@@ -233,6 +242,10 @@ func main() {
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, loreRepo,
 		knowledgeRepo, continuityRepo, settingRepo, promptService, knowledgeService, toolService,
 		providerService, aiClient, db)
+	workflowService := service.NewWorkflowService(repo.NewWorkflowRepo(db), projectRepo, chapterRepo,
+		volumeRepo, continuityRepo, promptService, providerService, aiClient, notificationService)
+	// 步骤是后台链路，不经过 HTTP 中间件，必须显式注入审计写入器才能进链路时间线。
+	workflowService.SetAuditRecorder(auditService)
 
 	// 内置资产与默认配置播种（幂等），失败视为启动期数据库异常，直接退出。
 	if err := toolService.SeedDefaults(ctx); err != nil {
@@ -241,6 +254,10 @@ func main() {
 	}
 	if err := promptService.SeedDefaults(ctx); err != nil {
 		pkg.SLogger().Errorw("内置提示词播种失败", "error", err)
+		os.Exit(1)
+	}
+	if err := workflowService.SeedDefaults(ctx); err != nil {
+		pkg.SLogger().Errorw("内置工作流模板播种失败", "error", err)
 		os.Exit(1)
 	}
 	if err := settingService.SeedDefaults(ctx); err != nil {
@@ -261,6 +278,14 @@ func main() {
 		pkg.SLogger().Errorw("管理员引导失败", "error", err)
 		os.Exit(1)
 	}
+
+	// 审计全文表与留存清理：表缺失时自动建；每日 03:00 清理 30 天前记录。
+	if err := auditService.EnsureSchema(ctx); err != nil {
+		pkg.SLogger().Warnw("审计全文表初始化失败，审计写入将降级", "error", err)
+	}
+	go auditService.RunRetentionJob(ctx)
+	// 上次停机时仍在执行的运行回到队列，避免任务永远卡在 running。
+	go workflowService.RecoverInterrupted(ctx)
 
 	// 知识库索引 worker：消费 RabbitMQ 完成文档索引，随 ctx 取消优雅退出。
 	knowledgeWorker := service.NewKnowledgeWorker(knowledgeRepo, objectRepo, mqRepo, jobRepo, projectRepo,
@@ -368,6 +393,7 @@ func main() {
 		NotifyAPI:     api.NewNotificationAPI(notificationService),
 		LoginLogAPI:   api.NewLoginLogAPI(loginLogService),
 		JobAPI:        api.NewJobAPI(jobService),
+		WorkflowAPI:   api.NewWorkflowAPI(workflowService),
 	})
 
 	server := &http.Server{

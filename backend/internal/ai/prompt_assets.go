@@ -1,5 +1,6 @@
-// 本文件定义内置提示词资产的结构：一个流程域 = 1 份身份提示词 + 2 份完整指令提示词，
-// 并提供注册表、内容指纹与只读访问器（播种与增量同步共用同一指纹算法）。
+// 本文件定义内置提示词资产：3 个流程域 × (1 份身份 + 2 份任务) = 9 条。
+// 刻意保持少而清晰：作者要能一眼看懂每个 /命令 干什么，而不是在几十条方法论里挑。
+// 复杂流程交给工作流引擎编排，提示词只负责「这一单活怎么干」。
 
 package ai
 
@@ -10,23 +11,23 @@ import (
 	"strings"
 )
 
-// 提示词种类编码：身份提示词整段会话常驻，指令提示词由 /编码 单次触发。
+// 提示词种类编码：身份提示词整段会话常驻，任务提示词由 /编码 单次触发。
 const (
 	PromptKindSystem  = "system"  // 身份与底线（系统级消息）
-	PromptKindCommand = "command" // 单次任务指令（系统级消息，/编码 触发）
+	PromptKindCommand = "command" // 单次任务（系统级消息，/编码 触发）
 )
 
-// BuiltinCommandPrompt 内置指令提示词（单次任务，对话中以 /prompt_code 触发）。
+// BuiltinCommandPrompt 内置任务提示词（单次任务，对话中以 /prompt_code 触发）。
 type BuiltinCommandPrompt struct {
-	PromptCode      string // 指令编码（对话中以 /编码 触发）
-	PromptName      string // 指令名称
+	PromptCode      string // 任务编码（对话中以 /编码 触发，工作流按编码引用）
+	PromptName      string // 任务名称
 	CategoryCode    string // 分类：write/revise/outline/setting/review/other
 	DescriptionText string // 一句话说明
 	PromptText      string // 完整提示词正文（可含 {{context}} 等占位符）
 	SortOrder       int    // 排序号
 }
 
-// BuiltinDomain 创作流程域：身份提示词定「以什么身份说话」，两份指令定「这一单活怎么干」。
+// BuiltinDomain 创作流程域：身份提示词定「以什么身份说话」，两份任务定「这一单活怎么干」。
 type BuiltinDomain struct {
 	DomainCode       string                 // 域编码（落库与分组用）
 	DomainName       string                 // 域名称
@@ -34,27 +35,17 @@ type BuiltinDomain struct {
 	SystemPromptName string                 // 身份提示词名称
 	SystemPromptText string                 // 身份提示词正文
 	SortOrder        int                    // 域排序号（同时作为身份提示词排序号）
-	CommandList      []BuiltinCommandPrompt // 域的两份指令提示词
+	CommandList      []BuiltinCommandPrompt // 域的两份任务提示词
 }
 
-// builtinDomainList 内置流程域清单，按创作作业顺序排列：
-// 立项 → 架构 → 起草 → 打磨 → 去 AI 味 → 质检 → 连续性 → 定稿 → 上架 → 平台运营 → 短篇 → 改编。
+// builtinDomainList 内置流程域清单，按创作作业顺序排列：写正文 → 修问题 → 做规划。
 var builtinDomainList = []BuiltinDomain{
-	domainPitch,
-	domainArchitect,
 	domainDraft,
-	domainStyle,
-	domainDeAI,
-	domainReview,
-	domainContinuity,
-	domainFinalize,
-	domainOperation,
-	domainPublish,
-	domainShort,
-	domainAdapt,
+	domainRevise,
+	domainPlan,
 }
 
-// BuiltinDomains 返回内置流程域定义（只读副本，指令列表逐项复制）。
+// BuiltinDomains 返回内置流程域定义（只读副本，任务列表逐项复制）。
 func BuiltinDomains() []BuiltinDomain {
 	domains := make([]BuiltinDomain, len(builtinDomainList))
 	for i := range builtinDomainList {
@@ -71,7 +62,7 @@ func BuiltinSystemPrompts() []BuiltinDomain {
 	return domains
 }
 
-// BuiltinCommandPrompts 返回全部内置指令提示词定义（只读副本）。
+// BuiltinCommandPrompts 返回全部内置任务提示词定义（只读副本）。
 func BuiltinCommandPrompts() []BuiltinCommandPrompt {
 	prompts := make([]BuiltinCommandPrompt, 0, len(builtinDomainList)*2)
 	for i := range builtinDomainList {
@@ -80,7 +71,7 @@ func BuiltinCommandPrompts() []BuiltinCommandPrompt {
 	return prompts
 }
 
-// BuiltinCommandCodeSet 返回内置指令编码集合（用于播种时清理已下线指令）。
+// BuiltinCommandCodeSet 返回内置任务编码集合（用于播种时清理已下线任务）。
 func BuiltinCommandCodeSet() map[string]bool {
 	codeSet := make(map[string]bool, len(builtinDomainList)*2)
 	for i := range builtinDomainList {
@@ -100,7 +91,7 @@ func BuiltinSystemCodeSet() map[string]bool {
 	return codeSet
 }
 
-// BuiltinCommandHashOf 返回指定内置指令提示词的出厂指纹；不在内置清单中返回空串。
+// BuiltinCommandHashOf 返回指定内置任务的出厂指纹；不在内置清单中返回空串。
 func BuiltinCommandHashOf(promptCode string) string {
 	for i := range builtinDomainList {
 		for _, command := range builtinDomainList[i].CommandList {
@@ -112,7 +103,7 @@ func BuiltinCommandHashOf(promptCode string) string {
 	return ""
 }
 
-// BuiltinSystemHashOf 返回指定内置身份提示词的出厂指纹；不在内置清单中返回空串。
+// BuiltinSystemHashOf 返回指定内置身份的出厂指纹；不在内置清单中返回空串。
 func BuiltinSystemHashOf(promptCode string) string {
 	for i := range builtinDomainList {
 		if builtinDomainList[i].SystemPromptCode == promptCode {
@@ -156,7 +147,7 @@ func PromptAssetHash(promptCode, promptName, promptKindCode, categoryCode, descr
 	}, "\x1f"))
 }
 
-// ContentHash 计算代码资产中指令提示词的指纹。
+// ContentHash 计算代码资产中任务提示词的指纹。
 func (c BuiltinCommandPrompt) ContentHash() string {
 	return PromptAssetHash(c.PromptCode, c.PromptName, PromptKindCommand, c.CategoryCode,
 		c.DescriptionText, c.PromptText, c.SortOrder)

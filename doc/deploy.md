@@ -33,11 +33,11 @@ flowchart LR
 
 | 服务 | 镜像 | 宿主端口 | 数据卷 | 作用 |
 | --- | --- | --- | --- | --- |
-| `nw-postgres` | `pgvector/pgvector:pg16` | 5432 | `nw_pg_data` | 权威数据、权限、任务、审计 |
+| `nw-postgres` | `pgvector/pgvector:pg16` | 5432 | `nw_pg_data` | 权威数据、权限、任务、工作流 |
 | `nw-redis` | `redis:8-alpine` | 6379 | 无 | 令牌黑名单 |
 | `nw-rabbitmq` | `rabbitmq:4-management` | 5672 / 15672 | 无 | 索引任务队列 |
 | `nw-minio` | `minio/minio:latest` | 9000 / 9001 | `nw_minio_data` | 知识库原文 |
-| `nw-manticore` | `manticoresearch/manticore:latest` | 9306 / 9308 | `nw_manticore_data` | 全文检索投影（可重建） |
+| `nw-manticore` | `manticoresearch/manticore:latest` | 9306 / 9308 | `nw_manticore_data` | 全文检索投影（可重建）；**审计日志**（`nw_audit`，唯一持久副本） |
 
 编排差异：
 
@@ -192,8 +192,8 @@ flowchart LR
 | 2 | `infra.LoadConfig("")`：读 YAML、应用 `NW_*`、`validate()` | 致命，退出码 1，日志「加载配置失败」 |
 | 3 | `signal.NotifyContext(SIGINT, SIGTERM)` | — |
 | 4 | `infra.NewPostgres`：DSN 连接 + 连接池 + `Ping` | 致命，退出码 1，日志「Postgres 连接失败」 |
-| 5 | `db.AutoMigrate` 建表 33 张（`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`、`PromptDO`、`ToolDO`、`ModelUserGrantDO`） | 致命，退出码 1，日志「数据库迁移失败」 |
-| 5.1 | 清理遗留表列：删 `chat_sessions.summary_text` / `compact_at`，删表 `skills` / `skill_references` / `prompt_profiles` / `slash_commands`，删列 `chat_messages.skill_code` / `ref_message_json` / `ref_prompt_json` | 告警，不阻断启动（AutoMigrate 只补不删，残留由这一步清理） |
+| 5 | `db.AutoMigrate` 建表 36 张（`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`、`PromptDO`、`ToolDO`、`WorkflowTemplateDO`、`WorkflowRunDO`、`WorkflowStepDO`、`ModelUserGrantDO`） | 致命，退出码 1，日志「数据库迁移失败」 |
+| 5.1 | 清理遗留表列：删表 `audit_logs`（审计已迁到 Manticore），删 `chat_sessions.summary_text` / `compact_at`，删表 `skills` / `skill_references` / `prompt_profiles` / `slash_commands`，删列 `chat_messages.skill_code` / `ref_message_json` / `ref_prompt_json` | 告警，不阻断启动（AutoMigrate 只补不删，残留由这一步清理） |
 | 6 | `infra.NewRedis`：构造客户端 + 5s `Ping` | 地址为空返回 `nil` 客户端 → 致命「Redis 配置无效」；Ping 失败 → 告警「令牌吊销降级」并继续 |
 | 7 | `infra.NewRabbitMQ` | 告警「异步任务降级」 |
 | 8 | `infra.NewMinIO`：构造客户端 + `BucketExists`，桶不存在则 `MakeBucket`；随后 `main` 再校验一次桶是否存在 | 告警「MinIO 初始化失败 / 桶健康检查失败 / 桶不存在，对象存储降级」 |
@@ -201,11 +201,12 @@ flowchart LR
 | 10 | `pkg.NewJWTSigner(cfg.JWT.Secret, cfg.JWTExpireTTL())` | 致命，退出码 1 |
 | 11 | 装配 repo / service / `ai.NewClient`，`providerService.SeedDefault` 播种出厂供应商 | 播种失败 → 告警「默认模型供应商播种失败，可在页面手工添加」 |
 | 12 | `providerService.MigrateLegacyModels`：模型目录为空时，把仅带 `chat_model_name` 的供应商行补成目录行 | 告警，不阻断 |
-| 13 | `toolService.SeedDefaults`（6 个内置工具）与 `promptService.SeedDefaults`（24 份内置指令 + 12 份内置身份） | 致命，退出码 1 |
+| 13 | `toolService.SeedDefaults`（6 个内置工具）、`promptService.SeedDefaults`（3 份内置身份 + 7 份内置指令）、`workflowService.SeedDefaults`（3 个内置工作流模板） | 致命，退出码 1 |
 | 14 | `settingService.SeedDefaults`（默认应用配置） | 致命，退出码 1 |
 | 15 | `menuService.SeedDefaults`（内置菜单与权限登记） | 致命，退出码 1 |
 | 16 | `roleService.SeedDefaults`（内置角色与权限修正，依赖上一步先登记完权限码） | 致命，退出码 1 |
 | 17 | `userAdminService.BootstrapAdmin(ctx, "admin", "admin@novelworkbench.local", cfg.App.AdminPassword)`，仅用户表为空时创建 | 致命，退出码 1 |
+| 17.1 | `auditService.EnsureSchema` 建 Manticore 审计表，随后起 `RunRetentionJob` goroutine（每日 03:00 清理超期审计）与 `workflowService.RecoverInterrupted` goroutine（把中断的 `running` 工作流退回 `queued` 重排） | 建表失败 → 告警，审计降级为丢弃 |
 | 18 | 启动 `service.NewKnowledgeWorker` goroutine 消费索引队列 | 异常退出 → 告警「知识库索引 worker 异常退出」 |
 | 19 | 装配 Auth/Audit 中间件与路由，`http.Server{ReadTimeout, WriteTimeout}` 后 `ListenAndServe` | 监听失败 → 进入关闭流程并记错误 |
 
@@ -473,7 +474,7 @@ mc mirror --overwrite local/novelworkbench backup/novelworkbench
 | 后端结构化日志 | `podman logs nw-backend` / `docker compose logs backend` | 请求、错误、降级、worker；zap production JSON 输出到 stdout |
 | 前端 nginx | `podman logs nw-frontend` | 上游解析、静态资源、代理错误 |
 | 编排日志 | `/var/log/novelworkbench-compose.log`（`COMPOSE_LOG` 可覆盖） | 发布失败现场；含明文口令，禁止外传 |
-| 审计日志 | `audit_logs` 表 / 管理页 | 写操作追溯 |
+| 审计日志 | Manticore `nw_audit` 表 / 管理页 | 写操作追溯（留存 30 天，`audit_retention_days` 可调；每日 03:00 自动清理） |
 | 登录日志 | `login_logs` 表 / 管理页 | 登录安全 |
 | 任务中心 | 管理页 | 索引任务状态与失败原因 |
 

@@ -1,22 +1,23 @@
-# 数据存储设计
+# 数据模型设计
 
-本文描述 NovelWorkbench 的存储分工与降级行为、命名约定、表结构、枚举取值、非关系存储、启动播种、事务边界、索引约束与迁移策略。
+本文描述 NovelWorkbench 的存储分工与降级行为、命名约定、表结构与枚举取值。
+存储运行时（非关系存储、启动播种、事务边界、迁移与备份）见 [storage.md](storage.md)。
 
 ## 1. 存储分工与降级
 
 | 存储 | 承载内容 | 权威级别 | 缺失或故障时的行为 |
 | --- | --- | --- | --- |
-| PostgreSQL | 业务主数据、权限、审计、统计、任务留痕 | 权威源 | 启动即退出（`cmd/server/main.go` 中 `infra.NewPostgres` 失败 `os.Exit(1)`） |
+| PostgreSQL | 业务主数据、权限、统计、任务留痕 | 权威源 | 启动即退出（`cmd/server/main.go` 中 `infra.NewPostgres` 失败 `os.Exit(1)`） |
+| Manticore | 审计全文表 `nw_audit`、知识库切片索引 `nw_chunks` | 可重建投影（非权威） | 审计写入降级为丢弃；知识检索 keyword 模式报错、hybrid 单通道失败降级；服务启动继续 |
 | MinIO | 知识库文档原文二进制 | 文件内容权威源 | 上传/读取返回 `ERR_STORAGE`；服务启动继续 |
-| Manticore | 知识库切片全文索引 | 可重建投影（非权威） | keyword 模式检索直接报错；hybrid 模式单通道失败降级到另一通道；服务启动继续 |
-| Redis | 登出令牌黑名单 | 易失缓存 | 吊销校验视为未吊销（`TokenRepo.IsRevoked` 返回 false），服务启动继续 |
+| Redis | 登出令牌黑名单、写请求幂等记录 | 易失缓存 | 吊销校验视为未吊销，幂等放行；服务启动继续 |
 | RabbitMQ | 知识库索引任务投递 | 传输通道（非权威） | 索引任务投递失败，文档置 `failed`；服务启动继续 |
 
 ```mermaid
 flowchart LR
-  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>33 张表)]
+  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>36 张表)]
   SVC -->|PutObject/GetObject| MINIO[(MinIO<br/>novelworkbench)]
-  SVC -->|HTTP SQL| MC[(Manticore<br/>nw_chunks)]
+  SVC -->|HTTP SQL| MC[(Manticore<br/>nw_audit / nw_chunks)]
   REPO[repo 层] -->|SET/EXISTS| REDIS[(Redis<br/>nw:token:blacklist:*)]
   REPO -->|Publish/Consume| MQ[(RabbitMQ<br/>nw_doc_index)]
   MQ --> WORKER[knowledge worker]
@@ -51,28 +52,29 @@ GORM 默认把 `XxxULID` 推导为 `xxx_ul_id`。`infra.ULIDNamingStrategy.Colum
 
 ### 2.1 ULID 业务前缀
 
-前缀常量定义在 `domain/common.go`、`domain/continuity.go`、`domain/outline.go`。
+前缀常量定义在 `domain/common.go`、`domain/continuity.go`、`domain/outline.go`、`domain/workflow.go`。
+每个前缀对应一类业务实体，日志与接口里看到前缀即可判断实体类型。
 
 | 前缀 | 对应表 / 用途 | 前缀 | 对应表 / 用途 |
 | --- | --- | --- | --- |
-| `USR_` | `users` | `PRM_` | `prompts` |
-| `REQ_` | 请求链路 ID（不落库） | `MNU_` | `menus` |
-| `PRJ_` | `projects` | `ROL_` | `roles` |
-| `VOL_` | `volumes` | `URO_` | `user_roles` |
-| `CHP_` | `chapters` | `AUD_` | `audit_logs` |
-| `SNP_` | `chapter_snapshots` | `LGL_` | `login_logs` |
-| `CHR_` | `characters` | `NTF_` | `notifications` |
-| `RLT_` | `character_relations` | `MPR_` | `model_providers` |
-| `LOR_` | `lore_settings` | `MDL_` | `model_catalogs` |
-| `OUT_` | `outline_nodes` | `MGR_` | `model_role_grants` |
-| `SCN_` | `detailed_scenes` | `MUG_` | `model_user_grants` |
-| `FCT_` | `temporal_facts` | `MUS_` | `model_usage_stats` |
-| `HOK_` | `foreshadow_hooks` | `JOB_` | `jobs` |
-| `CSM_` | `chapter_summaries` | `SET_` | `app_settings` |
-| `DOC_` | `knowledge_documents`（同时作为 MinIO 对象键） | `WCS_` | `word_count_stats` |
-| `CHK_` | `knowledge_chunks` | | |
-| `SES_` | `chat_sessions` | `TOL_` | `tools` |
-| `MSG_` | `chat_messages` | | |
+| `USR_` | `users` | `REQ_` | 请求链路 ID（不落库） |
+| `PRJ_` | `projects` | `TRC_` | 工作流运行链路 ID |
+| `VOL_` | `volumes` | `PRM_` | `prompts` |
+| `CHP_` | `chapters` | `MNU_` | `menus` |
+| `SNP_` | `chapter_snapshots` | `ROL_` | `roles` |
+| `CHR_` | `characters` | `URO_` | `user_roles` |
+| `RLT_` | `character_relations` | `AUD_` | Manticore `nw_audit`（不在 PG） |
+| `LOR_` | `lore_settings` | `LGL_` | `login_logs` |
+| `OUT_` | `outline_nodes` | `NTF_` | `notifications` |
+| `SCN_` | `detailed_scenes` | `MPR_` | `model_providers` |
+| `FCT_` | `temporal_facts` | `MDL_` | `model_catalogs` |
+| `HOK_` | `foreshadow_hooks` | `MGR_` | `model_role_grants` |
+| `CSM_` | `chapter_summaries` | `MUG_` | `model_user_grants` |
+| `DOC_` | `knowledge_documents`（同时作为 MinIO 对象键） | `MUS_` | `model_usage_stats` |
+| `CHK_` | `knowledge_chunks` | `JOB_` | `jobs` |
+| `SES_` | `chat_sessions` | `SET_` | `app_settings` |
+| `MSG_` | `chat_messages` | `WCS_` | `word_count_stats` |
+| `TOL_` | `tools` | `WFT_` / `WFR_` / `WFS_` | `workflow_templates` / `workflow_runs` / `workflow_steps` |
 
 ### 2.2 列类型映射
 
@@ -89,7 +91,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ## 3. 表结构
 
-`AutoMigrate` 一次性声明 33 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）、`updated_at timestamptz`（`autoUpdateTime`）、`created_by varchar(40)` 与 `updated_by varchar(40)`，来自 `domain.BaseDO`，下表不再重复列出。
+`AutoMigrate` 一次性声明 36 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）、`updated_at timestamptz`（`autoUpdateTime`）、`created_by varchar(40)` 与 `updated_by varchar(40)`，来自 `domain.BaseDO`，下表不再重复列出。
 
 `created_by` / `updated_by` 由 GORM 回调自动填充（`pkg.RegisterActorCallbacks`）：`AuthMiddleware` 把当前登录用户 ULID 注入请求 context，回调在 `gorm:create` / `gorm:update` 之前写入对应列。显式赋值优先，不会被覆盖；系统任务（无登录态）留空串。
 
@@ -97,7 +99,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 下面按域列出各表的列与关键约束。「PK」为主键，「UQ」为唯一索引，「IDX」为普通索引，未标注者无特殊约束。
 
-### 3.1 用户、权限与审计（7 张）
+### 3.1 用户、权限与审计（6 张 PG + 1 张 Manticore）
 
 **users** — `user_ulid`(PK) · `user_name`(UQ,v64) · `user_email`(UQ,v128) · `password_hash`(v128，bcrypt，`json:"-"` 不出参) · `avatar_url`(v256) · `remark_text`(v256) · `user_status_code`(IDX,v16，缺省 `active`，取值 `active`/`disabled`) · `pwd_epoch`(bigint，缺省 0，改密/重置密码时 +1；令牌内版本落后即失效)
 
@@ -111,9 +113,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 `perm_code` 的全局唯一性由 `MenuService.Save` 调用 `MenuRepo.CountByPermCode` 校验（冲突返回 `ERR_CONFLICT`），数据库不建唯一索引以允许多行空值。
 
-**audit_logs** — `audit_ulid`(PK) · `log_level_code`(IDX,v16，级别 `info`(2xx/3xx)/`warn`(4xx)/`error`(5xx)，由 HTTP 状态推导) · `trace_id`(IDX,v40，链路 ID，与响应包络 `trace_id` 同值) · `user_ulid`(IDX，操作者，未登录为空串) · `user_name`(IDX,v64，操作者登录名快照) · `action_code`(IDX,v128，接口路径去 `/api/v1/` 前缀) · `request_path`(v256) · `request_method`(v8) · `request_body`(text，凭据字段脱敏为 `***`，上传与超限不采样) · `resp_body`(text，响应体采样，超 32KB 追加截断标记，流式/上传记占位) · `target_type`(IDX,v32，目标类型 user/role/menu/project/chapter/document/prompt/tool/model/provider/chat_session/notification) · `target_ulid`(IDX) · `resp_code`(IDX,v32) · `resp_message`(v512) · `http_status`(int) · `latency_ms`(bigint) · `ip_addr`(v64) · `user_agent_text`(v512)
+**审计（Manticore `nw_audit`，非 PG 表）** — `audit_ulid`(PK) · `log_level_code`（`info`/`warn`/`error`，由 HTTP 状态推导） · `trace_id`（链路 ID，与响应包络 `trace_id` 同值） · `user_ulid` · `user_name`（登录名快照） · `action_code`（接口路径去 `/api/v1/` 前缀） · `request_path` · `request_method` · `target_type` · `target_ulid` · `resp_code` · `resp_message`(text) · `http_status`(int) · `latency_ms`(int) · `ip_addr` · `user_agent_text`(text) · `request_body`(text，凭据脱敏) · `resp_body`(text，采样上限 32KB) · `search_text`(text，全文检索列，由动作码/操作人/路径/说明/目标/链路拼接) · `created_at_ts`(bigint，毫秒时间戳，用于范围与排序)。建表语句带 `ngram_len=1 ngram_chars=cjk`，中文按字切分；每日 03:00 清理超过留存天数（默认 30，`audit_retention_days` 可调）的记录。PostgreSQL 里的历史 `audit_logs` 表在启动时自动删除。
 
-写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`。中间件缓冲响应体（上限 32KB）解析包络（业务码与说明）并把响应体一并落库，普通响应不受影响。落库失败只告警，不阻断业务。`AuditRepo` 有 `Create`、`GetByULID`、`ListPage`，无删除路径；`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤。
+写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`。中间件缓冲响应体（上限 32KB）解析包络（业务码与说明）并把响应体一并落库，普通响应不受影响。落库失败只告警，不阻断业务。`AuditRepo` 有 `Create`、`GetByULID`、`ListPage`、`ListByTrace`、`DeleteBefore`（按留存天数清理）；`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤。
 
 **login_logs** — `login_log_ulid`(PK) · `user_ulid`(IDX，命中用户，失败为空) · `login_account_text`(IDX,v128，登录名或邮箱) · `login_result_code`(IDX,v16，`success`/`failed`/`disabled`) · `fail_reason_text`(v256) · `ip_addr`(v64) · `user_agent_text`(v512)
 
@@ -165,7 +167,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 **knowledge_chunks** — `chunk_ulid`(PK) · `doc_ulid`(IDX) · `project_ulid`(IDX) · `chunk_index`(int，片内序号) · `chunk_text`(text) · `token_count`(int) · `content_hash`(IDX,v64，切片内容指纹，用于增量重建时复用 ULID)
 
-### 3.5 对话与 AI 资产（6 张）
+### 3.5 对话与 AI 资产（4 张）
 
 **chat_sessions** — `session_ulid`(PK) · `project_ulid`(IDX) · `user_ulid`(IDX) · `session_name`(v128，缺省取首条消息前 20 字)
 
@@ -202,6 +204,20 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 **word_count_stats** — `word_stat_ulid`(PK) · `project_ulid`(IDX) · `stat_date`(IDX,v10，`YYYY-MM-DD`) · `word_delta`(bigint，当日人工净增) · `ai_word_delta`(bigint，当日 AI 生成)
 
 `(project_ulid, stat_date)` 无唯一约束；`ProjectRepo.UpsertWordDelta` 与 `ChatRepo.UpsertAIWordDelta` 采用「先查后写」累加，并发下可能插入同日重复行，统计查询以 `SUM` 聚合。
+
+### 3.8 自动化工作流（3 张）
+
+**workflow_templates** — `template_ulid`(PK，`WFT_`) · `template_code`(UQ,v32，模板编码) · `template_name`(v64) · `description_text`(v256，一句话说明) · `step_schema_json`(text，步骤定义 JSON 数组) · `builtin_flag`(bool，内置模板随代码升级同步) · `enabled_flag`(bool) · `sort_order`(int)
+
+**workflow_runs** — `run_ulid`(PK，`WFR_`) · `project_ulid`(IDX) · `user_ulid`(IDX) · `template_code`(IDX,v32) · `template_name`(v64，模板名快照，模板改名不影响历史) · `run_status_code`(IDX,v20，`queued`/`running`/`waiting_review`/`paused`/`succeeded`/`failed`/`cancelled`) · `chapter_ulid_list_json`(text，目标章节 ULID 数组) · `params_json`(text，运行参数 JSON) · `current_index`(int，当前章节下标) · `current_step_index`(int，章节内步骤下标，审核恢复用) · `total_chapter_count`(int) · `finished_chapter_count`(int) · `trace_id`(IDX,v40，链路 ID，串联步骤审计) · `feedback_text`(text，审核退回意见，下一轮起草注入) · `candidate_text`(text，待入库正文，审核通过后写回章节) · `error_message`(v512) · `pause_requested_flag`(bool) · `cancel_requested_flag`(bool) · `started_at`(timestamptz) · `finished_at`(timestamptz)
+
+`current_index` 与 `current_step_index` 组成二维游标：`current_index` 指向第几章，`current_step_index` 指向该章内的第几步。
+人工审核通过时两者一起前移，运行因此能从审核点继续而不是从头重跑。
+
+**workflow_steps** — `step_ulid`(PK，`WFS_`) · `run_ulid`(IDX) · `chapter_ulid`(IDX) · `step_index`(int，章节内步骤序号) · `step_type_code`(v20，`draft`/`check`/`revise`/`review`/`human_review`/`summary`/`apply`) · `step_name`(v64) · `step_status_code`(IDX,v16，`running`/`success`/`failed`/`skipped`/`rejected`) · `prompt_code`(v32，该步使用的提示词) · `output_text`(text，步骤产出，截断 20000 字) · `metric_json`(text，度量 JSON，如体检分与问题数) · `attempt_count`(int) · `latency_ms`(bigint) · `started_at`(timestamptz) · `finished_at`(timestamptz)
+
+步骤表是运行的可追溯时间线：每一步的输入引用、产出、状态与耗时都留档，
+配合 `workflow_runs.trace_id` 可在审计链路里按一次运行串起全部步骤。
 
 ## 4. 枚举与状态码
 
@@ -288,206 +304,31 @@ stateDiagram-v2
 | `jobs.job_status_code` | `queued` / `running` / `success` / `failed` |
 | 检索模式（请求参数，非列） | `keyword` / `hybrid`（默认 hybrid） |
 
-## 5. 非关系存储
+### 4.6 自动化工作流
 
-### 5.1 MinIO
-
-| 项 | 值 |
+| 字段 | 取值 |
 | --- | --- |
-| 桶名 | `novelworkbench`（`minio.bucket`） |
-| 桶初始化 | `infra.NewMinIO` 检查桶，不存在则创建；启动后再做一次健康检查，失败只告警 |
-| 对象键 | 文档 ULID（`DOC_...`），即 `knowledge_documents.object_key` |
-| 上传 Content-Type | `application/octet-stream` |
+| `workflow_templates.template_code`（内置） | `chapter_draft` / `chapter_polish` / `chapter_deai` |
+| `workflow_runs.run_status_code` | `queued` / `running` / `waiting_review` / `paused` / `succeeded` / `failed` / `canceled` |
+| `workflow_steps.step_type_code` | `draft` / `check` / `revise` / `review` / `human_review` / `summary` / `apply` |
+| `workflow_steps.step_status_code` | `queued` / `running` / `success` / `failed` / `skipped` / `rejected` |
 
-上传顺序（`KnowledgeService.Upload`）：校验归属、扩展名白名单、大小上限 → `ObjectRepo.PutObject` 写原文（失败抛 `ERR_STORAGE`）→ 插入 `knowledge_documents` 行（`doc_status_code = 'pending'`，失败则 `RemoveObject` 回滚）→ `enqueueIndexJob` 先插 `jobs` 行（`queued`）再投递 RabbitMQ（投递失败把任务与文档置 `failed`）。
+运行状态机（`WorkflowService`）：
 
-删除顺序（`KnowledgeService.Delete`）：`RemoveObject`（失败即中断，抛 `ERR_STORAGE`）→ 删 Manticore 行（失败只告警）→ 事务内删 `knowledge_chunks` 与 `knowledge_documents`。
-
-### 5.2 Manticore
-
-| 项 | 值 |
-| --- | --- |
-| 表名 | `nw_chunks`（`manticore.table_chunks`，配置为空时回落同名默认） |
-| 客户端 | `infra.ManticoreClient`，`POST {base_url}/sql?mode=raw`，HTTP 超时 5s |
-| 表结构 | `chunk_ulid string, doc_ulid string, project_ulid string, chunk_text text` |
-
-建表语句（`ensureManticoreSchema`）：
-
-```sql
-CREATE TABLE IF NOT EXISTS nw_chunks(
-  chunk_ulid string,
-  doc_ulid string,
-  project_ulid string,
-  chunk_text text
-) charset_table='non_cjk,0..9,A..Z->a..z,a..z' ngram_len='1' ngram_chars='cjk'
+```mermaid
+stateDiagram-v2
+  [*] --> queued: 创建运行
+  queued --> running: 执行器取到
+  running --> waiting_review: 走到人工审核门禁
+  waiting_review --> queued: 审核通过或退回重跑
+  running --> succeeded: 全部章节完成
+  running --> failed: 步骤重试耗尽
+  running --> paused: 收到暂停请求
+  running --> canceled: 收到取消请求
+  paused --> queued: 恢复执行
+  failed --> queued: 重试运行
 ```
 
-`ngram_len='1'` + `ngram_chars='cjk'` 让中文按单字切分；`charset_table` 做非 CJK 字符小写映射。
+`waiting_review` 是唯一阻塞态：执行器挂起等人工决定，审核通过后游标前移到下一步骤并把运行置回 `queued` 继续，
+审核退回则把意见写进 `feedback_text` 并从本章第一步重跑。
 
-worker 启动时的结构校验（`KnowledgeWorker.Run`）：执行 `CREATE TABLE IF NOT EXISTS`，再 `SHOW CREATE TABLE nw_chunks`；若结果不含 `ngram_len` 则 `DROP TABLE` 重建，并从 PG 全量回灌（`rebuildManticoreIndex` 读 `ListAllChunksForIndex`，按文档分组调用 `syncManticoreChunks`）。
-
-单文档同步 `syncManticoreChunks` 为「先删后插」：`DELETE FROM nw_chunks WHERE doc_ulid = '...'` 后逐条 `INSERT`，字符串转义由 `escapeManticoreString` 处理。
-
-检索（`queryManticoreHits`）：
-
-```sql
-SELECT chunk_ulid, WEIGHT() AS score FROM nw_chunks
-WHERE MATCH('@chunk_text <expr>') AND project_ulid = '<PRJ_...>'
-  [AND doc_ulid IN (...)]
-ORDER BY score DESC LIMIT <topK>
-```
-
-`expr` 在 term 通道是逐词引号后用 ` | ` 连接的 OR 表达式，phrase 通道是整串引号包裹。命中结果按 `chunk_ulid` 回表 `knowledge_chunks`（`GetChunksByULIDs` 联 `knowledge_documents` 取文档名）。hybrid 模式对 term / phrase 两路命中做 RRF 融合（`score = Σ 1/(60+rank)`），再交默认模型重排（重排失败 fail-open 保留原顺序）。
-
-### 5.3 Redis
-
-两类键，均为易失缓存，可整体丢弃后由业务重建：
-
-| 键格式 | 值 | TTL | 语义 |
-| --- | --- | --- | --- |
-| `nw:token:blacklist:<sha256hex(token)>` | `"1"` | 令牌签发时长（`expires_at - issued_at`） | 登出拉黑；`IsRevoked` 在 Redis 异常时返回 false（视为未吊销），写入点 `AuthService.Logout` |
-| `nw:idempotency:<sha256hex(user \| path \| key)>` | `IdempotencyRecord` JSON（`state_code`/`body_hash`/`http_status`/`header_map`/`body_text`） | 24 小时 | 写请求幂等：首请求 `SET NX` 写 `processing`，2xx 后 `SET XX` 覆盖 `done`，非 2xx 与 5xx `DEL` 释放；单键上限 1MB，超限放弃缓存；Redis 不可用时放行 |
-
-### 5.4 RabbitMQ
-
-| 项 | 值 |
-| --- | --- |
-| 队列名 | `nw_doc_index`（`rabbitmq.queue_doc_index`） |
-| 声明 | `QueueDeclare(name, durable=true, autoDelete=false, exclusive=false, noWait=false)`，投递与消费前各声明一次（幂等） |
-| 投递 | `PublishWithContext`，`DeliveryMode=Persistent`，`ContentType=application/json` |
-| 消息体 | `{"doc_ulid":"DOC_..."}` |
-
-消费确认语义（`MQRepo.ConsumeIndexJobs`）：
-
-| 情况 | 动作 |
-| --- | --- |
-| 载荷 JSON 非法 | `Nack(requeue=false)`，丢弃 |
-| handler 返回 nil（成功，或已在内部落库为失败） | `Ack` |
-| handler 返回 error（查询异常、关停中断） | `Nack(requeue=true)`，重投 |
-| 通道关闭或 ctx 取消 | 消费循环退出 |
-
-消费循环中断后按 5s 间隔重连。`KnowledgeWorker.handleIndexJob` 对单文档最多重试 3 次，退避 `attempt` 秒；最终失败写入 `jobs` 与 `knowledge_documents` 的失败信息，并向项目主人发 `task` 类型通知后返回 nil（不重投）。
-
-## 6. 启动播种
-
-全部播种在 `AutoMigrate` 之后、HTTP 监听之前执行。所有播种都按业务键查缺补插，重复启动不产生重复行。
-
-| 顺序 | 动作 | 触发条件 | 失败处理 |
-| --- | --- | --- | --- |
-| 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model` 且 `model_providers` 为空 | 告警，继续启动 |
-| 2 | `ModelProviderService.MigrateLegacyModels`：模型目录为空时，把仅带 `chat_model_name` 的供应商行补成目录行 | `model_catalogs` 为空 | 告警，继续启动 |
-| 3 | `ToolService.SeedDefaults` 播种内置工具 | 按 `tool_code` 查缺补插 | `os.Exit(1)` |
-| 4 | `PromptService.SeedDefaults` 播种内置全局提示词（12 份身份 + 24 份指令）并按指纹升级、下线清单外的内置提示词 | 按 `(global, "", prompt_code)` 查行；不存在则插入；`customized_flag` 或指纹一致则跳过；否则覆盖正文并写新指纹 | `os.Exit(1)` |
-| 5 | `SettingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插；已存在时仅同步 `setting_desc` | `os.Exit(1)` |
-| 6 | `MenuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插，父级编码先解析 | `os.Exit(1)` |
-| 7 | `RoleService.SeedDefaults` 播种内置角色，并修正权限数据 | 按 `role_code` 查缺补插；`admin` 固定 `*`，其他内置角色剔除 `*` 与未登记编码（依赖上一步菜单先登记完权限码，顺序不可颠倒） | `os.Exit(1)` |
-| 8 | `UserAdminService.BootstrapAdmin` 引导管理员 | `users` 为空 | `os.Exit(1)` |
-
-播种内容：
-
-| 对象 | 内容 |
-| --- | --- |
-| 供应商 | 名称「默认模型网关」，`enabled_flag=true`，`last_test_status_code='untested'`，API Key 用 JWT 密钥派生材料做 AES-256-GCM 封存 |
-| 默认模型 | 取 `ai.chat_model`，`default_flag=true`，`model_label` 回填模型名；播种后授权给全部内置角色 |
-| 内置提示词 | 12 个流程域 × (1 身份 + 2 指令) = 36 条（`ai.BuiltinDomains()`）；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`，`asset_hash_text` 为出厂指纹。启动时按指纹升级：已自改或指纹一致不覆盖，其余覆盖正文；清单之外的旧内置提示词删除 |
-| 内置工具 | 6 个（`ToolService.SeedDefaults`）：`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`；全局、启用、带参数声明 |
-| 应用配置 | `rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
-| 内置角色 | `admin`（`perm_codes_json=["*"]`）、`user`（`perm_codes_json="[]"`），`builtin_flag=true`，已存在不覆盖 |
-| 内置菜单 | 来源 `menuSeedList`，共 28 行：3 个分组（创作 / AI 资产 / 系统）、24 个页面、1 个动作权限（`action_model_write`）。`material` 是素材库唯一入口；`character`、`lore`、`knowledge`、`notes` 标记 `HiddenFlag`（入口已并入素材库），`profile` 从顶栏用户菜单进入同样隐藏，五者仍注册路由但不进导航 |
-| 管理员 | 登录名 `admin`，邮箱 `admin@novelworkbench.local`，密码取 `app.admin_password`（缺省 `Admin@123456`），挂载 `admin` 角色 |
-
-## 7. 事务与一致性
-
-事务封装统一为 `repo.WithTx(db, fn)`（`backend/internal/repo/tx.go`，即 `db.Transaction`）。仓储层内另有三处自建事务：`ChatRepo.DeleteSessionWithMessages`、`RoleRepo.ReplaceUserRoles`、`ModelProviderRepo.ReplaceGrants`。
-
-### 7.1 有事务边界的操作
-
-| 操作 | 事务内覆盖范围 | 位置 |
-| --- | --- | --- |
-| 项目删除 | 章节快照 → 章节 → 卷 → 角色关系与角色 → 世界观设定 → 会话消息与会话 → 知识切片 → 知识文档 → 字数统计 → 项目行 | `ProjectService.Delete` |
-| 卷删除 | 汇总卷内字数 → 章节快照 → 章节 → 卷 → 项目字数回补 | `VolumeService.Delete` |
-| 章节更新 | 章节字段更新 + 项目累计字数增减 + 当日字数统计 | `ChapterService.Update` |
-| 章节删除 | 章节快照 → 章节 → 项目字数回补 | `ChapterService.Delete` |
-| 快照回滚 | 自动留档 → 章节正文与字数更新 → 项目字数增减 | `ChapterService.SnapshotRestore` |
-| 角色删除 | 关系边 → 角色卡 | `CharacterService.Delete` |
-| 知识文档删除 | 切片行 → 文档行 | `KnowledgeService.Delete` |
-| 切片重建 | 删该文档既有切片 → 逐条插入新切片 | `KnowledgeWorker.indexDocument` |
-| AI 回复落库 | assistant 消息 → 当日 AI 字数统计 | `ChatService.Send` |
-| 用户角色覆盖 | 清空用户全部关联 → 逐条插入 | `RoleRepo.ReplaceUserRoles` |
-| 模型授权覆盖 | 清空模型全部授权 → 逐条插入 | `ModelProviderRepo.ReplaceGrants` |
-| 会话删除 | 消息 → 会话 | `ChatRepo.DeleteSessionWithMessages` |
-
-字数账目维护 `applyWordDelta`（`chapter_service.go`）在事务内做两件事：`ProjectRepo.AdjustTotalWordCount` 用表达式增减（`total_word_count = total_word_count + delta`）避免读改写覆盖；`ProjectRepo.UpsertWordDelta` 累加当日 `word_count_stats.word_delta`。
-
-### 7.2 项目删除的级联覆盖面
-
-`ProjectService.Delete` 在单个事务内按下列顺序显式删除（无数据库级联，先子后父）：
-
-`chapter_snapshots` → `chapters` → `volumes` → `character_relations` + `characters` → `lore_settings` → `detailed_scenes` → `outline_nodes` → `temporal_facts` + `foreshadow_hooks` + `chapter_summaries` → `chat_messages` + `chat_sessions` → `knowledge_chunks` → `knowledge_documents` → `word_count_stats` → `projects`。
-
-事务提交后执行 `cleanupKnowledgeExternal`：逐文档删 MinIO 对象与 Manticore 行，失败只告警，不回滚数据库。
-
-以下表没有按项目删除的路径，项目删除后其行保留：
-
-| 表 | 原因 |
-| --- | --- |
-| `jobs` | `JobRepo` 只有 Create / Update / Get / List，任务留痕永久保留 |
-| `audit_logs`、`login_logs` | 只有 Create / ListPage，日志只增不删 |
-
-其余表为全局数据，与项目无归属关系：`users`、`roles`、`user_roles`、`menus`、`app_settings`、`prompts`（全局行）、`tools`、`model_providers`、`model_catalogs`、`model_role_grants`、`model_user_grants`、`model_usage_stats`、`notifications`（按用户而非项目清理）。
-
-### 7.3 跨存储写操作
-
-这些操作无法纳入同一个数据库事务，只能靠应用层编排与告警降级：
-
-| 操作 | 顺序 | 失败后果 |
-| --- | --- | --- |
-| 知识库上传 | MinIO 写 → PG 文档行 → PG 任务行 → RabbitMQ 投递 | PG 行失败回滚删 MinIO 对象；投递失败把文档与任务置 `failed` |
-| 知识库删除 | MinIO 删原文 → Manticore 删行 → PG 事务 | MinIO 失败即中断；Manticore 失败只告警，索引残留 |
-| 索引同步 | PG 切片事务 → Manticore 先删后插 → 回写文档状态 | Manticore 失败只告警，keyword 通道降级 |
-| 项目删除的外部清理 | PG 事务提交后 → MinIO 删对象 → Manticore 删行 | 失败只告警，PG 一致性已保证 |
-| 用户删除 | 删角色关联 → 删模型授权 → 删通知（失败只告警）→ 删用户行 | 通知清理失败会残留通知 |
-| 模型用量统计 | 内存缓冲累加 → 每 5s `Flush` 批量 upsert | 落库失败丢弃该批缓冲（只告警），统计可能少计 |
-
-`ModelUsageService` 的缓冲是唯一的最终一致路径：`RecordUsage` 只写内存，`flushLoop` 每 5s（`usageFlushInterval`）批量写库，进程退出时再 flush 一次。
-
-## 8. 索引与查询约束
-
-| 约束 | 说明 |
-| --- | --- |
-| 无外键 | 所有 DO 没有 `foreignKey` 标签，`AutoMigrate` 不生成 `FOREIGN KEY` |
-| 无软删除 | 没有 `gorm.DeletedAt` 字段，删除均为物理 `DELETE` |
-| 无数据库级联 | 不存在 `ON DELETE CASCADE`，级联全部由服务层编排 |
-| 数据库唯一约束 7 处 | `users.user_name`、`users.user_email`、`roles.role_code`、`menus.menu_code`、`app_settings.setting_key`、`tools.tool_code`、`model_usage_stats.uk_mus_dim`（四列组合） |
-| 服务层唯一语义 | `menus.perm_code`（`CountByPermCode`）、`model_catalogs.default_flag`（`ClearDefaultModel` 后置位）、`prompts` 的 `(scope_code, project_ulid, prompt_code)`、`chapter_summaries` 的 `(project_ulid, chapter_ulid)`、`word_count_stats` 的 `(project_ulid, stat_date)`（均先查后写） |
-| 归属校验在服务层 | `mustOwnProject` / `mustOwnChapter` / `mustOwnDoc` 比对 `projects.user_ulid`，不是数据库约束 |
-| 跨表关联用 JOIN | 如 `RoleRepo.ListRolesByUserULID`、`KnowledgeRepo.GetChunksByULIDs`、`StatsRepo` 联 `projects` |
-| 分页 | `PageREQ.Normalize`：`page_num < 1` 归一为 1；`page_size` 缺省 20、超过 100 归一为 20 |
-| 排序约定 | 时间倒序用于日志/任务/通知/项目；`sort_order ASC, created_at ASC` 用于菜单/设定/提示词；`chapter_order ASC`、`chunk_index ASC`、`sort_order ASC, outline_ulid ASC` 用于章节/切片/大纲 |
-| 聚合在 SQL 内 | `model_usage_stats` 的按日/按供应商/按模型聚合由 `ModelUsageRepo` 的 `GROUP BY` 完成，缺日由服务层补零；`word_count_stats` 的区间汇总由 `StatsRepo` 完成 |
-| 大文本不建索引 | `content_text`、`chunk_text`、`prompt_text`、`request_body` 等 `text` 列不建索引，正文检索依赖 Manticore |
-| 排序号来源 | 章节取项目内 `MAX(chapter_order)+1`；卷在请求值 ≤ 0 时取项目内最大值 +1；大纲节点与场景在请求值为 0 时取同级最大值 +1 |
-
-## 9. 迁移策略
-
-- 唯一迁移入口是 `cmd/server/main.go` 的 `db.AutoMigrate(...)`，声明 33 个 DO。仓库内没有 `.sql` 文件，也没有 migrations 目录。
-- AutoMigrate 语义：表不存在则建表；表已存在则补缺失的列与索引。它不做破坏性变更——不删列、不改列类型、不删索引；删除字段或调整列宽必须手工执行 DDL。
-- AutoMigrate 失败（连接失败或 DDL 出错）时 `os.Exit(1)`，服务不会带半迁移状态启动。
-- **遗留结构在启动期显式清理**：AutoMigrate 只补不删，因此已被取代的表与列必须在启动时手工清理。`cmd/server/main.go` 在迁移后依次执行：删 `chat_sessions.summary_text` 与 `chat_sessions.compact_at`（会话摘要与压缩时间两列已无写入方）；删表 `skills`、`skill_references`、`prompt_profiles`、`slash_commands`（技能与提示词档案已合并进 `prompts` 一张表）；删列 `chat_messages.skill_code`、`chat_messages.ref_message_json`、`chat_messages.ref_prompt_json`（引用只保留「素材库 + 历史会话」两类来源）。清理前先 `HasTable` / `HasColumn` 判存，失败只告警不阻断启动。
-- 数据层幂等补丁在启动期以业务键判空执行：`SeedDefault`（供应商表为空）、`MigrateLegacyModels`（模型表为空）、四个 `SeedDefaults`（按编码/键查缺补插）、`BootstrapAdmin`（用户表为空）。
-- Manticore 侧的结构管理由 `ensureManticoreSchema` 自实现：表不存在则按 CJK ngram 结构建表；已存在但 `SHOW CREATE TABLE` 结果缺少 `ngram_len` 时 drop 重建，并从 PG 回灌全部切片。这是唯一支持的结构变更路径。
-- Redis 与 RabbitMQ 无结构迁移：键按 TTL 自然过期，队列在每次投递/消费前 `QueueDeclare` 幂等声明。
-
-## 10. 备份与恢复
-
-| 数据 | 备份对象 | 恢复要点 |
-| --- | --- | --- |
-| PostgreSQL | 整库逻辑备份（如 `pg_dump`） | 恢复后启动服务，`AutoMigrate` 幂等补齐缺失的表、列与索引；播种逻辑补回内置角色、菜单、配置、提示词与管理员 |
-| MinIO | 桶 `novelworkbench` | 对象键即文档 ULID，与 `knowledge_documents.object_key` 一一对应；缺对象时 `KnowledgeService.GetContent` 返回 `ERR_STORAGE`，索引任务读取原文失败后把文档置 `failed` |
-| Manticore | 无需备份 | 索引是投影；恢复 PG 后重启服务即可建表，`SHOW CREATE TABLE` 通过时不会自动回灌，需重建时可先 drop `nw_chunks` 再启动，或对每个文档调 `KnowledgeService.Reindex` 重投任务 |
-| Redis | 无需备份 | 只存令牌黑名单，丢失后已签发令牌在 JWT 有效期内仍可用（默认 168 小时） |
-| RabbitMQ | 无需备份 | 仅传输通道；队列 durable、消息 persistent，未消费消息在重启后重投；丢失的任务可用 `Reindex` 重新投递 |
-
-恢复顺序：PostgreSQL → MinIO → 重启服务（触发 AutoMigrate、下线清理、播种与 Manticore 建表）→ 按需重投知识库索引。
-
-一致性注意：PG 与 MinIO、PG 与 Manticore 之间均无分布式事务——上传是「对象存储先写、PG 后写、PG 失败删对象」，删除是「对象存储先删、PG 后删」，存在短暂不一致窗口；切片同步失败只降级不回滚 PG。`word_count_stats` 的 `(project_ulid, stat_date)` 无唯一约束，并发写入可能产生重复行，`SUM` 聚合会重复累加。`model_usage_stats` 有 5s 内存缓冲，进程异常退出会丢失最近一个刷新周期的用量。

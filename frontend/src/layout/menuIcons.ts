@@ -27,6 +27,7 @@ const ICON_CODE_MAP: Record<string, string> = {
   history: 'mdi:history',
   chart: 'mdi:chart-box-outline',
   pulse: 'mdi:pulse',
+  workflow: 'mdi:sitemap-outline',
   tool: 'mdi:toolbox-outline',
   close: 'mdi:close',
   check: 'mdi:check',

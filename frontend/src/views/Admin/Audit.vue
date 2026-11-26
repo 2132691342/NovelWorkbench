@@ -1,16 +1,22 @@
-<!-- 审计日志页：按级别、动作、链路 ID、目标与日期筛选写操作留痕，抽屉查看请求体与响应。 -->
+<!-- 审计日志页：默认只看异常与失败，按链路 ID 追一次请求的完整时间线。 -->
 <script setup lang="ts">
   import { computed, onMounted, ref } from 'vue'
   import { ElMessage } from 'element-plus'
   import {
+    fetchAuditActionOptions,
+    fetchAuditRetention,
     getAdminAuditDetail,
     listAdminAudits,
+    purgeAdminAudit,
+    type NWAuditActionOptionVo,
     type NWAuditDetailVo,
     type NWAuditListReqVo,
+    type NWAuditRetentionVo,
     type NWAuditVo
   } from '@/api/admin'
   import { usePageQuery } from '@/composables/usePageQuery'
   import { formatTime } from '@/utils/time'
+  import AuditTraceDrawer from './components/AuditTraceDrawer.vue'
 
   const { items, total, pageNum, pageSize, loading, query, load, search, changePage } = usePageQuery<
     NWAuditVo,
@@ -20,35 +26,34 @@
     action_code: '',
     keyword_text: '',
     trace_id: '',
+    user_ulid: '',
+    target_type: '',
     date_from: '',
     date_to: ''
   })
 
   const levelOptions = [
     { value: '', label: '全部级别' },
-    { value: 'info', label: '正常' },
+    { value: 'error', label: '错误' },
     { value: 'warn', label: '警示' },
-    { value: 'error', label: '错误' }
+    { value: 'info', label: '正常' }
   ]
 
   const dateRange = ref<[string, string] | null>(null)
+  const actionOptions = ref<NWAuditActionOptionVo[]>([])
+  const retention = ref<NWAuditRetentionVo | null>(null)
   const detailVisible = ref(false)
   const detailLoading = ref(false)
   const detail = ref<NWAuditDetailVo | null>(null)
+  const traceVisible = ref(false)
+  const traceId = ref('')
+  const purging = ref(false)
 
   const levelTagType = (levelCode: string) =>
-    levelCode === 'error'
-      ? 'danger'
-      : levelCode === 'warn'
-        ? 'warning'
-        : levelCode === 'info'
-          ? 'success'
-          : 'info'
+    levelCode === 'error' ? 'danger' : levelCode === 'warn' ? 'warning' : 'success'
 
-  const levelLabel = (levelCode: string) => {
-    if (!levelCode) return '—'
-    return levelOptions.find((item) => item.value === levelCode)?.label ?? levelCode
-  }
+  const levelLabel = (levelCode: string) =>
+    levelOptions.find((item) => item.value === levelCode)?.label ?? (levelCode || '—')
 
   const prettyBody = computed(() => prettyJson(detail.value?.request_body))
   const prettyRespBody = computed(() => prettyJson(detail.value?.resp_body))
@@ -69,6 +74,22 @@
     void search()
   }
 
+  const loadOptions = async () => {
+    try {
+      actionOptions.value = await fetchAuditActionOptions()
+    } catch {
+      actionOptions.value = []
+    }
+  }
+
+  const loadRetention = async () => {
+    try {
+      retention.value = await fetchAuditRetention()
+    } catch {
+      retention.value = null
+    }
+  }
+
   const openDetail = async (row: NWAuditVo) => {
     detailVisible.value = true
     detailLoading.value = true
@@ -82,6 +103,18 @@
     }
   }
 
+  const openTrace = (nextTraceId: string) => {
+    if (!nextTraceId) return
+    traceId.value = nextTraceId
+    traceVisible.value = true
+  }
+
+  /** 时间线里点某条记录，直接跳到该条的详情抽屉 */
+  const openTraceDetail = async (row: NWAuditVo) => {
+    traceVisible.value = false
+    await openDetail(row)
+  }
+
   const copyTrace = async (traceId: string) => {
     if (!traceId) return
     try {
@@ -92,30 +125,60 @@
     }
   }
 
+  const purgeNow = async () => {
+    purging.value = true
+    try {
+      const result = await purgeAdminAudit()
+      ElMessage.success(result.purged_count > 0 ? `已清理 ${result.purged_count} 条过期记录` : '没有过期记录')
+      await Promise.all([loadRetention(), load()])
+    } finally {
+      purging.value = false
+    }
+  }
+
   onMounted(() => {
-    void load()
+    void Promise.all([load(), loadOptions(), loadRetention()])
   })
 </script>
 
 <template>
-  <div class="nw-page">
+  <div class="nw-page audit-page">
+    <div v-if="retention" class="audit-page__retention">
+      <Icon icon="mdi:archive-clock-outline" :size="16" />
+      <span>
+        留存 {{ retention.retention_days }} 天 · 当前 {{ retention.total_count.toLocaleString() }} 条 ·
+        {{ retention.next_purge_at_text }}
+      </span>
+      <span v-if="retention.last_purged_at" class="nw-hint">
+        上次清理 {{ formatTime(retention.last_purged_at) }}
+      </span>
+      <ElButton size="small" text :loading="purging" @click="purgeNow()">立即清理</ElButton>
+    </div>
+
     <div class="nw-toolbar nw-toolbar--wrap">
       <ElInput
         v-model="query.keyword_text"
-        placeholder="搜索路径 / 用户 / 响应说明"
+        placeholder="搜索动作 / 用户 / 路径 / 说明"
         clearable
         class="audit-page__search"
         @keyup.enter="searchWithDate()"
         @clear="searchWithDate()"
       />
-      <ElInput
+      <ElSelect
         v-model="query.action_code"
-        placeholder="动作码，如 admin/user"
-        clearable
         class="audit-page__action"
-        @keyup.enter="searchWithDate()"
-        @clear="searchWithDate()"
-      />
+        placeholder="全部动作"
+        clearable
+        filterable
+        @change="searchWithDate()"
+      >
+        <ElOption
+          v-for="option in actionOptions"
+          :key="option.action_code"
+          :label="`${option.action_code}（${option.total}）`"
+          :value="option.action_code"
+        />
+      </ElSelect>
       <ElSelect
         v-model="query.log_level_code"
         class="audit-page__level"
@@ -142,34 +205,26 @@
     </div>
 
     <ElTable v-loading="loading" :data="items" class="audit-page__table" row-key="audit_ulid">
-      <ElTableColumn label="时间" width="170">
+      <ElTableColumn label="时间" width="160">
         <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
       </ElTableColumn>
-      <ElTableColumn label="级别" width="86" align="center">
+      <ElTableColumn label="级别" width="80" align="center">
         <template #default="{ row }">
           <ElTag :type="levelTagType(row.log_level_code)" effect="light" size="small">
             {{ levelLabel(row.log_level_code) }}
           </ElTag>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="操作人" width="130">
+      <ElTableColumn label="操作人" width="120">
         <template #default="{ row }">{{ row.user_name || '—' }}</template>
       </ElTableColumn>
-      <ElTableColumn label="动作" min-width="190">
+      <ElTableColumn label="动作" min-width="200">
         <template #default="{ row }">
           <span class="audit-page__action-text">{{ row.action_code }}</span>
+          <span class="nw-hint audit-page__path">{{ row.request_path }}</span>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="目标" min-width="170">
-        <template #default="{ row }">
-          <span v-if="row.target_type" class="audit-page__target">
-            {{ row.target_type }}
-            <span class="nw-hint">{{ row.target_ulid }}</span>
-          </span>
-          <span v-else class="nw-hint">—</span>
-        </template>
-      </ElTableColumn>
-      <ElTableColumn label="结果" min-width="200">
+      <ElTableColumn label="结果" min-width="180">
         <template #default="{ row }">
           <span :class="row.resp_code === 'SUCCESS' ? 'audit-page__ok' : 'audit-page__fail'">
             {{ row.resp_code || '—' }}
@@ -177,31 +232,23 @@
           <span class="nw-hint audit-page__resp">{{ row.resp_message }}</span>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="状态" width="80" align="center">
-        <template #default="{ row }">{{ row.http_status }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="耗时" width="90" align="right">
+      <ElTableColumn label="耗时" width="88" align="right">
         <template #default="{ row }">
           <span :class="row.latency_ms > 1000 ? 'audit-page__slow' : ''">{{ row.latency_ms }} ms</span>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="链路 ID" min-width="150">
+      <ElTableColumn label="链路" width="110" align="center">
         <template #default="{ row }">
-          <button
-            v-if="row.trace_id"
-            type="button"
-            class="audit-page__trace"
-            title="点击复制链路 ID"
-            @click="copyTrace(row.trace_id)"
-          >
-            {{ row.trace_id.slice(0, 12) }}…
-          </button>
+          <ElButton v-if="row.trace_id" size="small" text type="primary" @click="openTrace(row.trace_id)">
+            时间线
+          </ElButton>
           <span v-else class="nw-hint">—</span>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="操作" width="86" fixed="right">
+      <ElTableColumn label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <ElButton size="small" text type="primary" @click="openDetail(row)">详情</ElButton>
+          <ElButton v-if="row.trace_id" size="small" text @click="copyTrace(row.trace_id)">复制</ElButton>
         </template>
       </ElTableColumn>
       <template #empty>
@@ -220,12 +267,17 @@
       />
     </div>
 
-    <ElDrawer v-model="detailVisible" title="审计详情" size="560px" destroy-on-close>
+    <ElDrawer v-model="detailVisible" title="审计详情" size="620px" destroy-on-close>
       <div v-loading="detailLoading" class="audit-detail">
         <template v-if="detail">
           <ElDescriptions :column="1" border size="small">
             <ElDescriptionsItem label="审计 ID">{{ detail.audit_ulid }}</ElDescriptionsItem>
-            <ElDescriptionsItem label="链路 ID">{{ detail.trace_id || '—' }}</ElDescriptionsItem>
+            <ElDescriptionsItem label="链路 ID">
+              <span class="audit-detail__mono">{{ detail.trace_id || '—' }}</span>
+              <ElButton v-if="detail.trace_id" size="small" text type="primary" @click="openTrace(detail.trace_id)">
+                查看时间线
+              </ElButton>
+            </ElDescriptionsItem>
             <ElDescriptionsItem label="时间">{{ formatTime(detail.created_at) }}</ElDescriptionsItem>
             <ElDescriptionsItem label="操作人">
               {{ detail.user_name || '—' }}
@@ -256,25 +308,44 @@
         <ElEmpty v-else-if="!detailLoading" description="未读取到审计详情" />
       </div>
     </ElDrawer>
+
+    <AuditTraceDrawer
+      v-model:visible="traceVisible"
+      :trace-id="traceId"
+      @open-detail="openTraceDetail"
+    />
   </div>
 </template>
 
 <style lang="less" scoped>
   .audit-page {
+    &__retention {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+      background: var(--nw-surface-subtle);
+      border: 1px solid var(--nw-border-soft);
+      border-radius: var(--nw-radius-md);
+    }
+
     &__search {
-      width: 240px;
+      width: 250px;
     }
 
     &__action {
-      width: 190px;
+      width: 220px;
     }
 
     &__level {
-      width: 130px;
+      width: 120px;
     }
 
     &__date {
-      width: 250px;
+      width: 240px;
     }
 
     &__spacer {
@@ -282,18 +353,20 @@
     }
 
     &__table {
-      margin-top: 12px;
+      margin-top: 4px;
     }
 
     &__action-text {
-      font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+      font-family: var(--nw-font-mono);
       font-size: 12px;
     }
 
-    &__target {
-      display: inline-flex;
-      gap: 6px;
-      align-items: center;
+    &__path {
+      display: block;
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     &__resp {
@@ -318,18 +391,8 @@
       color: var(--nw-warning);
     }
 
-    &__trace {
-      padding: 0;
-      font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
-      font-size: 12px;
-      color: var(--el-color-primary);
-      cursor: pointer;
-      background: transparent;
-      border: 0;
-
-      &:hover {
-        text-decoration: underline;
-      }
+    &__btn-text {
+      margin-left: 4px;
     }
   }
 
@@ -350,11 +413,16 @@
       word-break: break-all;
     }
 
+    &__mono {
+      font-family: var(--nw-font-mono);
+      font-size: 12px;
+    }
+
     &__body {
       max-height: 420px;
       padding: 12px;
       overflow: auto;
-      font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+      font-family: var(--nw-font-mono);
       font-size: 12px;
       line-height: 1.6;
       white-space: pre-wrap;

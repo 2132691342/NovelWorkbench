@@ -268,3 +268,49 @@ export function fetchAdminJobStats(): Promise<NWJobStatsVo> {
 export function retryAdminJob(jobUlid: string): Promise<NWJobVo> {
   return post<NWJobVo>('/admin/job/retry', { job_ulid: jobUlid })
 }
+
+// ============================================================
+// 审计链路 / 留存（Manticore 全文表）
+// ============================================================
+
+/** 动作码筛选项（带条数，字段对齐后端 AuditActionOptionVO） */
+export interface NWAuditActionOptionVo {
+  action_code: string
+  total: number
+}
+
+/** 链路时间线（字段对齐后端 AuditTraceVO） */
+export interface NWAuditTraceVo {
+  trace_id: string
+  total: number
+  item_list: NWAuditVo[]
+}
+
+/** 审计留存策略（字段对齐后端 AuditRetentionVO） */
+export interface NWAuditRetentionVo {
+  retention_days: number
+  total_count: number
+  purged_count: number
+  last_purged_at: string
+  next_purge_at_text: string
+}
+
+/** 动作码筛选项 */
+export function fetchAuditActionOptions(): Promise<NWAuditActionOptionVo[]> {
+  return get<NWAuditActionOptionVo[]>('/admin/audit/action_options')
+}
+
+/** 按链路 ID 拉取完整调用时间线 */
+export function getAdminAuditTrace(traceId: string): Promise<NWAuditTraceVo> {
+  return get<NWAuditTraceVo>(`/admin/audit/trace/${encodeURIComponent(traceId)}`)
+}
+
+/** 审计留存策略现状 */
+export function fetchAuditRetention(): Promise<NWAuditRetentionVo> {
+  return get<NWAuditRetentionVo>('/admin/audit/retention')
+}
+
+/** 立即执行一次留存清理 */
+export function purgeAdminAudit(): Promise<NWAuditRetentionVo> {
+  return post<NWAuditRetentionVo>('/admin/audit/purge', {})
+}

@@ -45,6 +45,7 @@ type RouterDeps struct {
 	NotifyAPI     *NotificationAPI  // 站内通知模块处理器
 	LoginLogAPI   *LoginLogAPI      // 登录日志模块处理器
 	JobAPI        *JobAPI           // 异步任务中心处理器
+	WorkflowAPI   *WorkflowAPI      // 工作流模块处理器
 }
 
 // NewRouter 装配 HTTP 路由；中间件顺序：Recovery → 请求ID → 日志 → CORS（先处理预检）→ 方法白名单 → 鉴权 → 审计。
@@ -89,6 +90,7 @@ func NewRouter(mode string, deps RouterDeps) *gin.Engine {
 	registerSettingRoutes(v1, deps)
 	registerStatsRoutes(v1, deps.StatsAPI)
 	registerChatRoutes(v1, deps.ChatAPI)
+	registerWorkflowRoutes(v1, deps.WorkflowAPI)
 	registerModelRoutes(v1, deps)
 	registerMenuRoutes(v1, deps)
 	registerAdminRoutes(v1, deps)
@@ -166,6 +168,10 @@ func registerAdminRoutes(rg *gin.RouterGroup, deps RouterDeps) {
 	{
 		auditGroup.POST("/list", deps.AuditAPI.List)
 		auditGroup.GET("/detail/:AuditULID", deps.AuditAPI.Detail)
+		auditGroup.GET("/trace/:TraceID", deps.AuditAPI.Trace)
+		auditGroup.GET("/action_options", deps.AuditAPI.ActionOptions)
+		auditGroup.GET("/retention", deps.AuditAPI.Retention)
+		auditGroup.POST("/purge", deps.AuditAPI.Purge)
 	}
 	loginLogGroup := rg.Group("/admin/login_log")
 	loginLogGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermLoginLogRead))
@@ -219,6 +225,21 @@ func registerVolumeRoutes(rg *gin.RouterGroup, handler *VolumeAPI) {
 	rg.POST("/volume/create", handler.Create)
 	rg.POST("/volume/update", handler.Update)
 	rg.POST("/volume/delete", handler.Delete)
+}
+
+// registerWorkflowRoutes 注册工作流路由（模板与运行对登录用户开放，操作按运行归属校验）。
+func registerWorkflowRoutes(rg *gin.RouterGroup, handler *WorkflowAPI) {
+	rg.GET("/workflow/template/list", handler.TemplateList)
+	rg.POST("/workflow/run/create", handler.RunCreate)
+	rg.POST("/workflow/run/list", handler.RunList)
+	rg.GET("/workflow/run/detail/:RunULID", handler.RunDetail)
+	rg.GET("/workflow/run/stats", handler.RunStats)
+	rg.POST("/workflow/run/approve", handler.RunApprove)
+	rg.POST("/workflow/run/reject", handler.RunReject)
+	rg.POST("/workflow/run/pause", handler.RunPause)
+	rg.POST("/workflow/run/resume", handler.RunResume)
+	rg.POST("/workflow/run/cancel", handler.RunCancel)
+	rg.POST("/workflow/run/retry", handler.RunRetry)
 }
 
 // registerChapterRoutes 注册章节路由。

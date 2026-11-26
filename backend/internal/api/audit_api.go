@@ -1,4 +1,4 @@
-// 本文件实现审计日志模块的 HTTP 处理器：分页查询写操作审计记录。
+// 本文件实现审计日志模块的 HTTP 处理器：分页查询、详情、链路时间线、动作码汇总与留存清理。
 
 package api
 
@@ -35,7 +35,7 @@ func (a *AuditAPI) List(c *gin.Context) {
 	pkg.Ok(c, page)
 }
 
-// Detail 查询审计详情（GET /admin/audit/detail/{AuditULID}，含请求体原文）。
+// Detail 查询审计详情（GET /admin/audit/detail/{AuditULID}，含请求体与响应体原文）。
 func (a *AuditAPI) Detail(c *gin.Context) {
 	req := domain.AuditDetailREQ{AuditULID: c.Param("AuditULID")}
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -45,6 +45,46 @@ func (a *AuditAPI) Detail(c *gin.Context) {
 	vo, err := a.svc.Detail(c.Request.Context(), &req)
 	if err != nil {
 		respondErr(c, "admin.audit.detail", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}
+
+// Trace 拉取链路时间线（GET /admin/audit/trace/{TraceID}）。
+func (a *AuditAPI) Trace(c *gin.Context) {
+	req := domain.AuditTraceREQ{TraceID: c.Param("TraceID")}
+	if err := c.ShouldBindQuery(&req); err != nil {
+		respondErr(c, "admin.audit.trace", bindErr(err))
+		return
+	}
+	vo, err := a.svc.Trace(c.Request.Context(), &req)
+	if err != nil {
+		respondErr(c, "admin.audit.trace", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}
+
+// ActionOptions 返回动作码筛选项（GET /admin/audit/action_options）。
+func (a *AuditAPI) ActionOptions(c *gin.Context) {
+	vos, err := a.svc.ActionOptions(c.Request.Context())
+	if err != nil {
+		respondErr(c, "admin.audit.action_options", err)
+		return
+	}
+	pkg.Ok(c, vos)
+}
+
+// Retention 查询留存策略现状（GET /admin/audit/retention）。
+func (a *AuditAPI) Retention(c *gin.Context) {
+	pkg.Ok(c, a.svc.Retention(c.Request.Context()))
+}
+
+// Purge 立即执行一次留存清理（POST /admin/audit/purge）。
+func (a *AuditAPI) Purge(c *gin.Context) {
+	vo, err := a.svc.Purge(c.Request.Context())
+	if err != nil {
+		respondErr(c, "admin.audit.purge", err)
 		return
 	}
 	pkg.Ok(c, vo)

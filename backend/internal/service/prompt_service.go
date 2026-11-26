@@ -300,6 +300,16 @@ func (s *PromptService) Resolve(ctx context.Context, req *domain.PromptResolveRE
 	}, nil
 }
 
+// PromptTextOf 按编码取启用中的提示词正文（项目提示词优先于全局）；缺失返回业务错误。
+// 工作流步骤按编码引用提示词，与 /命令 共享同一份资产。
+func (s *PromptService) PromptTextOf(ctx context.Context, projectULID, promptCode string) (string, error) {
+	do, err := s.resolveByCode(ctx, projectULID, promptCode)
+	if err != nil {
+		return "", err
+	}
+	return do.PromptText, nil
+}
+
 // SystemPromptOf 解析对话应使用的身份提示词：显式编码优先，其次启用的全局默认身份提示词，
 // 全部缺失时回退到内置基础提示词（保证链路永远有身份约束）。
 func (s *PromptService) SystemPromptOf(ctx context.Context, projectULID, promptCode string) string {

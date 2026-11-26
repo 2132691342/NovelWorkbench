@@ -63,3 +63,23 @@ func fillActorColumn(db *gorm.DB, fieldName string, columnName string) {
 		db.Statement.SetColumn(fieldName, actorULID)
 	}
 }
+
+// requestIDContextKey 请求链路 ID 的私有上下文键（与 actor 同理，避免字符串键冲突）。
+type requestIDContextKey struct{}
+
+// WithRequestID 把链路 ID 放进 context，供后台任务（工作流等）复用同一链路。
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	if requestID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestIDContextKey{}, requestID)
+}
+
+// RequestIDFromContext 读取当前请求的链路 ID（非 HTTP 场景返回空串）。
+func RequestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	requestID, _ := ctx.Value(requestIDContextKey{}).(string)
+	return requestID
+}

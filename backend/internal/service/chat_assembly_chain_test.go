@@ -1,10 +1,12 @@
-// 对话装配链路的回归：斜杠命令解析 → 提示词作用域 → 上下文块装配 → 消息序列成型 → 工具声明与流式事件。
-// 这五步是同一次请求的上下游，合并为一条用例；每步失败都表现为「模型没按预期回答」，
+// AI 对话装配链路的回归：斜杠命令解析 → 提示词作用域 → 上下文块装配 → 消息序列成型 →
+// 工具声明与流式事件 → 历史全量注入与归档。
+// 这六步是同一次请求的上下游，合并为一条用例；每步失败都表现为「模型没按预期回答」，
 // 步骤用「步骤N」标注，失败时直接定位到断点。
 
 package service
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -319,5 +321,72 @@ func TestChatAssemblyChain(t *testing.T) {
 		if sink.eventList[i].Seq != int64(i+1) {
 			t.Fatalf("seq 应单调递增: %+v", sink.eventList)
 		}
+	}
+
+	// 步骤9：历史全量注入。条数一条不删，短正文原样返回。
+	messages := []domain.ChatMessageDO{
+		chatMessageOf("MSG_1", domain.ChatRoleUser, "一"),
+		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "二"),
+		chatMessageOf("MSG_3", domain.ChatRoleUser, "三"),
+		chatMessageOf("MSG_4", domain.ChatRoleAssistant, "四"),
+		chatMessageOf("MSG_5", domain.ChatRoleUser, "五"),
+	}
+	injected, condensedCount := condenseHistory(messages)
+	if len(injected) != len(messages) || injected[0].MessageULID != "MSG_1" ||
+		injected[4].MessageULID != "MSG_5" {
+		t.Fatalf("历史应全量旧到新注入: %v", injected)
+	}
+	if condensedCount != 0 || injected[0].ContentText != "一" {
+		t.Fatalf("短正文不应被改写: %+v", injected[0])
+	}
+
+	// 步骤10：单条超长只保留首尾，条数仍然一条不删，并标注省略字数。
+	longList := []domain.ChatMessageDO{
+		chatMessageOf("MSG_1", domain.ChatRoleUser, strings.Repeat("甲", 5000)),
+		chatMessageOf("MSG_2", domain.ChatRoleAssistant, "短回答"),
+	}
+	injected, condensedCount = condenseHistory(longList)
+	if len(injected) != 2 || condensedCount != 1 {
+		t.Fatalf("只应收敛超长的那一条: %d, %d", len(injected), condensedCount)
+	}
+	if !strings.HasPrefix(injected[0].ContentText, "甲甲") ||
+		!strings.Contains(injected[0].ContentText, "此处省略") ||
+		!strings.HasSuffix(injected[0].ContentText, "甲甲") {
+		t.Fatalf("超长正文应保留首尾并标注省略: %q", injected[0].ContentText)
+	}
+	if longList[0].ContentText != strings.Repeat("甲", 5000) {
+		t.Fatal("收敛不得改写原消息")
+	}
+
+	// 步骤11：归档全量。逐条带序号、角色标签、工具标签与时间，不丢条。
+	archiveList := make([]ai.ArchiveMessage, 0, 6)
+	for i := range 6 {
+		archiveList = append(archiveList, ai.ArchiveMessage{
+			Seq: i + 1, RoleCode: domain.ChatRoleUser, ContentText: "内容",
+			CreatedAt: "2026-11-25T10:00:00+08:00",
+		})
+	}
+	archiveList[1].RoleCode = domain.ChatRoleAssistant
+	archiveList[2].ToolCodeCSV = "chapter_check"
+	archiveText := ai.ArchiveHistory(archiveList, ai.ArchiveConfig{WithHeader: true})
+	if !strings.Contains(archiveText, "共 6 条") {
+		t.Fatalf("归档应标明总条数: %q", archiveText)
+	}
+	for i := range 6 {
+		if !strings.Contains(archiveText, strconv.Itoa(i+1)+". ") {
+			t.Fatalf("归档应逐条编号，第 %d 条缺失: %q", i+1, archiveText)
+		}
+	}
+	if !strings.Contains(archiveText, "作者") || !strings.Contains(archiveText, "AI") {
+		t.Fatalf("归档应带角色标签: %q", archiveText)
+	}
+	if !strings.Contains(archiveText, "［工具：chapter_check］") {
+		t.Fatalf("归档应保留工具标签: %q", archiveText)
+	}
+	if !strings.Contains(archiveText, "2026-11-25T10:00:00+08:00") {
+		t.Fatalf("归档应保留时间: %q", archiveText)
+	}
+	if ai.ArchiveHistory(nil, ai.ArchiveConfig{}) != "" {
+		t.Fatal("空历史应返回空串")
 	}
 }

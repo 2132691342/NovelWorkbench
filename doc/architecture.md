@@ -9,15 +9,19 @@
 | 顺序 | 文档 | 回答什么问题 |
 | --- | --- | --- |
 | 1 | 本文 | 系统是什么、怎么分层、一次请求怎么走、关键取舍在哪 |
-| 2 | [modules.md](modules.md) | 每个业务模块负责什么、数据落在哪、边界与代价 |
+| 2 | [modules.md](modules.md) | 创作业务模块：项目章节、角色设定、大纲连续性、知识库、对话、提示词、工作流、模型生态 |
+| 2.1 | [platform.md](platform.md) | 平台管理模块：认证、用户角色、菜单导航、审计、应用配置、通知、任务中心与模块依赖 |
 | 3 | [ai.md](ai.md) | 模型网关、提示词资产与注入、上下文装配、检索与流式协议 |
 | 4 | [prompts.md](prompts.md) | 提示词资产的组织方式与维护流程 |
-| 5 | [api.md](api.md) | 接口契约、包络、业务码与权限码 |
-| 6 | [database.md](database.md) | 表结构、非关系存储、事务与迁移 |
-| 7 | [frontend.md](frontend.md) | 前端工程结构、设计系统、状态与页面实现 |
-| 8 | [security.md](security.md) | 认证、授权、密钥、审计与威胁对策 |
-| 9 | [deploy.md](deploy.md) | 容器、配置、环境变量与运维 |
-| 10 | [test.md](test.md) | 测试策略、保留的用例与集成验证 |
+| 5 | [workflow.md](workflow.md) | 自动化工作流：模板、步骤类型、审核门禁与失败恢复 |
+| 6 | [api.md](api.md) | 接口契约：包络、业务码、中间件链、权限码、特殊端点、分页 |
+| 6.1 | [endpoints.md](endpoints.md) | 按模块分组的完整接口清单 |
+| 7 | [database.md](database.md) | 数据模型：存储分工、命名约定、表结构与枚举 |
+| 7.1 | [storage.md](storage.md) | 存储运行时：非关系存储、启动播种、事务边界、迁移与备份 |
+| 8 | [frontend.md](frontend.md) | 前端工程结构、设计系统、状态与页面实现 |
+| 9 | [security.md](security.md) | 认证、授权、密钥、审计与威胁对策 |
+| 10 | [deploy.md](deploy.md) | 容器、配置、环境变量与运维 |
+| 11 | [test.md](test.md) | 测试策略、保留的用例与集成验证 |
 
 代码约定贯穿全项目：ID 为带业务前缀的 ULID，业务响应码为字符串，字段带明确后缀且有注释，源文件控制在 500 行内。详见本文第 4 节与第 11 节。
 
@@ -61,11 +65,12 @@ flowchart LR
 | 1 | 认证与会话 | `users`、`login_logs` | `api/auth_api.go`、`service/auth_service.go` |
 | 2 | 用户与角色权限 | `users`、`roles`、`user_roles` | `service/user_admin_service.go`、`service/role_service.go` |
 | 3 | 菜单与导航 | `menus` | `service/menu_service.go`、`service/menu_permission.go` |
-| 4 | 审计与登录日志 | `audit_logs`、`login_logs` | `pkg/access_middleware.go`、`service/audit_service.go` |
+| 4 | 审计与登录日志 | Manticore `nw_audit`（审计）、`login_logs` | `pkg/access_middleware.go`、`service/audit_service.go`、`repo/audit_repo.go` |
 | 5 | 应用配置 | `app_settings` | `service/setting_service.go` |
 | 6 | 站内通知 | `notifications` | `service/notification_service.go` |
 | 7 | 任务中心 | `jobs` | `service/job_service.go`、`service/knowledge_worker.go` |
 | 8 | 项目 / 卷 / 章节 | `projects`、`volumes`、`chapters`、`chapter_snapshots`、`word_count_stats` | `service/project_service.go`、`service/volume_service.go`、`service/chapter_service.go` |
+| 8.1 | 自动化工作流 | `workflow_templates`、`workflow_runs`、`workflow_steps` | `service/workflow_*.go`、`api/workflow_api.go`（见 [workflow.md](workflow.md)） |
 | 9 | AI 开书 | 同模块 8（+ `outline_nodes`） | `service/bootstrap_service.go`、`ai/bootstrap.go` |
 | 10 | 角色卡与关系图 | `characters`、`character_relations` | `service/character_service.go` |
 | 11 | 世界观设定与创作笔记 | `lore_settings` | `service/lore_service.go` |
@@ -112,18 +117,18 @@ backend/
 ├── cmd/server        装配启动、迁移播种、路由、优雅关闭
 ├── configs/          配置模板（凭据留空，环境变量注入）
 ├── internal/
-    ├── api           HTTP 处理器与路由注册（26 个文件）
-    ├── service       业务规则、事务边界、上下文装配（37 个文件）
-    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，27 个文件）
-    ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（23 个文件）
-    ├── ai            模型网关、提示词装配、内置提示词资产、用量契约（21 个文件）
+    ├── api           HTTP 处理器与路由注册（27 个文件）
+    ├── service       业务规则、事务边界、上下文装配（44 个文件）
+    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，28 个文件）
+    ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（24 个文件）
+    ├── ai            模型网关、提示词装配、内置提示词资产、用量契约（11 个文件）
     ├── infra         配置加载、连接构造、启动校验
     └── pkg           ULID、包络、错误、JWT、中间件、密钥封存、审计字段回调与时间工具
 ```
 
 `pkg` 各文件：`ulid.go`（带业务前缀的 ULID 生成）、`errors.go`（业务码与 HTTP 状态映射）、`logger.go`（Zap 全局日志）、`time.go`（RFC3339 格式化）、`text.go`（字数统计与文本工具）、`actor.go`（GORM 审计字段回调）、`jwt.go`（签名与校验，含密码版本声明）、`secret.go`（密钥封存）、`access_middleware.go`（鉴权、权限、审计）、`idempotency.go`（写请求幂等）、`middleware.go`（请求 ID、CORS、方法白名单）、`response.go`（统一包络）。
 
-`ai` 目录的 `domain_<域>.go` 共 12 个文件，一个流程域一个文件，与 [prompts.md](prompts.md) 的域矩阵一一对应。
+`ai` 目录的 `domain_<域>.go` 共 3 个文件（`draft` 写正文 / `revise` 修问题 / `plan` 做规划），一个流程域一个文件，与 [prompts.md](prompts.md) 的域矩阵一一对应。
 
 | 约束 | 原因 |
 | --- | --- |
@@ -158,7 +163,7 @@ backend/
 | MethodWhitelist | 仅放行 GET / POST |
 | Auth | 解析 Bearer 令牌 → 查黑名单 → 校验用户状态与密码版本 → 注入 `user_ulid` |
 | Idempotency | 写动作带 `Idempotency-Key` 时只执行一次并缓存 2xx 首响应；查询类 POST 直接放行 |
-| Audit | POST 且不在跳过名单时落审计（请求体 + 响应体，失败只告警） |
+| Audit | POST 且不在跳过名单时落审计到 Manticore（请求体 + 响应体，失败只告警）；工作流步骤另写一条内部审计 |
 | RequirePerm | 按权限码收口管理接口，缺失返回 `ERR_FORBIDDEN` |
 
 白名单：免鉴权仅 `/api/v1/auth/login`；免审计为登录、登出与 `/api/v1/chat/send`（会话正文不入审计）；免幂等同为登录与登出（重放登录会把旧令牌再发一次）。`/health`、`/ready` 挂在根引擎，不经过鉴权、幂等与审计。
@@ -196,10 +201,10 @@ backend/
 `backend/cmd/server/main.go` 的顺序：
 
 1. 初始化 Zap 与配置（`infra.LoadConfig`，启动期校验关键项）。
-2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 33 张表（失败即退出）→ 清理已下线的列（会话摘要列）。
+2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 36 张表（失败即退出）→ 清理已下线的列（会话摘要列）。
 3. 连接 Redis / RabbitMQ / MinIO / Manticore；失败只告警并降级。
 4. 构造仓储 → 服务 → 中间件 → 路由。
-5. 播种：内置提示词（24 份指令 + 12 份身份，按内容指纹升级）、6 个内置工具、默认配置、内置角色、内置菜单 28 行（失败即退出）；用户表为空时创建引导管理员。
+5. 播种：内置提示词（3 份身份 + 7 份指令，按内容指纹升级）、6 个内置工具、3 个内置工作流模板、默认配置、内置角色、内置菜单 29 行（失败即退出）；用户表为空时创建引导管理员。
 6. 可选播种出厂模型供应商（配置了网关地址与模型名且供应商表为空时）。
 7. 启动知识库索引 worker（RabbitMQ 消费）。
 8. 监听端口；收到 SIGINT/SIGTERM 后优雅关闭 HTTP、worker、连接池。

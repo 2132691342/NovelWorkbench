@@ -1,8 +1,9 @@
 <!-- 输入区弹层：斜杠命令（本地动作 + 指令提示词）与 @ 引用选择器，同一定位层互斥展示。 -->
 <script setup lang="ts">
+  import { ref, watch } from 'vue'
   import type { ChatCommandOption, ChatRefItem, ChatRefTabCode } from './types'
 
-  defineProps<{
+  const props = defineProps<{
     commandVisible: boolean
     commandOptionList: ChatCommandOption[]
     commandActiveIndex: number
@@ -21,6 +22,43 @@
     'select-ref': [item: ChatRefItem]
     'hover-ref': [index: number]
   }>()
+
+  const commandPopupRef = ref<HTMLDivElement | null>(null)
+  const refPopupRef = ref<HTMLDivElement | null>(null)
+
+  /**
+   * 键盘移动选中项时把该项滚进可视区：弹层最高 300px，候选多时键盘选中的项会落到视野外，
+   * 用户只能靠鼠标滚轮找，这正是「上下键选不动」的根因。
+   */
+  const scrollActiveIntoView = (host: HTMLDivElement | null, activeIndex: number) => {
+    if (!host) return
+    const itemList = host.querySelectorAll<HTMLElement>(".composer__item")
+    const target = itemList[activeIndex]
+    if (!target) return
+    const hostRect = host.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    if (targetRect.top < hostRect.top) {
+      host.scrollTop -= hostRect.top - targetRect.top + 6
+    } else if (targetRect.bottom > hostRect.bottom) {
+      host.scrollTop += targetRect.bottom - hostRect.bottom + 6
+    }
+  }
+
+  watch(
+    () => [props.commandVisible, props.commandActiveIndex] as const,
+    () => {
+      if (props.commandVisible) scrollActiveIntoView(commandPopupRef.value, props.commandActiveIndex)
+    },
+    { flush: "post" }
+  )
+
+  watch(
+    () => [props.refPickerVisible, props.refActiveIndex, props.refPickerTab] as const,
+    () => {
+      if (props.refPickerVisible) scrollActiveIntoView(refPopupRef.value, props.refActiveIndex)
+    },
+    { flush: "post" }
+  )
 
   /** 命令来源标签：让用户一眼看出哪条会耗模型、哪条只是本地开关 */
   const sourceLabel = (option: ChatCommandOption): string =>
@@ -50,7 +88,7 @@
 </script>
 
 <template>
-  <div v-if="commandVisible" class="composer__popup">
+  <div v-if="commandVisible" ref="commandPopupRef" class="composer__popup">
     <p class="composer__popup-title">↑↓ 选择，Enter/Tab 确认，Esc 关闭</p>
     <template v-for="(option, index) in commandOptionList" :key="option.source_code + option.code">
       <p v-if="groupTitle(index, commandOptionList)" class="composer__group">
@@ -78,7 +116,7 @@
     <p v-if="commandOptionList.length === 0" class="composer__empty">没有匹配的命令或提示词</p>
   </div>
 
-  <div v-if="refPickerVisible" class="composer__popup">
+  <div v-if="refPickerVisible" ref="refPopupRef" class="composer__popup">
     <div class="composer__tabs">
       <button
         v-for="tab in refTabs"

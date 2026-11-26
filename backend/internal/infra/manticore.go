@@ -4,6 +4,7 @@ package infra
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -55,4 +56,58 @@ func (m *ManticoreClient) Exec(ctx context.Context, sql string) ([]byte, error) 
 		return nil, fmt.Errorf("manticore status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return body, nil
+}
+
+// ManticoreResultSet 一次查询的结果集（raw 模式返回数组，多语句时逐条对应）。
+type ManticoreResultSet struct {
+	Rows  []map[string]any `json:"data"`  // 数据行
+	Total int              `json:"total"` // 返回行数
+	Error string           `json:"error"` // 语句级错误
+}
+
+// Query 执行查询语句并解析为结构化行；语句级错误与传输错误都返回 error。
+func (m *ManticoreClient) Query(ctx context.Context, sql string) ([]map[string]any, error) {
+	body, err := m.Exec(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManticoreRows(body)
+}
+
+// ExecWrite 执行写入类语句（INSERT/UPDATE/DELETE/DDL），只关心是否成功。
+func (m *ManticoreClient) ExecWrite(ctx context.Context, sql string) error {
+	body, err := m.Exec(ctx, sql)
+	if err != nil {
+		return err
+	}
+	_, err = ParseManticoreRows(body)
+	return err
+}
+
+// ParseManticoreRows 解析 raw 模式响应：数组即多结果集，语句级 error 视为失败。
+func ParseManticoreRows(body []byte) ([]map[string]any, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return nil, nil
+	}
+	var resultSets []ManticoreResultSet
+	if err := json.Unmarshal([]byte(trimmed), &resultSets); err != nil {
+		// 写入类语句成功时可能返回单个对象而非数组，这里容忍并校验 error 字段。
+		var single ManticoreResultSet
+		if singleErr := json.Unmarshal([]byte(trimmed), &single); singleErr != nil {
+			return nil, fmt.Errorf("parse manticore response: %w", err)
+		}
+		if single.Error != "" {
+			return nil, fmt.Errorf("manticore error: %s", single.Error)
+		}
+		return single.Rows, nil
+	}
+	rows := make([]map[string]any, 0, 16)
+	for i := range resultSets {
+		if resultSets[i].Error != "" {
+			return nil, fmt.Errorf("manticore error: %s", resultSets[i].Error)
+		}
+		rows = append(rows, resultSets[i].Rows...)
+	}
+	return rows, nil
 }

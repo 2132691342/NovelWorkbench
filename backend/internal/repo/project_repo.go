@@ -180,3 +180,15 @@ func (r *ProjectRepo) DeleteWordStatsByProject(ctx context.Context, projectULID 
 	}
 	return nil
 }
+
+// ListByULIDList 批量按 ULID 查询项目（工作流列表回填项目名，防 N+1）。
+func (r *ProjectRepo) ListByULIDList(ctx context.Context, projectULIDList []string) ([]domain.ProjectDO, error) {
+	if len(projectULIDList) == 0 {
+		return []domain.ProjectDO{}, nil
+	}
+	var dos []domain.ProjectDO
+	if err := r.db.WithContext(ctx).Where("project_ulid IN ?", projectULIDList).Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list projects by ulid list: %w", err)
+	}
+	return dos, nil
+}

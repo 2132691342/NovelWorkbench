@@ -45,8 +45,10 @@ func testMenus() []domain.MenuDO {
 	return menus
 }
 
-// TestPermissionChain 覆盖角色权限从编辑到下线的完整变更链路。
-func TestPermissionChain(t *testing.T) {
+// TestAccessControlChain 覆盖「权限可勾选、可保存、可回读、可下架、菜单可导航」这条闭环。
+// 环节1~3 是角色权限的变更链路（编辑 → 回读 → 下架），环节4~7 是菜单与导航的下发链路；
+// 两者串在同一次管理操作里，任一环断裂都会表现为「点得进却用不了」或「面板被锁死」。
+func TestAccessControlChain(t *testing.T) {
 	known := knownPermSet("prompt:manage", "tool:manage", "system:audit:read")
 
 	// 环节1：权限码规范化。去重保序、空白剔除、非管理员禁用通配、未登记编码报错。
@@ -97,11 +99,8 @@ func TestPermissionChain(t *testing.T) {
 	if pruned := marshalPermCodes(prunedPermCodeList(adminRole, domain.PermAdminAll)); pruned != `["*"]` {
 		t.Fatalf("通配权限码本身不允许被剔除，实际 %s", pruned)
 	}
-}
 
-// TestNavigationChain 覆盖一次导航装配请求的完整链路。
-func TestNavigationChain(t *testing.T) {
-	// 环节1：种子可注册性。菜单即路由，种子里的组件路径必须在前端有对应页面文件，
+	// 环节4：种子可注册性。菜单即路由，种子里的组件路径必须在前端有对应页面文件，
 	// 否则点击落到 404；编码与路由路径必须唯一，否则前端生成重复路由名。
 	srcRoot := filepath.Join("..", "..", "..", "frontend", "src")
 	hasFrontend := false
@@ -137,7 +136,7 @@ func TestNavigationChain(t *testing.T) {
 		t.Fatal("缺少个人中心隐藏菜单登记")
 	}
 
-	// 环节2：可下发过滤。动作节点与未授权权限码不下发；隐藏页保留（visible_flag=false），
+	// 环节5：可下发过滤。动作节点与未授权权限码不下发；隐藏页保留（visible_flag=false），
 	// 让前端仍能注册路由，旧链接与深链不因入口合并而失效。
 	visible := filterVisibleMenus(testMenus(), []string{"system:user:manage"})
 	if len(visible) != 4 {
@@ -156,7 +155,7 @@ func TestNavigationChain(t *testing.T) {
 		t.Fatalf("通配权限下可下发菜单数 = %d, want 5", len(got))
 	}
 
-	// 环节3：菜单树装配。父子按 ULID 关联，动作节点不进树，权限码与隐藏标记随节点保留。
+	// 环节6：菜单树装配。父子按 ULID 关联，动作节点不进树，权限码与隐藏标记随节点保留。
 	tree := buildMenuTree(filterVisibleMenus(testMenus(), []string{domain.PermAdminAll}), "")
 	if len(tree) != 4 {
 		t.Fatalf("根节点数 = %d, want 4", len(tree))
@@ -178,7 +177,7 @@ func TestNavigationChain(t *testing.T) {
 		t.Fatalf("分组下级装配错误: %+v", group)
 	}
 
-	// 环节4：权限目录。通配独立成组、动作与菜单权限说明区分、同权限码只登记一次。
+	// 环节7：权限目录。通配独立成组、动作与菜单权限说明区分、同权限码只登记一次。
 	catalog := buildPermCatalog(testMenus())
 	if len(catalog) != 3 || catalog[0].GroupCode != "all" || catalog[0].GroupName != "全部权限" {
 		t.Fatalf("权限分组数或通配分组错误: %+v", catalog)

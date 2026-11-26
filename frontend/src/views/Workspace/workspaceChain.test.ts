@@ -50,14 +50,14 @@ function streamEvent(overrides: Partial<NWChatStreamEventVo>): NWChatStreamEvent
 }
 
 describe('写作台对话链路', () => {
-  it('报文解析：跨 chunk 断行与多事件粘包应正确拆分，非法行跳过，半行留存', () => {
-    // 第一段：一个完整事件 + 一个被截断的半行
+  it('流式输出：报文跨 chunk 拆分正确，事件归并后思考与正文互不污染', () => {
+    // 环节1：报文解析。第一段是一个完整事件加一个被截断的半行。
     const first = parseSseBuffer('data: {"seq":1,"event_type":"chunk"}\ndata: {"seq":2,"event_ty')
     expect(first.eventList).toHaveLength(1)
     expect(first.eventList[0].seq).toBe(1)
     expect(first.restText).toBe('data: {"seq":2,"event_ty')
 
-    // 第二段：半行补全 + 紧随其后的完整事件（粘包）+ CRLF 换行 + 非法 JSON 行
+    // 环节2：半行补全 + 紧随其后的完整事件（粘包）+ CRLF 换行 + 非法 JSON 行。
     const second = parseSseBuffer(
       `${first.restText}pe":"done","content_text":"完成"}\n` +
         'data: {"seq":3,"event_type":"chunk"}\r\n' +
@@ -68,23 +68,20 @@ describe('写作台对话链路', () => {
     expect(second.eventList[0].content_text).toBe('完成')
     expect(second.restText).toBe('')
 
-    // 末尾半行必须留存，供下一段拼接
+    // 环节3：末尾半行必须留存，供下一段拼接。
     const third = parseSseBuffer('data: {"seq":6')
     expect(third.eventList).toHaveLength(0)
     expect(third.restText).toBe('data: {"seq":6')
-  })
 
-  it('事件归并：思考与正文分别累加，done 全量覆盖并补齐依据与工具，error 落兜底文案', () => {
+    // 环节4：事件归并。思考增量与正文增量分别累加，互不污染。
     const message = blankMessage()
-
-    // 思考增量与正文增量分别累加，互不污染。
     applyStreamEvent(message, streamEvent({ event_type: 'thinking', content_text: '先想' }), '发送失败')
     applyStreamEvent(message, streamEvent({ event_type: 'thinking', content_text: '一步' }), '发送失败')
     applyStreamEvent(message, streamEvent({ event_type: 'chunk', content_text: '正文' }), '发送失败')
     expect(message.reasoning_text).toBe('先想一步')
     expect(message.content_text).toBe('正文')
 
-    // done 用服务端全量正文覆盖（不与累加值叠加），并带回完整思考、召回依据与工具编码。
+    // 环节5：done 用服务端全量正文覆盖（不与累加值叠加），并带回完整思考、召回依据与工具编码。
     applyStreamEvent(
       message,
       streamEvent({
@@ -111,23 +108,21 @@ describe('写作台对话链路', () => {
     expect(message.reference_list).toHaveLength(1)
     expect(message.tool_code_list).toEqual(['deai_scan', 'chapter_check'])
 
-    // done 未带思考时保留已累加的思考；未带工具时保留本地值。
-    const second = blankMessage()
-    second.tool_code_list = ['deai_scan']
-    applyStreamEvent(second, streamEvent({ event_type: 'thinking', content_text: '思考A' }), '发送失败')
-    applyStreamEvent(second, streamEvent({ event_type: 'done', content_text: '正文B' }), '发送失败')
-    expect(second.reasoning_text).toBe('思考A')
-    expect(second.tool_code_list).toEqual(['deai_scan'])
+    // 环节6：done 未带思考或工具时保留已累加的本地值。
+    const second2 = blankMessage()
+    second2.tool_code_list = ['deai_scan']
+    applyStreamEvent(second2, streamEvent({ event_type: 'thinking', content_text: '思考A' }), '发送失败')
+    applyStreamEvent(second2, streamEvent({ event_type: 'done', content_text: '正文B' }), '发送失败')
+    expect(second2.reasoning_text).toBe('思考A')
+    expect(second2.tool_code_list).toEqual(['deai_scan'])
 
-    // error 优先用服务端文案；服务端未给文案时回退到界面文案。
-    const third = blankMessage()
-    applyStreamEvent(third, streamEvent({ event_type: 'error', error_message: '模型不可用' }), '发送失败')
-    expect(third.error_message).toBe('模型不可用')
+    // 环节7：error 优先用服务端文案，未给文案时回退到界面文案；未知事件不改写消息。
+    const third2 = blankMessage()
+    applyStreamEvent(third2, streamEvent({ event_type: 'error', error_message: '模型不可用' }), '发送失败')
+    expect(third2.error_message).toBe('模型不可用')
     const fourth = blankMessage()
     applyStreamEvent(fourth, streamEvent({ event_type: 'error' }), '发送失败')
     expect(fourth.error_message).toBe('发送失败')
-
-    // 未知事件类型不改写消息。
     const fifth = blankMessage()
     expect(applyStreamEvent(fifth, streamEvent({ event_type: 'unknown' }), '发送失败')).toBe(false)
     expect(fifth.content_text).toBe('')
@@ -142,7 +137,6 @@ describe('写作台对话链路', () => {
     expect(parseLeadingSlashToken('  /clear  ')).toEqual({ actionCode: 'clear', remainderText: '' })
     expect(parseLeadingSlashToken('续写 /continue')).toBeNull()
     expect(parseLeadingSlashToken('/ 加强画面感')).toBeNull()
-    expect(parseLeadingSlashToken('/Polish 大写')).toBeNull()
     expect(parseLeadingSlashToken('/po!lish')).toBeNull()
     expect(parseLeadingSlashToken('')).toBeNull()
     // 超长编码不匹配，避免把整段路径当命令

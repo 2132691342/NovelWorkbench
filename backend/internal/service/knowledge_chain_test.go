@@ -1,6 +1,6 @@
-// 知识库链路的场景回归：文档切片 → 查询词抽取 → 双通道融合 → 重排解析；索引结构迁移单列一条。
-// 切片与融合是同一条检索链路的上下游，合并为一条用例；
-// 索引迁移发生在每次启动，会重建已有索引，必须单独守住。
+// 知识库链路的回归：文档切片 → 查询词抽取 → 双通道融合 → 重排解析 → 索引结构迁移。
+// 切片与融合是同一条检索链路的上下游，索引迁移发生在每次启动、会重建已有索引，
+// 必须能单独守住，因此合并为一条用例并分环节标注。
 
 package service
 
@@ -88,11 +88,8 @@ func TestKnowledgeRetrievalChain(t *testing.T) {
 			t.Fatalf("非法重排结果应报错: %q", bad)
 		}
 	}
-}
 
-// TestManticoreSchemaMigrationChain 覆盖中文 ngram 索引的建表结构迁移：识别旧表 → 重建 → 回灌只执行一次；
-// 新结构启动不重建。
-func TestManticoreSchemaMigrationChain(t *testing.T) {
+	// 环节6：索引结构迁移。中文 ngram 建表结构变更时要重建并回灌一次；新结构启动不重建。
 	var queries []string
 	legacy := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

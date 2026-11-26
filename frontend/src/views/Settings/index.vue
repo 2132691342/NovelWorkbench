@@ -13,7 +13,8 @@
   /** 分组：按配置键前缀归类，避免设置项堆成一列 */
   const groupMeta: Array<{ code: string; name: string; keys: string[] }> = [
     { code: 'knowledge', name: '知识库检索', keys: ['rag_top_k'] },
-    { code: 'writing', name: '写作目标', keys: ['daily_word_goal'] }
+    { code: 'writing', name: '写作目标', keys: ['daily_word_goal'] },
+    { code: 'audit', name: '审计留存', keys: ['audit_retention_days'] }
   ]
 
   const isBooleanValue = (value: string) => value === 'true' || value === 'false'

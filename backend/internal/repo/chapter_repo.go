@@ -176,3 +176,15 @@ func (r *ChapterRepo) DeleteSnapshotsByProject(ctx context.Context, projectULID 
 	}
 	return nil
 }
+
+// ListByULIDList 批量按 ULID 查询章节（工作流列表回填章节名，防 N+1）。
+func (r *ChapterRepo) ListByULIDList(ctx context.Context, chapterULIDList []string) ([]domain.ChapterDO, error) {
+	if len(chapterULIDList) == 0 {
+		return []domain.ChapterDO{}, nil
+	}
+	var dos []domain.ChapterDO
+	if err := r.db.WithContext(ctx).Where("chapter_ulid IN ?", chapterULIDList).Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list chapters by ulid list: %w", err)
+	}
+	return dos, nil
+}

@@ -31,6 +31,7 @@ var menuSeedList = []menuSeed{
 
 	{MenuCode: "group_project", MenuName: "创作", MenuTypeCode: domain.MenuTypeGroup, ScopeCode: domain.MenuScopeGlobal, IconCode: "book", SortOrder: 20},
 	{MenuCode: "workspace", ParentCode: "group_project", MenuName: "写作台", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/workspace/:project_ulid", ComponentPath: "views/Workspace/index", IconCode: "edit", SortOrder: 10},
+	{MenuCode: "workflow", ParentCode: "group_project", MenuName: "自动化工作流", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/workflow/:project_ulid", ComponentPath: "views/Workflow/index", IconCode: "workflow", SortOrder: 15},
 	{MenuCode: "outline", ParentCode: "group_project", MenuName: "创作规划", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/outline/:project_ulid", ComponentPath: "views/Outline/index", IconCode: "tree", SortOrder: 20},
 	{MenuCode: "continuity", ParentCode: "group_project", MenuName: "连续性看板", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/continuity/:project_ulid", ComponentPath: "views/Continuity/index", IconCode: "shield", SortOrder: 30},
 	{MenuCode: "material", ParentCode: "group_project", MenuName: "素材库", MenuTypeCode: domain.MenuTypePage, ScopeCode: domain.MenuScopeProject, RoutePath: "/material/:project_ulid", ComponentPath: "views/Material/index", IconCode: "library", SortOrder: 40},

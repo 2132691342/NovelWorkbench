@@ -15,6 +15,7 @@ import (
 var settingDefaultList = []domain.AppSettingDO{
 	{SettingKey: "rag_top_k", SettingValue: "6", SettingDesc: "知识库检索默认召回条数（1-20）"},
 	{SettingKey: "daily_word_goal", SettingValue: "2000", SettingDesc: "每日写作目标字数（100-100000）"},
+	{SettingKey: "audit_retention_days", SettingValue: "30", SettingDesc: "审计日志留存天数（1-365，每日 03:00 自动清理）"},
 }
 
 // settingKeyRetiredChatHistory 已下线的配置键：历史改为全量注入后不再有注入条数概念。
@@ -22,8 +23,9 @@ const settingKeyRetiredChatHistory = "chat_history_count"
 
 // settingRangeMap 配置值合法区间（最小、最大）。
 var settingRangeMap = map[string][2]int{
-	"rag_top_k":       {1, 20},
-	"daily_word_goal": {100, 100000},
+	"rag_top_k":             {1, 20},
+	"daily_word_goal":       {100, 100000},
+	"audit_retention_days":  {1, 365},
 }
 
 // SettingService 应用配置业务：默认值播种、查询与更新（值须为正整数）。

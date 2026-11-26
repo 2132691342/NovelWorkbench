@@ -30,7 +30,7 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | `ai.ProviderSpec` | 同上 | 单次调用所需供应商快照；`APIKey` 明文只存在于内存 |
 | `ai.UsageRecorder` | `backend/internal/ai/usage.go` | 用量上报接口，由 `service.ModelUsageService` 实现 |
 | `ai.AssembleContext` / `ai.RenderPrompt` / `ai.SystemPrompt` / `ai.TemplatePlaceholders` | `backend/internal/ai/prompt.go` | 上下文装配、模板渲染与校验、系统提示词 |
-| `ai.BuiltinDomains` / `ai.BuiltinCommandCodeSet` / `ai.BuiltinSystemCodeSet` | `backend/internal/ai/prompt_assets.go` + `domain_<域>.go` | 12 个流程域的身份提示词与 24 份指令提示词、下线集合与内容指纹，与持久化结构解耦 |
+| `ai.BuiltinDomains` / `ai.BuiltinCommandCodeSet` / `ai.BuiltinSystemCodeSet` | `backend/internal/ai/prompt_assets.go` + `domain_<域>.go` | 3 个流程域的身份提示词与 7 份任务提示词、下线集合与内容指纹，与持久化结构解耦 |
 | `ai.ToolSpec` / `ai.ToolInfos` / `ai.DecodeToolArguments` | `backend/internal/ai/toolcall.go` | 工具声明构造、参数解码 |
 
 `ProviderSpec` 字段：`ProviderULID`、`ProviderName`、`ProtocolCode`、`BaseURL`、`APIKey`、`ChatModelName`、`Temperature`、`MaxTokens`、`Timeout`。密钥由 `ModelProviderService.specOf` 解密后传入，`ai` 包不接触存储。
@@ -105,9 +105,11 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 分工约定：身份写「你是谁、什么绝不写」，指令写「这一次做什么、按什么格式交付」。二者同时下发，互不覆盖。
 
-内置资产按「流程域 = 1 份身份 + 2 份指令」组织，完整矩阵见 [prompts.md](prompts.md)。
+内置资产按「流程域 = 1 份身份 + 1-3 份指令」组织，完整矩阵见 [prompts.md](prompts.md)。
 
-12 份身份提示词（`novelist` / `architect` / `stylist` / `deai_editor` / `editor` / `continuity` / `final_editor` / `serial_editor` / `pitch_analyst` / `platform_operator` / `short_story_author` / `screenwriter`）与 24 份指令提示词统一落在一张 `prompts` 表上，由 `PromptService.SeedDefaults` 幂等播种并做指纹升级，管理端在「提示词库」页维护；完整矩阵见 [prompts.md](prompts.md)。
+3 份身份提示词（`novelist` 连载作者 / `reviser` 修订编辑 / `planner` 故事策划）与 7 份指令提示词
+（`continue` / `chapter` / `polish` / `deai` / `outline` / `review` / `summary`）统一落在一张 `prompts` 表上，
+由 `PromptService.SeedDefaults` 幂等播种并做指纹升级，管理端在「提示词库」页维护；完整矩阵见 [prompts.md](prompts.md)。
 
 默认身份是 `novelist`（长篇连载作者），未指定身份提示词的对话都用它。
 
@@ -271,12 +273,12 @@ streamChat 循环（≤ chatToolRoundLimit = 4）
 - `prompt_text`：提示词正文，可含 `{{占位符}}`。
 - `asset_hash_text` + `customized_flag`：出厂指纹与作者改动标记。
 
-技能与提示词本是同一种东西（一段可编辑的提示词），拆成两张表只会让「哪一段真的生效」变得难查，
-因此统一落在一张 `prompts` 表上，用 `prompt_kind_code` 区分身份与指令。
+提示词只有一种资产，用 `prompt_kind_code` 区分身份与指令，落在一张 `prompts` 表上：
+分成两张表只会让「哪一段真的生效」变得难查，因此统一存储、按种类区分。
 
-### 5.2 内置提示词（12 份身份 + 24 份指令）
+### 5.2 内置提示词（3 份身份 + 7 份指令）
 
-由 `ai.BuiltinDomains()` 汇总 12 个流程域（`backend/internal/ai/domain_<域>.go`，一个域一个文件），
+由 `ai.BuiltinDomains()` 汇总 3 个流程域（`backend/internal/ai/domain_draft.go` / `domain_revise.go` / `domain_plan.go`），
 `PromptService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种并做指纹升级。
 完整编码矩阵见 [prompts.md](prompts.md)，此处只说明判据与升级机制。
 
@@ -284,7 +286,7 @@ streamChat 循环（≤ chatToolRoundLimit = 4）
 
 **指纹升级**：内置提示词属于产品资产，但允许作者改。每行存 `asset_hash_text`（出厂内容指纹）与 `customized_flag`。
 启动时按「不存在→插入 / 已自改→不动 / 指纹一致→不动 / 其余→覆盖并写新指纹」处理，
-所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/ai_chain_test.go` 断言域形状、编码唯一与占位符合法。
+所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/asset_chain_test.go` 断言域形状、编码唯一与占位符合法。
 
 ### 5.3 解析与覆盖
 

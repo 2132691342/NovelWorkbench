@@ -78,6 +78,7 @@ type MinIOConfig struct {
 type ManticoreConfig struct {
 	BaseURL     string `yaml:"base_url" mapstructure:"base_url"`         // HTTP JSON API 地址
 	TableChunks string `yaml:"table_chunks" mapstructure:"table_chunks"` // 切片全文表名
+	TableAudit  string `yaml:"table_audit" mapstructure:"table_audit"`   // 审计全文表名
 }
 
 // AIConfig 模型网关配置（仅作为供应商表的出厂默认：为空时播种一条默认供应商）。
@@ -148,6 +149,9 @@ func (c *Config) validate() error {
 	}
 	if c.App.RAGTopK <= 0 {
 		c.App.RAGTopK = 6 // 默认召回 6 条
+	}
+	if c.Manticore.TableAudit == "" {
+		c.Manticore.TableAudit = "nw_audit" // 审计全文表默认名
 	}
 	if c.App.AdminPassword == "" {
 		c.App.AdminPassword = "Admin@123456" // 引导默认密码，生产必须覆盖
