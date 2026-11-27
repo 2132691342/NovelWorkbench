@@ -10,6 +10,8 @@ type UserProfileVO struct {
 	AvatarURL      string   `json:"avatar_url"`       // 头像地址
 	UserStatusCode string   `json:"user_status_code"` // 状态：active/disabled
 	RoleCodes      []string `json:"role_codes"`       // 角色编码列表
+	RoleNameList   []string `json:"role_name_list"`   // 角色名称列表（个人中心标签云用）
+	PermCodes      []string `json:"perm_codes"`       // 权限码并集（"*" 表示全部权限）
 	RemarkText     string   `json:"remark_text"`      // 个人备注
 	CreatedAt      string   `json:"created_at"`       // 创建时间（RFC3339）
 	UpdatedAt      string   `json:"updated_at"`       // 更新时间（RFC3339）
@@ -22,10 +24,10 @@ type UserProfileUpdateREQ struct {
 	RemarkText string `json:"remark_text" binding:"omitempty,max=256"`      // 个人备注
 }
 
-// UserPasswordChangeREQ 修改本人密码请求（需校验旧密码）。
+// UserPasswordChangeREQ 修改本人密码请求（需校验旧密码；旧密码保留 min=6 以兼容历史短密码）。
 type UserPasswordChangeREQ struct {
 	OldPasswordText string `json:"old_password_text" binding:"required,min=6,max=64"` // 当前密码
-	NewPasswordText string `json:"new_password_text" binding:"required,min=6,max=64"` // 新密码
+	NewPasswordText string `json:"new_password_text" binding:"required,min=8,max=64"` // 新密码（≥8 且含字母与数字）
 }
 
 // UserPasswordChangeDTO 改密结果：返回新令牌，避免本人被自己刚改的密码踢下线。

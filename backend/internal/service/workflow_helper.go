@@ -12,14 +12,15 @@ import (
 )
 
 // recordStep 追加一条步骤记录（失败只返回错误，不静默吞掉）。
-func (s *WorkflowService) recordStep(ctx context.Context, runDO *domain.WorkflowRunDO, stepTypeCode, stepName,
-	statusCode, outputText, metricJSON string, latencyMs int64) error {
+// 步骤下标显式传入：跳过的步骤不推进 current_step_index，用运行上的下标会写错行。
+func (s *WorkflowService) recordStep(ctx context.Context, runDO *domain.WorkflowRunDO, stepIndex int,
+	stepTypeCode, stepName, statusCode, outputText, metricJSON string, latencyMs int64) error {
 	now := time.Now()
 	return s.workflowRepo.CreateStep(ctx, &domain.WorkflowStepDO{
 		StepULID:       pkg.NewULID(domain.IDPrefixWorkflowStep),
 		RunULID:        runDO.RunULID,
 		ChapterULID:    currentChapterULIDOfRun(runDO),
-		StepIndex:      runDO.CurrentStepIndex,
+		StepIndex:      stepIndex,
 		StepTypeCode:   stepTypeCode,
 		StepName:       stepName,
 		StepStatusCode: statusCode,
@@ -29,6 +30,41 @@ func (s *WorkflowService) recordStep(ctx context.Context, runDO *domain.Workflow
 		LatencyMs:      latencyMs,
 		StartedAt:      now,
 		FinishedAt:     now,
+	})
+}
+
+// 门禁收口动作：命中 running 行就原地更新，找不到才回退插入。
+const (
+	gateStepActionUpdate = "update" // 原地更新为终态
+	gateStepActionInsert = "insert" // 历史数据/异常路径的回退插入
+)
+
+// gateStepCloseAction 纯函数决定门禁收口方式（便于单测覆盖两条分支）。
+func gateStepCloseAction(gateStep *domain.WorkflowStepDO) string {
+	if gateStep == nil {
+		return gateStepActionInsert
+	}
+	return gateStepActionUpdate
+}
+
+// closeGateStep 把门禁那行原地更新为终态，而不是再插一行。
+// 找不到 running 门禁行（历史数据/异常路径）时回退插入，保证审核不会因此报错。
+func (s *WorkflowService) closeGateStep(ctx context.Context, runDO *domain.WorkflowRunDO, stepIndex int,
+	stepTypeCode, stepName, statusCode, outputText string) error {
+	chapterULID := currentChapterULIDOfRun(runDO)
+	gateStep, err := s.workflowRepo.FindRunningGateStep(ctx, runDO.RunULID, chapterULID, stepIndex)
+	if err != nil {
+		return err
+	}
+	if gateStepCloseAction(gateStep) == gateStepActionInsert {
+		return s.recordStep(ctx, runDO, stepIndex, stepTypeCode, stepName, statusCode, outputText, "", 0)
+	}
+	now := time.Now()
+	return s.workflowRepo.UpdateStep(ctx, gateStep.StepULID, map[string]any{
+		"step_status_code": statusCode,
+		"output_text":      pkg.TruncateText(outputText, 20000),
+		"latency_ms":       now.Sub(gateStep.StartedAt).Milliseconds(),
+		"finished_at":      now,
 	})
 }
 

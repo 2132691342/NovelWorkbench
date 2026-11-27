@@ -1,16 +1,61 @@
-// 访问控制链路的回归：权限码规范化 → 角色脏数据修复 → 权限码下线清理 → 菜单种子可注册性 → 导航装配 → 权限目录。
-// 这六件事共同保证「权限可勾选、可保存、可回读、可下架、菜单可导航」这条闭环，
+// 访问控制的链路回归：权限码规范化 → 角色脏数据修复 → 权限码下线清理 → 菜单种子可注册性
+// → 导航装配 → 权限目录 → 用户列表按角色过滤。
+// 这些环节共同保证「权限可勾选、可保存、可回读、可下架、菜单可导航、用户可按角色筛」这条闭环，
 // 任一环断裂都会表现为「点得进却用不了」或「面板被锁死」，因此集中在本文件按链路组织。
 
 package service
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
+	"github.com/2132691342/NovelWorkbench/backend/internal/repo"
 )
+
+// sqlCapture 收集 gorm 打印的 SQL（DryRun 下每条语句各一行）。
+type sqlCapture struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+// Printf 记录一条 SQL。
+func (c *sqlCapture) Printf(format string, args ...any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lines = append(c.lines, fmt.Sprintf(format, args...))
+}
+
+// joined 返回全部 SQL 文本。
+func (c *sqlCapture) joined() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.Join(c.lines, "\n")
+}
+
+// newDryRunUserAdminService 构造 DryRun 模式下的用户管理服务（连接串指向不可达端口，不会真的建连）。
+func newDryRunUserAdminService(t *testing.T) (*UserAdminService, *sqlCapture) {
+	t.Helper()
+	capture := &sqlCapture{}
+	db, err := gorm.Open(postgres.New(postgres.Config{DSN: "host=127.0.0.1 port=1 user=x dbname=x"}), &gorm.Config{
+		DryRun:               true,
+		DisableAutomaticPing: true,
+		Logger:               logger.New(capture, logger.Config{LogLevel: logger.Info}),
+	})
+	if err != nil {
+		t.Fatalf("打开 DryRun 数据库失败: %v", err)
+	}
+	return NewUserAdminService(repo.NewUserRepo(db), repo.NewRoleRepo(db), nil, nil), capture
+}
 
 // knownPermSet 构造权限目录夹具（菜单是权限码唯一登记处，这里直接给集合）。
 func knownPermSet(codes ...string) map[string]bool {
@@ -218,4 +263,41 @@ func pageFileExists(basePath string) bool {
 		}
 	}
 	return false
+}
+
+// TestUserAdminListRoleFilter 覆盖用户列表按角色过滤的查询分流：
+// role_code 非空走 JOIN 路径、为空走原路径、未知编码返回空页不报错。
+// 用 gorm DryRun 捕获 SQL，不依赖真实数据库。
+func TestUserAdminListRoleFilter(t *testing.T) {
+	// 环节1：带角色编码时走 user_roles/roles 关联查询。
+	svc, capture := newDryRunUserAdminService(t)
+	page, err := svc.ListPage(context.Background(), &domain.UserAdminListREQ{RoleCode: "editor"})
+	if err != nil {
+		t.Fatalf("按角色过滤不应报错: %v", err)
+	}
+	if page.Total != 0 || len(page.Items) != 0 {
+		t.Fatalf("DryRun 下应返回空页，实际 total=%d items=%d", page.Total, len(page.Items))
+	}
+	sqlText := capture.joined()
+	if !strings.Contains(sqlText, "user_roles") || !strings.Contains(sqlText, "roles.role_code") {
+		t.Fatalf("按角色过滤应走关联查询，实际 SQL: %s", sqlText)
+	}
+
+	// 环节2：未知角色编码只影响结果集，不应变成错误。
+	unknownPage, err := svc.ListPage(context.Background(), &domain.UserAdminListREQ{RoleCode: "no_such_role"})
+	if err != nil {
+		t.Fatalf("未知角色编码应返回空页而非报错: %v", err)
+	}
+	if unknownPage.Total != 0 {
+		t.Fatalf("未知角色编码应返回 total=0，实际 %d", unknownPage.Total)
+	}
+
+	// 环节3：不带角色编码时不得引入角色关联（否则同一用户多角色会重复出行）。
+	plainSvc, plainCapture := newDryRunUserAdminService(t)
+	if _, err := plainSvc.ListPage(context.Background(), &domain.UserAdminListREQ{}); err != nil {
+		t.Fatalf("不带角色过滤不应报错: %v", err)
+	}
+	if strings.Contains(plainCapture.joined(), "user_roles") {
+		t.Fatalf("无角色过滤时不应 JOIN 角色表，实际 SQL: %s", plainCapture.joined())
+	}
 }

@@ -91,10 +91,10 @@ ORDER BY score DESC LIMIT <topK>
 
 | 顺序 | 动作 | 触发条件 | 失败处理 |
 | --- | --- | --- | --- |
-| 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model` 且 `model_providers` 为空 | 告警，继续启动 |
-| 2 | `ModelProviderService.MigrateLegacyModels`：模型目录为空时，把仅带 `chat_model_name` 的供应商行补成目录行 | `model_catalogs` 为空 | 告警，继续启动 |
+| 1 | `ModelProviderService.SeedDefault` 播种默认供应商与默认模型 | 配置了 `ai.base_url` 与 `ai.chat_model`，且按供应商名或 BaseURL 查不到同名/同网关行（`FindByNameOrBaseURL`） | 告警，继续启动 |
+| 2 | `ModelProviderService.MigrateLegacyModels`：逐 provider 判断，把「仍带旧列 `chat_model_name` 且尚无目录行」的供应商补成目录行 | 存在旧列 `chat_model_name` 且该 provider 无目录行 | 告警，继续启动 |
 | 3 | `ToolService.SeedDefaults` 播种内置工具 | 按 `tool_code` 查缺补插 | `os.Exit(1)` |
-| 4 | `PromptService.SeedDefaults` 播种内置全局提示词（3 份身份 + 7 份指令）并按指纹升级、下线清单外的内置提示词 | 按 `(global, "", prompt_code)` 查行；不存在则插入；`customized_flag` 或指纹一致则跳过；否则覆盖正文并写新指纹 | `os.Exit(1)` |
+| 4 | `PromptService.SeedDefaults` 播种内置全局任务提示词（4 个流程 × 2 条 = 8 条）并按指纹升级、下线清单外的内置提示词 | 按 `(global, "", prompt_code)` 查行；不存在则插入；`customized_flag` 或指纹一致则跳过；否则覆盖正文并写新指纹 | `os.Exit(1)` |
 | 5 | `WorkflowService.SeedDefaults` 播种内置工作流模板 | 按 `template_code` 查缺补插；步骤定义或名称变化时覆盖步骤 JSON | `os.Exit(1)` |
 | 6 | `SettingService.SeedDefaults` 播种默认配置 | 按 `setting_key` 查缺补插；已存在时仅同步 `setting_desc` | `os.Exit(1)` |
 | 7 | `MenuService.SeedDefaults` 播种内置菜单 | 按 `menu_code` 查缺补插，父级编码先解析 | `os.Exit(1)` |
@@ -107,7 +107,7 @@ ORDER BY score DESC LIMIT <topK>
 | --- | --- |
 | 供应商 | 名称「默认模型网关」，`enabled_flag=true`，`last_test_status_code='untested'`，API Key 用 JWT 密钥派生材料做 AES-256-GCM 封存 |
 | 默认模型 | 取 `ai.chat_model`，`default_flag=true`，`model_label` 回填模型名；播种后授权给全部内置角色 |
-| 内置提示词 | 3 个流程域共 10 条（3 身份 + 7 任务，`ai.BuiltinDomains()`）；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`，`asset_hash_text` 为出厂指纹。启动时按指纹升级：已自改或指纹一致不覆盖，其余覆盖正文；清单之外的旧内置提示词删除 |
+| 内置提示词 | 4 个创作流程共 8 条任务提示词（`ai.BuiltinDomains()`，无内置身份提示词）；`scope_code='global'`、`builtin_flag=true`、`enabled_flag=true`，`asset_hash_text` 为出厂指纹。启动时按指纹升级：已自改或指纹一致不覆盖，其余覆盖正文；清单之外的旧内置提示词删除 |
 | 内置工具 | 6 个（`ToolService.SeedDefaults`）：`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`；全局、启用、带参数声明 |
 | 内置工作流模板 | 3 个（`WorkflowService.SeedDefaults`）：`chapter_draft`（逐章成稿）、`chapter_polish`（存量打磨）、`chapter_deai`（批量去 AI 味）；`builtin_flag=true`，步骤定义随代码升级同步 |
 | 应用配置 | `rag_top_k=6`、`daily_word_goal=2000`；键为白名单，值须为整数并落在 `settingRangeMap` 区间 |
@@ -174,7 +174,7 @@ Manticore `nw_audit`（按留存天数清理）。其余表为全局数据，与
 | 无外键 | 所有 DO 没有 `foreignKey` 标签，`AutoMigrate` 不生成 `FOREIGN KEY` |
 | 无软删除 | 没有 `gorm.DeletedAt` 字段，删除均为物理 `DELETE` |
 | 无数据库级联 | 不存在 `ON DELETE CASCADE`，级联全部由服务层编排 |
-| 数据库唯一约束 8 处 | `users.user_name`、`users.user_email`、`roles.role_code`、`menus.menu_code`、`app_settings.setting_key`、`tools.tool_code`、`workflow_templates.template_code`、`model_usage_stats.uk_mus_dim`（四列组合） |
+| 数据库唯一约束 10 处 | `users.user_name`、`users.user_email`、`roles.role_code`、`menus.menu_code`、`app_settings.setting_key`、`tools.tool_code`、`workflow_templates.template_code`、`model_usage_stats.uk_mus_dim`（四列组合）、`model_providers.uk_model_provider_name`（`provider_name`）、`model_catalogs.uk_model_catalog_provider_name`（`provider_ulid` + `model_name`） |
 | 服务层唯一语义 | `menus.perm_code`（`CountByPermCode`）、`model_catalogs.default_flag`（`ClearDefaultModel` 后置位）、`prompts` 的 `(scope_code, project_ulid, prompt_code)`、`chapter_summaries` 的 `(project_ulid, chapter_ulid)`、`word_count_stats` 的 `(project_ulid, stat_date)`（均先查后写） |
 | 归属校验在服务层 | `mustOwnProject` / `mustOwnChapter` / `mustOwnDoc` 比对 `projects.user_ulid`，不是数据库约束 |
 | 跨表关联用 JOIN | 如 `RoleRepo.ListRolesByUserULID`、`KnowledgeRepo.GetChunksByULIDs`、`StatsRepo` 联 `projects` |
@@ -190,7 +190,7 @@ Manticore `nw_audit`（按留存天数清理）。其余表为全局数据，与
 - AutoMigrate 语义：表不存在则建表；表已存在则补缺失的列与索引。它不做破坏性变更——不删列、不改列类型、不删索引；删除字段或调整列宽必须手工执行 DDL。
 - AutoMigrate 失败（连接失败或 DDL 出错）时 `os.Exit(1)`，服务不会带半迁移状态启动。
 - **遗留结构在启动期显式清理**：AutoMigrate 只补不删，因此已被取代的表与列必须在启动时手工清理。`cmd/server/main.go` 在迁移后依次执行：删表 `audit_logs`（审计已迁到 Manticore，PG 不再读写，留着会变成两份数据打架）；删 `chat_sessions.summary_text` 与 `chat_sessions.compact_at`（历史改为全量注入后不再有压缩摘要概念）；删表 `skills`、`skill_references`、`prompt_profiles`、`slash_commands`（提示词档案已合并进 `prompts` 一张表）；删列 `chat_messages.skill_code`、`chat_messages.ref_message_json`、`chat_messages.ref_prompt_json`（引用只保留「素材库 + 历史会话」两类来源）。清理前先 `HasTable` / `HasColumn` 判存，失败只告警不阻断启动。
-- 数据层幂等补丁在启动期以业务键判空执行：`SeedDefault`（供应商表为空）、`MigrateLegacyModels`（模型表为空）、四个 `SeedDefaults`（按编码/键查缺补插）、`BootstrapAdmin`（用户表为空）。
+- 数据层幂等补丁在启动期以业务键判空执行：`SeedDefault`（按供应商名或 BaseURL 判重）、`MigrateLegacyModels`（逐 provider 判断目录是否为空）、四个 `SeedDefaults`（按编码/键查缺补插）、`BootstrapAdmin`（用户表为空）。
 - Manticore 侧的结构管理由 `ensureManticoreSchema` 自实现：表不存在则按 CJK ngram 结构建表；已存在但 `SHOW CREATE TABLE` 结果缺少 `ngram_len` 时 drop 重建，并从 PG 回灌全部切片。这是唯一支持的结构变更路径。
 - Redis 与 RabbitMQ 无结构迁移：键按 TTL 自然过期，队列在每次投递/消费前 `QueueDeclare` 幂等声明。
 

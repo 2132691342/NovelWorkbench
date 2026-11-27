@@ -93,9 +93,7 @@ flowchart LR
 上一版 `assets/Login-xxxx.js`，而新容器里只有新哈希文件，结果是 `ERR_ABORTED` + 整站白屏，且服务端日志全是 200。
 `/assets/` 可以放心长缓存：文件名随内容变化，新版本必然是新 URL。
 
-后端侧配合 SSE：`http.Server` 的 `WriteTimeout` 取 `server.write_timeout_sec`，仓库配置为 `0`（不限），`ReadTimeout` 取 `server.read_timeout_sec`（30s）；`service.ChatService` 用 `chatPingInterval = 15s` 的定时器在无输出时调用 `sseChatWriter.Ping` 输出 `: ping` 注释行维持连接，有数据块时重置定时器。
-
-`gzip on`，类型为 `text/plain`、`text/css`、`application/javascript`、`application/json`、`image/svg+xml`。
+后端侧配合 SSE：`http.Server` 的 `WriteTimeout` 取 `server.write_timeout_sec`，仓库配置为 `0`（不限），`ReadTimeout` 取 `server.read_timeout_sec`（30s）；`service.ChatService` 用 `chatPingInterval = 15s` 的定时器在无输出时调用 `sseChatWriter.Ping` 输出 `: ping` 注释行维持连接，有数据块时重置定时器。`gzip on`，类型为 `text/plain`、`text/css`、`application/javascript`、`application/json`、`image/svg+xml`。
 
 ## 4. 配置模型
 
@@ -156,7 +154,7 @@ flowchart LR
 | `AIConfig` | protocol_code, base_url, api_key, chat_model, temperature, max_tokens, timeout_sec | `NW_AI_PROTOCOL_CODE`（`openai`，`openai` / `anthropic`）<br>`NW_AI_BASE_URL`（空，OpenAI 兼容含 `/v1`；Anthropic 填根地址）<br>`NW_AI_API_KEY`（空，网关密钥）<br>`NW_AI_CHAT_MODEL`（空，对话模型名）<br>`NW_AI_TEMPERATURE`（`0.7`，采样温度）<br>`NW_AI_MAX_TOKENS`（`2048`，单次输出上限）<br>`NW_AI_TIMEOUT_SEC`（`120`，调用超时（秒），≤0 时 `main` 兜底 60） |
 | `AppConfig` | upload_max_mb, chunk_size, chunk_overlap, rag_top_k, admin_password, build_version | `NW_APP_UPLOAD_MAX_MB`（`20`，上传大小上限（MB））<br>`NW_APP_CHUNK_SIZE`（`800`，切片字符数）<br>`NW_APP_CHUNK_OVERLAP`（`120`，切片重叠字符数）<br>`NW_APP_RAG_TOP_K`（`6`，默认召回条数）<br>`NW_APP_ADMIN_PASSWORD`（`Admin@123456`，引导管理员密码，仅用户表为空时生效）<br>`NW_APP_BUILD_VERSION`（`dev`，运行状态页展示的构建版本） |
 
-`ai.*` 组只在 `model_providers` 表为空时写入一条「默认模型网关」记录（`providerService.SeedDefault`），播种后由页面维护，配置不再参与。
+`ai.*` 组只在配置了 `base_url` 与 `chat_model`、且按供应商名或 BaseURL 查不到同名/同网关行时写入一条「默认模型网关」记录（`providerService.SeedDefault`，判重走 `FindByNameOrBaseURL`），播种后由页面维护，配置不再参与。
 
 ### 5.2 仅部署层消费（不进入 `Config`）
 
@@ -192,16 +190,17 @@ flowchart LR
 | 2 | `infra.LoadConfig("")`：读 YAML、应用 `NW_*`、`validate()` | 致命，退出码 1，日志「加载配置失败」 |
 | 3 | `signal.NotifyContext(SIGINT, SIGTERM)` | — |
 | 4 | `infra.NewPostgres`：DSN 连接 + 连接池 + `Ping` | 致命，退出码 1，日志「Postgres 连接失败」 |
-| 5 | `db.AutoMigrate` 建表 36 张（`UserDO`、`ProjectDO`、`VolumeDO`、`ChapterDO`、`ChapterSnapshotDO`、`WordCountStatDO`、`CharacterDO`、`CharacterRelationDO`、`LoreDO`、`KnowledgeDocumentDO`、`OutlineNodeDO`、`DetailedSceneDO`、`TemporalFactDO`、`ForeshadowHookDO`、`ChapterSummaryDO`、`KnowledgeChunkDO`、`MenuDO`、`JobDO`、`AppSettingDO`、`ChatSessionDO`、`ChatMessageDO`、`RoleDO`、`UserRoleDO`、`AuditLogDO`、`ModelProviderDO`、`ModelCatalogDO`、`ModelRoleGrantDO`、`ModelUsageStatDO`、`NotificationDO`、`LoginLogDO`、`PromptDO`、`ToolDO`、`WorkflowTemplateDO`、`WorkflowRunDO`、`WorkflowStepDO`、`ModelUserGrantDO`） | 致命，退出码 1，日志「数据库迁移失败」 |
-| 5.1 | 清理遗留表列：删表 `audit_logs`（审计已迁到 Manticore），删 `chat_sessions.summary_text` / `compact_at`，删表 `skills` / `skill_references` / `prompt_profiles` / `slash_commands`，删列 `chat_messages.skill_code` / `ref_message_json` / `ref_prompt_json` | 告警，不阻断启动（AutoMigrate 只补不删，残留由这一步清理） |
+| 5 | `db.AutoMigrate` 建表 36 张（表清单见 [database.md](database.md)） | 致命，退出码 1，日志「数据库迁移失败」 |
+| 5.1 | 清理遗留表列：删表 `audit_logs`（审计存 Manticore）、`skills`、`skill_references`、`prompt_profiles`、`slash_commands`；删列 `chat_sessions.summary_text` / `compact_at`、`chat_messages.skill_code` / `ref_message_json` / `ref_prompt_json` | 告警，不阻断启动（AutoMigrate 只补不删，残留由这一步清理） |
+| 5.2 | 模型生态去重 `service.DedupeModelCatalogs`（`main.go` 的 `dedupeModelEcosystem`）：迁移前、唯一索引冲突重试前、迁移后各跑一次，收敛重复供应商与 `(provider_ulid, model_name)` 重复模型并迁移授权与默认标记 | 告警，不阻断启动；唯一索引建不起来时重试一次仍失败才退出 |
 | 6 | `infra.NewRedis`：构造客户端 + 5s `Ping` | 地址为空返回 `nil` 客户端 → 致命「Redis 配置无效」；Ping 失败 → 告警「令牌吊销降级」并继续 |
 | 7 | `infra.NewRabbitMQ` | 告警「异步任务降级」 |
 | 8 | `infra.NewMinIO`：构造客户端 + `BucketExists`，桶不存在则 `MakeBucket`；随后 `main` 再校验一次桶是否存在 | 告警「MinIO 初始化失败 / 桶健康检查失败 / 桶不存在，对象存储降级」 |
 | 9 | `infra.NewManticore` + `Ping`（`SELECT 1`，HTTP 超时 5s） | 告警「全文检索降级」 |
 | 10 | `pkg.NewJWTSigner(cfg.JWT.Secret, cfg.JWTExpireTTL())` | 致命，退出码 1 |
 | 11 | 装配 repo / service / `ai.NewClient`，`providerService.SeedDefault` 播种出厂供应商 | 播种失败 → 告警「默认模型供应商播种失败，可在页面手工添加」 |
-| 12 | `providerService.MigrateLegacyModels`：模型目录为空时，把仅带 `chat_model_name` 的供应商行补成目录行 | 告警，不阻断 |
-| 13 | `toolService.SeedDefaults`（6 个内置工具）、`promptService.SeedDefaults`（3 份内置身份 + 7 份内置指令）、`workflowService.SeedDefaults`（3 个内置工作流模板） | 致命，退出码 1 |
+| 12 | `providerService.MigrateLegacyModels`：逐 provider 判断，只把「仍带旧列 `chat_model_name` 且尚无目录行」的供应商补成目录行 | 告警，不阻断 |
+| 13 | `toolService.SeedDefaults`（6 个内置工具）、`promptService.SeedDefaults`（8 条内置任务提示词：4 个创作流程 × 2 条，无内置身份提示词）、`workflowService.SeedDefaults`（3 个内置工作流模板） | 致命，退出码 1 |
 | 14 | `settingService.SeedDefaults`（默认应用配置） | 致命，退出码 1 |
 | 15 | `menuService.SeedDefaults`（内置菜单与权限登记） | 致命，退出码 1 |
 | 16 | `roleService.SeedDefaults`（内置角色与权限修正，依赖上一步先登记完权限码） | 致命，退出码 1 |
@@ -309,18 +308,16 @@ flowchart TD
 
 ### 8.4 DNAT 与 rootless Podman
 
-rootless podman 在容器重建后可能残留旧容器的 `CNI-HOSTPORT-DNAT` 规则，导致宿主端口指向已失效的容器 IP；更麻烦的是清理动作本身会删掉 podman 刚写好的跳转（podman 认为端口已分配，不会重写）。
-
-`deploy.sh` 因此分两步处理：
+rootless podman 在容器重建后可能残留旧容器的 `CNI-HOSTPORT-DNAT` 规则，导致宿主端口指向已失效的容器 IP；
+更麻烦的是清理动作本身会删掉 podman 刚写好的跳转（podman 认为端口已分配，不会重写）。
+`deploy.sh` 因此分两步处理，缺一不可——只清理不修复，端口在 podman 不重写规则时就不可达；只修复不清理，旧规则会与新规则并存并抢先匹配。
 
 | 时机 | 函数 | 行为 |
 | --- | --- | --- |
-| 重建容器**前** | `cleanup_port_dnat <port>` | 先循环删除指向 `127.0.0.1` 的空跳转（它不按端口划分，任何一次重建都会残留），再按 `--dports` 找出该端口的 `CNI-DN-*` 链并逐条删除 `CNI-HOSTPORT-DNAT` 中的跳转 |
-| 重建容器**后** | `repair_port_dnat <port> <container>` | 取当前容器的 IP，删掉该端口名下所有旧跳转（无论指向哪个容器 IP），再只为当前 IP 从链首插一条新跳转（避免旧容器残留规则抢先匹配） |
+| 重建容器**前** | `cleanup_port_dnat <port>` | 删掉指向 `127.0.0.1` 的空跳转（它不按端口划分，任何一次重建都会残留），再按 `--dports` 找出该端口的 `CNI-DN-*` 链并逐条删除 `CNI-HOSTPORT-DNAT` 中的跳转 |
+| 重建容器**后** | `repair_port_dnat <port> <container>` | 取当前容器 IP，删掉该端口名下所有旧跳转，再只为当前 IP 从链首插一条新跳转 |
 
-两步缺一不可：只清理不修复，端口在 podman 不重写规则时就不可达；只修复不清理，旧规则会与新规则并存并抢先匹配。
-
-由于后端不映射宿主端口，探活一律用 `podman exec` 进容器访问 `127.0.0.1:8080`，不受 DNAT 影响。
+后端不映射宿主端口，探活一律用 `podman exec` 进容器访问 `127.0.0.1:8080`，不受 DNAT 影响。
 
 ### 8.5 DNS 差异
 
@@ -337,7 +334,7 @@ Podman 下写成裸 `backend` 会导致 nginx 解析失败、`/api/` 返回 502�
 
 | 工作流 | 触发 | Job | 内容 |
 | --- | --- | --- | --- |
-| `ci.yml` | `push` 到 `main`、`pull_request` 目标 `main` | `backend` | `go vet ./...`、`CGO_ENABLED=0 go build -tags "netgo osusergo" ./...`、`CGO_ENABLED=0 go test -short -count=1 -shuffle=on ./...` |
+| `ci.yml` | `push` 到 `main`、`pull_request` 目标 `main` | `backend` | `go vet ./...`、`CGO_ENABLED=0 go build -tags "netgo osusergo" ./...`、`CGO_ENABLED=0 go test -count=1 -shuffle=on ./...` |
 | `ci.yml` | 同上 | `frontend` | `pnpm/action-setup` 安装 pnpm 10、`pnpm install --frozen-lockfile`、`pnpm test`（vitest）、`pnpm build`（`vue-tsc --noEmit && vite build --mode pro`） |
 | `ci.yml` | 同上 | `docker`（`needs: [backend, frontend]`） | `docker build -t novel-workbench-backend:ci ./backend`、`docker build -t novel-workbench-frontend:ci ./frontend` |
 | `release.yml` | 推送 `v*` tag | `release` | 归一镜像前缀 → 登录 GHCR → 构建并推送 backend / frontend |
@@ -372,15 +369,8 @@ echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
 ### 9.3 Action 版本
 
-| Action | 版本 |
-| --- | --- |
-| `actions/checkout` | v5 |
-| `actions/setup-go` | v6 |
-| `actions/setup-node` | v5 |
-| `pnpm/action-setup` | v4 |
-| `docker/setup-buildx-action` | v4 |
-| `docker/login-action` | v4 |
-| `docker/build-push-action` | v7 |
+`actions/checkout` v5、`actions/setup-go` v6、`actions/setup-node` v5、`pnpm/action-setup` v4、
+`docker/setup-buildx-action` v4、`docker/login-action` v4、`docker/build-push-action` v7。
 
 ### 9.4 发布与回滚
 
@@ -424,7 +414,6 @@ podman exec nw-redis redis-cli -a "$NW_REDIS_PASSWORD" ping
 podman exec nw-postgres psql -U postgres -c 'select count(*) from users;'
 curl -sS 'http://127.0.0.1:9308/sql?mode=raw&query=SHOW+TABLES'
 ```
-
 ### 10.3 常见故障
 
 | 现象 | 排查 | 处理 |
@@ -474,7 +463,7 @@ mc mirror --overwrite local/novelworkbench backup/novelworkbench
 | 后端结构化日志 | `podman logs nw-backend` / `docker compose logs backend` | 请求、错误、降级、worker；zap production JSON 输出到 stdout |
 | 前端 nginx | `podman logs nw-frontend` | 上游解析、静态资源、代理错误 |
 | 编排日志 | `/var/log/novelworkbench-compose.log`（`COMPOSE_LOG` 可覆盖） | 发布失败现场；含明文口令，禁止外传 |
-| 审计日志 | Manticore `nw_audit` 表 / 管理页 | 写操作追溯（留存 30 天，`audit_retention_days` 可调；每日 03:00 自动清理） |
+| 审计日志 | Manticore `nw_audit` 表 / 管理页 | 写操作与 AI 调用追溯（留存 30 天，`audit_retention_days` 可调；每日 `audit_purge_hour` 指定整点自动清理，默认 03:00） |
 | 登录日志 | `login_logs` 表 / 管理页 | 登录安全 |
 | 任务中心 | 管理页 | 索引任务状态与失败原因 |
 
@@ -489,3 +478,19 @@ mc mirror --overwrite local/novelworkbench backup/novelworkbench
 | 变更中间件口令 | 同步更新 `.env` 中中间件初始化变量与应用连接变量（RabbitMQ 需同时改 `NW_RABBITMQ_USER` / `NW_RABBITMQ_PASSWORD` / `NW_RABBITMQ_URL`） |
 | 引导管理员密码 | 仅在用户表为空时生效；已有数据时改配置不会重置密码 |
 | 增加索引吞吐 | 新增消费同一队列的 worker 实例（需保证部署形态支持多副本） |
+
+## 11. 存量数据自愈
+
+升级后可能残留旧表列、孤儿切片与无主对象。这些不需要运维手动清理，服务启动时自愈：
+
+| 场景 | 自愈动作 | 位置 |
+| --- | --- | --- |
+| 已下线的表与列 | 迁移后显式 `DROP`（只删实际存在的对象） | `cmd/server/main.go` 迁移后段 |
+| 审计表结构退化 | 检测到过滤核心列被建成 `text` 字段时 `DROP` + 重建 | `repo/audit_schema_repo.go` 的 `rebuildIfDegraded` |
+| 模型生态重复数据 | 迁移前、唯一索引冲突重试前、迁移后各跑一次去重 | `service/model_catalog_dedupe.go` |
+| 知识库孤儿切片与孤儿对象 | worker 启动时对账文档表与切片表、Manticore、MinIO | `service/knowledge_reconcile.go` |
+
+只有审计表退化重建会丢历史（该表已不可筛选，重建是唯一修复手段），其余动作都是幂等删除。
+需要人工介入的场景只有一种：审计表退化重建后历史审计不可恢复，若要保留，先用 Manticore 的 SQL 接口导出再重建。
+Redis 残留键不需要清理：令牌黑名单与幂等键都带 TTL，到期自然消失。
+日志级别约定：`Warn` 表示失败但不阻断启动（如对账失败），`Error` 表示已重建并丢失数据（审计表退化）。

@@ -1,0 +1,110 @@
+// 审计页的共享样式：表格单元与级别标记。页面与两个表格组件共用同一套类名，
+// 因此样式放在这里由三者各自引入（scoped 样式不会作用到子组件）。
+
+.audit-page {
+  &__dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--nw-success);
+
+    &.is-error {
+      background: var(--nw-danger);
+    }
+
+    &.is-warn {
+      background: var(--nw-warning);
+    }
+  }
+
+  &__table {
+    border-radius: var(--nw-radius-lg);
+    cursor: pointer;
+
+    :deep(.is-error-row) {
+      background: color-mix(in srgb, var(--nw-danger) 4%, transparent);
+    }
+  }
+
+  &__time {
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__action-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  &__action-name {
+    font-weight: 600;
+    color: var(--nw-ink);
+  }
+
+  &__action-code {
+    overflow: hidden;
+    font-family: var(--nw-font-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__span-count {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--nw-ink);
+  }
+
+  &__ai-count {
+    display: inline-flex;
+    gap: 3px;
+    align-items: center;
+    margin-top: 2px;
+  }
+
+  &__slowest {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-size: 12px;
+    color: var(--nw-ink);
+  }
+
+  &__resp {
+    display: block;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__ok {
+    font-weight: 600;
+    color: var(--nw-success);
+  }
+
+  &__fail {
+    font-weight: 600;
+    color: var(--nw-danger);
+  }
+
+  &__latency-value {
+    font-variant-numeric: tabular-nums;
+
+    &.is-warn {
+      color: var(--nw-warning);
+    }
+
+    &.is-slow {
+      font-weight: 600;
+      color: var(--nw-danger);
+    }
+  }
+
+  &__pager {
+    display: flex;
+    justify-content: flex-end;
+  }
+}

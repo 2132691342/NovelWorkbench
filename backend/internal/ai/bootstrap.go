@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -96,28 +97,34 @@ func BootstrapPrompt(ideaText, genreCode string, chapterCount int) string {
 // GenerateBootstrapPlan 调用对话模型生成开书方案。
 // 走流式累积：结构化长输出的非流式调用会长时间无响应头，容易被网关首包超时打断。
 func (c *Client) GenerateBootstrapPlan(ctx context.Context, spec ProviderSpec, ideaText, genreCode string, chapterCount int) (BootstrapPlan, error) {
+	startedAt := time.Now()
 	stream, err := c.Stream(ctx, spec, []*schema.Message{
 		{Role: schema.System, Content: bootstrapSystemPrompt},
 		{Role: schema.User, Content: BootstrapPrompt(ideaText, genreCode, chapterCount)},
 	})
 	if err != nil {
+		c.RecordStreamFailure(spec, nil, time.Since(startedAt))
 		return BootstrapPlan{}, fmt.Errorf("bootstrap stream: %w", err)
 	}
 	defer stream.Close()
 	var builder strings.Builder
-	var lastChunk *schema.Message
+	var usage StreamUsage
 	for {
 		chunk, recvErr := stream.Recv()
 		if recvErr == io.EOF {
 			break
 		}
 		if recvErr != nil {
+			c.RecordStreamFailure(spec, usage.TokenUsage(), time.Since(startedAt))
 			return BootstrapPlan{}, fmt.Errorf("bootstrap stream recv: %w", recvErr)
 		}
-		lastChunk = chunk
+		if chunk == nil {
+			continue
+		}
+		usage.Add(chunk)
 		builder.WriteString(chunk.Content)
 	}
-	c.RecordStreamUsage(spec, usageOf(lastChunk), 0)
+	c.RecordStreamUsage(spec, usage.TokenUsage(), time.Since(startedAt))
 	return ParseBootstrapPlan(builder.String())
 }
 

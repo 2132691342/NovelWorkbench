@@ -32,6 +32,21 @@ func (a *WorkflowAPI) TemplateList(c *gin.Context) {
 	pkg.Ok(c, vos)
 }
 
+// RunQuickStart 一键开跑（POST /workflow/run/quick_start）：参数取项目自动化默认值。
+func (a *WorkflowAPI) RunQuickStart(c *gin.Context) {
+	var req domain.WorkflowQuickStartREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "workflow.run.quick_start", bindErr(err))
+		return
+	}
+	vo, err := a.svc.QuickStart(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), &req)
+	if err != nil {
+		respondErr(c, "workflow.run.quick_start", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}
+
 // RunCreate 创建工作流运行（POST /workflow/run/create）。
 func (a *WorkflowAPI) RunCreate(c *gin.Context) {
 	var req domain.WorkflowRunCreateREQ
@@ -84,6 +99,26 @@ func (a *WorkflowAPI) RunStats(c *gin.Context) {
 	vo, err := a.svc.Stats(c.Request.Context(), req.ProjectULID)
 	if err != nil {
 		respondErr(c, "workflow.run.stats", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}
+
+// RunPending 待审核收件箱（GET /workflow/run/pending）：当前用户停在审核门禁的运行。
+func (a *WorkflowAPI) RunPending(c *gin.Context) {
+	vos, err := a.svc.ListPendingReview(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID))
+	if err != nil {
+		respondErr(c, "workflow.run.pending", err)
+		return
+	}
+	pkg.Ok(c, vos)
+}
+
+// Readiness 查询项目开跑就绪度（GET /workflow/readiness/{ProjectULID}）。
+func (a *WorkflowAPI) Readiness(c *gin.Context) {
+	vo, err := a.svc.Readiness(c.Request.Context(), c.GetString(pkg.ContextKeyUserULID), c.Param("ProjectULID"))
+	if err != nil {
+		respondErr(c, "workflow.readiness", err)
 		return
 	}
 	pkg.Ok(c, vo)

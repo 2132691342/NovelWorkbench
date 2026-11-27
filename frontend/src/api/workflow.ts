@@ -91,6 +91,8 @@ export interface NWWorkflowRunDetailVo extends NWWorkflowRunVo {
   step_list: NWWorkflowStepVo[]
   chapter_content_text: string
   chapter_word_count: number
+  candidate_text: string
+  candidate_word_count: number
   check_score: number
   check_verdict_code: string
   review_verdict_code: string
@@ -103,6 +105,39 @@ export interface NWWorkflowRunStatsVo {
   waiting_review_count: number
   finished_count: number
   failed_count: number
+}
+
+/** 就绪度检查项编码（后端固定值，前端按此映射图标） */
+export type NWWorkflowReadinessItemCode =
+  | 'project_synopsis'
+  | 'project_style'
+  | 'character'
+  | 'character_relation'
+  | 'lore'
+  | 'outline'
+  | 'chapter_outline'
+  | 'prompt'
+  | 'model'
+
+/** 就绪度检查项（对齐 WorkflowReadinessItemVO） */
+export interface NWWorkflowReadinessItemVo {
+  item_code: NWWorkflowReadinessItemCode
+  item_name: string
+  ready_flag: boolean
+  blocking_flag: boolean
+  current_value: string
+  target_value: string
+  hint_text: string
+  fix_route: string
+}
+
+/** 项目开跑就绪度（对齐 WorkflowReadinessVO） */
+export interface NWWorkflowReadinessVo {
+  project_ulid: string
+  score_value: number
+  ready_flag: boolean
+  blocking_count: number
+  item_list: NWWorkflowReadinessItemVo[]
 }
 
 /** 创建运行请求（对齐 WorkflowRunCreateREQ） */
@@ -158,6 +193,16 @@ export function fetchWorkflowRunStats(projectUlid?: string): Promise<NWWorkflowR
   return get<NWWorkflowRunStatsVo>(`/workflow/run/stats${suffix}`)
 }
 
+/** 项目开跑就绪度（素材/大纲/提示词/模型是否够跑一次任务） */
+export function fetchWorkflowReadiness(projectUlid: string): Promise<NWWorkflowReadinessVo> {
+  return get<NWWorkflowReadinessVo>(`/workflow/readiness/${encodeURIComponent(projectUlid)}`)
+}
+
+/** 待审核收件箱（当前用户停在审核门禁的运行，最多 10 条） */
+export function listPendingWorkflowRuns(): Promise<NWWorkflowRunVo[]> {
+  return get<NWWorkflowRunVo[]>('/workflow/run/pending')
+}
+
 /** 审核通过（写入章节并继续） */
 export function approveWorkflowRun(runUlid: string, noteText?: string): Promise<NWWorkflowRunVo> {
   return post<NWWorkflowRunVo>('/workflow/run/approve', { run_ulid: runUlid, note_text: noteText })
@@ -189,4 +234,32 @@ export function cancelWorkflowRun(runUlid: string): Promise<NWWorkflowRunVo> {
 /** 重试失败运行 */
 export function retryWorkflowRun(runUlid: string): Promise<NWWorkflowRunVo> {
   return post<NWWorkflowRunVo>('/workflow/run/retry', { run_ulid: runUlid })
+}
+
+/** 一键开跑请求（对齐 WorkflowQuickStartREQ，参数缺省取项目自动化默认值） */
+export interface NWWorkflowQuickStartReqVo {
+  project_ulid: string
+  template_code?: string
+  chapter_ulid_list?: string[]
+  new_chapter_count?: number
+  target_word_count?: number
+  gate_score?: number
+  review_gate_flag?: boolean
+  extra_requirement_text?: string
+  model_ulid?: string
+}
+
+/** 一键开跑结果（对齐 WorkflowQuickStartVO） */
+export interface NWWorkflowQuickStartVo {
+  run_vo: NWWorkflowRunVo
+  template_code: string
+  chapter_count: number
+  ready_flag: boolean
+  blocking_count: number
+  blocking_hint_list: string[]
+}
+
+/** 一键开跑：只给项目，其余参数取项目默认 */
+export function quickStartWorkflowRun(req: NWWorkflowQuickStartReqVo): Promise<NWWorkflowQuickStartVo> {
+  return post<NWWorkflowQuickStartVo>('/workflow/run/quick_start', req)
 }

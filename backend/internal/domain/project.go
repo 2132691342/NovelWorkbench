@@ -3,6 +3,7 @@
 package domain
 
 // ProjectDO 小说项目持久化对象。
+// 末尾四个 auto_* 是「自动化默认参数」：作者在项目上定好一次，之后开跑就不必每次重填约束。
 type ProjectDO struct {
 	BaseDO
 	ProjectULID    string `json:"project_ulid" gorm:"column:project_ulid;primaryKey;size:40"` // 项目 ULID（PRJ_ 前缀）
@@ -13,6 +14,11 @@ type ProjectDO struct {
 	SynopsisText   string `json:"synopsis_text" gorm:"size:4096"`                             // 简介
 	ProjectStatus  string `json:"project_status" gorm:"size:16;index"`                        // 状态：draft/serial/completed
 	TotalWordCount int64  `json:"total_word_count"`                                           // 累计字数
+	// 自动化默认参数：一次配置，之后开跑直接复用（仍可在开跑时临时覆盖）
+	AutoTargetWordCount int    `json:"auto_target_word_count" gorm:"column:auto_target_word_count;default:2500"` // 每章目标字数
+	AutoGateScore       int    `json:"auto_gate_score" gorm:"column:auto_gate_score;default:80"`                 // 体检通过分
+	AutoReviewGateFlag  bool   `json:"auto_review_gate_flag" gorm:"column:auto_review_gate_flag;default:true"`   // 是否保留人工审核
+	AutoRequirementText string `json:"auto_requirement_text" gorm:"column:auto_requirement_text;size:1000"`      // 项目整体要求（每章都注入）
 }
 
 // TableName 指定表名。
@@ -39,14 +45,20 @@ type ProjectCreateREQ struct {
 	SynopsisText string `json:"synopsis_text" form:"synopsis_text" binding:"omitempty,max=4096"`   // 简介
 }
 
-// ProjectUpdateREQ 更新项目请求（整体覆盖可编辑字段）。
+// ProjectUpdateREQ 更新项目请求。
+// 可编辑字段一律指针：缺省表示不改，传空串表示清空——这样「只改自动化参数」不会顺手抹掉文风与简介，
+// 与 UserAdminUpdateREQ 的三态语义保持一致（开跑靠简介与文风，误清空等于毁素材）。
 type ProjectUpdateREQ struct {
-	ProjectULID   string `json:"project_ulid" form:"project_ulid" binding:"required"`                                   // 项目 ULID
-	ProjectName   string `json:"project_name" form:"project_name" binding:"required,min=1,max=128"`                     // 书名
-	GenreCode     string `json:"genre_code" form:"genre_code" binding:"omitempty,max=32"`                               // 题材编码
-	StyleText     string `json:"style_text" form:"style_text" binding:"omitempty,max=1024"`                             // 文风设定
-	SynopsisText  string `json:"synopsis_text" form:"synopsis_text" binding:"omitempty,max=4096"`                       // 简介
-	ProjectStatus string `json:"project_status" form:"project_status" binding:"omitempty,oneof=draft serial completed"` // 状态
+	ProjectULID         string  `json:"project_ulid" form:"project_ulid" binding:"required"`               // 项目 ULID
+	ProjectName         string  `json:"project_name" form:"project_name" binding:"required,min=1,max=128"` // 书名
+	GenreCode           *string `json:"genre_code" binding:"omitempty,max=32"`                             // 题材编码
+	StyleText           *string `json:"style_text" binding:"omitempty,max=1024"`                           // 文风设定
+	SynopsisText        *string `json:"synopsis_text" binding:"omitempty,max=4096"`                        // 简介
+	ProjectStatus       string  `json:"project_status" binding:"omitempty,oneof=draft serial completed"`   // 状态
+	AutoTargetWordCount *int    `json:"auto_target_word_count" binding:"omitempty,min=300,max=20000"`      // 每章目标字数
+	AutoGateScore       *int    `json:"auto_gate_score" binding:"omitempty,min=60,max=100"`                // 体检通过分
+	AutoReviewGateFlag  *bool   `json:"auto_review_gate_flag"`                                             // 是否保留人工审核
+	AutoRequirementText *string `json:"auto_requirement_text" binding:"omitempty,max=1000"`                // 项目整体要求
 }
 
 // ProjectListREQ 项目列表查询。
@@ -67,8 +79,13 @@ type ProjectVO struct {
 	TotalWordCount int64  `json:"total_word_count"` // 累计字数
 	VolumeCount    int    `json:"volume_count"`     // 卷数
 	ChapterCount   int    `json:"chapter_count"`    // 章节数
-	CreatedAt      string `json:"created_at"`       // 创建时间（RFC3339）
-	UpdatedAt      string `json:"updated_at"`       // 更新时间（RFC3339）
+	// 自动化默认参数（开跑向导与一键开跑直接复用）
+	AutoTargetWordCount int    `json:"auto_target_word_count"` // 每章目标字数
+	AutoGateScore       int    `json:"auto_gate_score"`        // 体检通过分
+	AutoReviewGateFlag  bool   `json:"auto_review_gate_flag"`  // 是否保留人工审核
+	AutoRequirementText string `json:"auto_requirement_text"`  // 项目整体要求
+	CreatedAt           string `json:"created_at"`             // 创建时间（RFC3339）
+	UpdatedAt           string `json:"updated_at"`             // 更新时间（RFC3339）
 }
 
 // VolumeVO 卷视图对象。

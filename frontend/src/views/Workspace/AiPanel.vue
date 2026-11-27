@@ -220,18 +220,24 @@
     const actionRows = COMPOSER_ACTION_LIST.map(
       (action) => `<li><code>/${action.action_code}</code> ${action.action_name} — ${action.action_desc}</li>`
     ).join('')
-    const promptRows = commandPromptList.value
-      .map(
-        (prompt) =>
-          `<li><code>/${prompt.prompt_code}</code> ${prompt.prompt_name} — ${prompt.description_text}</li>`
-      )
-      .join('')
+    // 提示词按创作流程分组：同一流程的两条挨在一起，作者先选流程再选动作
+    const promptGroupMap = new Map<string, string[]>()
+    for (const prompt of commandPromptList.value) {
+      const groupName = prompt.domain_name || '其他提示词'
+      const rows = promptGroupMap.get(groupName) ?? []
+      rows.push(`<li><code>/${prompt.prompt_code}</code> ${prompt.prompt_name} — ${prompt.description_text}</li>`)
+      promptGroupMap.set(groupName, rows)
+    }
+    const promptRows =
+      [...promptGroupMap.entries()]
+        .map(([groupName, rows]) => `<p><b>${groupName}</b></p><ul>${rows.join('')}</ul>`)
+        .join('') || '<ul><li>暂无启用的任务提示词</li></ul>'
     await ElMessageBox.alert(
       `<div class="command-help">
         <p><b>/ 本地动作</b>（立即执行，不消耗模型）</p>
         <ul>${actionRows}</ul>
-        <p><b>/ 指令提示词</b>（以系统级消息注入本轮）</p>
-        <ul>${promptRows || '<li>暂无启用的指令提示词</li>'}</ul>
+        <p><b>/ 任务提示词</b>（按创作流程分组，以系统级消息注入本轮）</p>
+        ${promptRows}
         <p><b>@ 引用</b>：角色 / 设定 / 章节 / 摘要 / 文档 / 历史会话；@ 弹层内 ← → 切页签，↑ ↓ 选择，Enter 确认。</p>
         <p><b>工具</b>：无需手动点名，模型会在需要时自行调用服务端工具。</p>
         <p>键盘：<code>Ctrl/⌘ + Enter</code> 发送，<code>Esc</code> 关闭弹层，输入框为空时 <code>Backspace</code> 撤销命令徽标。</p>

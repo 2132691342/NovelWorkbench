@@ -15,7 +15,7 @@
 
 ```mermaid
 flowchart LR
-  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>36 张表)]
+  SVC[service 层] -->|GORM| PG[(PostgreSQL<br/>35 张表)]
   SVC -->|PutObject/GetObject| MINIO[(MinIO<br/>novelworkbench)]
   SVC -->|HTTP SQL| MC[(Manticore<br/>nw_audit / nw_chunks)]
   REPO[repo 层] -->|SET/EXISTS| REDIS[(Redis<br/>nw:token:blacklist:*)]
@@ -91,7 +91,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ## 3. 表结构
 
-`AutoMigrate` 一次性声明 36 张表（`cmd/server/main.go`）。所有表统一含 `created_at timestamptz`（`autoCreateTime`）、`updated_at timestamptz`（`autoUpdateTime`）、`created_by varchar(40)` 与 `updated_by varchar(40)`，来自 `domain.BaseDO`，下表不再重复列出。
+`AutoMigrate` 一次性声明 36 张表（`cmd/server/main.go`）；其中 `audit_logs` 启动即被删除（审计已迁到 Manticore），因此 PostgreSQL 实际存活 35 张。所有表统一含 `created_at timestamptz`（`autoCreateTime`）、`updated_at timestamptz`（`autoUpdateTime`）、`created_by varchar(40)` 与 `updated_by varchar(40)`，来自 `domain.BaseDO`，下表不再重复列出。
 
 `created_by` / `updated_by` 由 GORM 回调自动填充（`pkg.RegisterActorCallbacks`）：`AuthMiddleware` 把当前登录用户 ULID 注入请求 context，回调在 `gorm:create` / `gorm:update` 之前写入对应列。显式赋值优先，不会被覆盖；系统任务（无登录态）留空串。
 
@@ -113,9 +113,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 `perm_code` 的全局唯一性由 `MenuService.Save` 调用 `MenuRepo.CountByPermCode` 校验（冲突返回 `ERR_CONFLICT`），数据库不建唯一索引以允许多行空值。
 
-**审计（Manticore `nw_audit`，非 PG 表）** — `audit_ulid`(PK) · `log_level_code`（`info`/`warn`/`error`，由 HTTP 状态推导） · `trace_id`（链路 ID，与响应包络 `trace_id` 同值） · `user_ulid` · `user_name`（登录名快照） · `action_code`（接口路径去 `/api/v1/` 前缀） · `request_path` · `request_method` · `target_type` · `target_ulid` · `resp_code` · `resp_message`(text) · `http_status`(int) · `latency_ms`(int) · `ip_addr` · `user_agent_text`(text) · `request_body`(text，凭据脱敏) · `resp_body`(text，采样上限 32KB) · `search_text`(text，全文检索列，由动作码/操作人/路径/说明/目标/链路拼接) · `created_at_ts`(bigint，毫秒时间戳，用于范围与排序)。建表语句带 `ngram_len=1 ngram_chars=cjk`，中文按字切分；每日 03:00 清理超过留存天数（默认 30，`audit_retention_days` 可调）的记录。PostgreSQL 里的历史 `audit_logs` 表在启动时自动删除。
+**审计（Manticore `nw_audit`，非 PG 表）** — `audit_ulid`(PK) · `log_level_code`（`info`/`warn`/`error`，由 HTTP 状态推导） · `span_type_code`（`http`/`workflow_step`/`ai_call`/`job`/`system`，一行一个 span） · `trace_id`（链路 ID，与响应包络 `trace_id` 同值） · `parent_span_code`（父 span 的动作码，链路根为空） · `root_span_flag`/`error_span_flag`/`warn_span_flag`/`ai_span_flag`（int 0/1 派生标记，写入时算好；Manticore 不支持 `CASE WHEN`，链路聚合筛选全靠这四列做 SUM） · `user_ulid` · `user_name`（登录名快照） · `action_code`（接口路径去 `/api/v1/` 前缀） · `action_name`（中文动作名，`pkg/audit_names.go` 映射，未登记回落动作码） · `model_name`（`ai_call` 才有） · `token_count`（`ai_call` 才有） · `request_path` · `request_method` · `target_type` · `target_ulid` · `resp_code` · `resp_message`(text) · `http_status`(int) · `latency_ms`(int) · `ip_addr` · `user_agent_text`(text) · `request_body`(text，凭据脱敏) · `resp_body`(text，采样上限 32KB) · `search_text`(text，全文检索列，由动作码/操作人/路径/说明/目标/链路拼接) · `created_at_ts`(bigint，毫秒时间戳，用于范围与排序)。列名一律反引号转义（`model_name` 是 Manticore 25.0 保留字）。建表语句带 `ngram_len=1 ngram_chars=cjk`，中文按字切分；每日在 `audit_purge_hour` 指定的整点（默认 03:00）清理超过留存天数（默认 30，`audit_retention_days` 可调）的记录。PostgreSQL 里的历史 `audit_logs` 表在启动时自动删除。
 
-写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`。中间件缓冲响应体（上限 32KB）解析包络（业务码与说明）并把响应体一并落库，普通响应不受影响。落库失败只告警，不阻断业务。`AuditRepo` 有 `Create`、`GetByULID`、`ListPage`、`ListByTrace`、`DeleteBefore`（按留存天数清理）；`ListPage` 支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤。
+写入方为 `pkg.AuditMiddleware`：仅记录 `POST` 请求，跳过 `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/chat/send`。中间件缓冲响应体（上限 32KB）解析包络（业务码与说明）并把响应体一并落库，普通响应不受影响。落库失败只告警，不阻断业务。`AuditRepo` 有 `Create`、`GetByULID`、`ListPage`、`ListTracePage`（链路聚合分页）、`ListSpansByTraceIDs`、`AuditStats`、`ListByTrace`、`DeleteBefore`（按留存天数清理）；记录视图支持级别 / 链路 ID / 目标类型 / 动作码 / 关键字 / 用户 / 日期区间过滤，链路视图共用同一套条件并额外支持 `span_type_code`。
 
 **login_logs** — `login_log_ulid`(PK) · `user_ulid`(IDX，命中用户，失败为空) · `login_account_text`(IDX,v128，登录名或邮箱) · `login_result_code`(IDX,v16，`success`/`failed`/`disabled`) · `fail_reason_text`(v256) · `ip_addr`(v64) · `user_agent_text`(v512)
 
@@ -125,7 +125,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ### 3.2 创作主数据（7 张）
 
-**projects** — `project_ulid`(PK) · `user_ulid`(IDX，归属用户) · `project_name`(v128) · `genre_code`(v32，无白名单) · `style_text`(v1024，文风提示词) · `synopsis_text`(v4096) · `project_status`(IDX,v16，`draft`/`serial`/`completed`，创建时固定 `draft`) · `total_word_count`(bigint，累计字数，由章节字数差增减)
+**projects** — `project_ulid`(PK) · `user_ulid`(IDX，归属用户) · `project_name`(v128) · `genre_code`(v32，无白名单) · `style_text`(v1024，文风提示词) · `synopsis_text`(v4096) · `project_status`(IDX,v16，`draft`/`serial`/`completed`，创建时固定 `draft`) · `total_word_count`(bigint，累计字数，由章节字数差增减) · `auto_target_word_count`(int，缺省 2500，一键开跑的每章字数) · `auto_gate_score`(int，缺省 80，体检通过分) · `auto_review_gate_flag`(bool，缺省 true，是否保留人工审核) · `auto_requirement_text`(v1000，每章注入的整体要求)
+
+末尾四列 `auto_*` 是「自动化默认值」：一次配置、长期复用，一键开跑与开跑向导据此填初值，请求里的同名字段只在本次生效、不回写项目。
 
 **volumes** — `volume_ulid`(PK) · `project_ulid`(IDX) · `volume_name`(v128) · `volume_order`(bigint) · `summary_text`(v2048)
 
@@ -171,9 +173,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 **chat_sessions** — `session_ulid`(PK) · `project_ulid`(IDX) · `user_ulid`(IDX) · `session_name`(v128，缺省取首条消息前 20 字)
 
-**chat_messages** — `message_ulid`(PK) · `session_ulid`(IDX) · `role_code`(v16，`user`/`assistant`/`system`) · `content_text`(text) · `reasoning_text`(text，完整思考过程) · `prompt_code`(v32，命中的指令提示词编码) · `tool_code_json`(text，本轮执行的工具编码 JSON 数组) · `ref_doc_json` / `ref_chapter_json` / `ref_summary_json` / `ref_character_json` / `ref_lore_json` / `ref_session_json`(text，各自的引用 ULID 数组) · `token_used_count`(int)
+**chat_messages** — `message_ulid`(PK) · `session_ulid`(IDX) · `role_code`(v16，`user`/`assistant`/`system`) · `content_text`(text) · `reasoning_text`(text，完整思考过程) · `prompt_code`(v32，命中的任务提示词编码) · `tool_code_json`(text，本轮执行的工具编码 JSON 数组) · `ref_doc_json` / `ref_chapter_json` / `ref_summary_json` / `ref_character_json` / `ref_lore_json` / `ref_session_json`(text，各自的引用 ULID 数组) · `token_used_count`(int)
 
-**prompts** — `prompt_ulid`(PK) · `prompt_code`(IDX,v32，对话中以 `/code` 触发) · `prompt_name`(v64) · `prompt_kind_code`(IDX,v16，`system` 身份 / `command` 指令) · `scope_code`(IDX,v16，`global`/`project`) · `project_ulid`(IDX，全局为空) · `domain_code`(IDX,v32，内置提示词的流程域) · `category_code`(v16，`write`/`revise`/`outline`/`setting`/`review`/`other`) · `description_text`(v256) · `prompt_text`(text，可含 `{{占位符}}`) · `enabled_flag`(bool) · `builtin_flag`(bool，内置不可删) · `asset_hash_text`(v64，出厂指纹) · `customized_flag`(bool，作者是否改过，改过则代码升级不覆盖) · `sort_order`(int)
+**prompts** — `prompt_ulid`(PK) · `prompt_code`(IDX,v32，对话中以 `/code` 触发) · `prompt_name`(v64) · `prompt_kind_code`(IDX,v16，`system` 身份（仅自建）/ `command` 任务（内置 8 条）) · `scope_code`(IDX,v16，`global`/`project`) · `project_ulid`(IDX，全局为空) · `domain_code`(IDX,v32，内置提示词的流程域) · `category_code`(v16，`write`/`revise`/`outline`/`setting`/`review`/`other`) · `description_text`(v256) · `prompt_text`(text，可含 `{{占位符}}`) · `enabled_flag`(bool) · `builtin_flag`(bool，内置不可删) · `asset_hash_text`(v64，出厂指纹) · `customized_flag`(bool，作者是否改过，改过则代码升级不覆盖) · `sort_order`(int)
 
 **tools** — `tool_ulid`(PK) · `tool_code`(UQ,v32，工具编码，模型据此调用) · `tool_name`(v64) · `tool_type_code`(IDX,v16，固定 `builtin`) · `description_text`(v256，模型可见的一句话说明) · `param_schema_json`(text，参数声明 JSON 数组) · `enabled_flag`(bool) · `builtin_flag`(bool) · `asset_hash_text`(v64，出厂指纹) · `customized_flag`(bool) · `sort_order`(int)
 
@@ -181,9 +183,9 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 ### 3.6 模型生态（5 张）
 
-**model_providers** — `provider_ulid`(PK) · `provider_name`(v64) · `protocol_code`(IDX,v16，`openai`/`anthropic`) · `base_url`(v256) · `api_key_cipher`(text，AES-256-GCM 封存) · `enabled_flag`(bool) · `sort_order`(int) · `remark_text`(v256) · `last_test_status_code`(v16，`untested`/`success`/`failed`) · `last_test_message`(v512，探测结果说明) · `last_test_at`(timestamptz，最近测试时间)
+**model_providers** — `provider_ulid`(PK) · `provider_name`(UQ,v64，唯一索引 `uk_model_provider_name`) · `protocol_code`(IDX,v16，`openai`/`anthropic`) · `base_url`(v256) · `api_key_cipher`(text，AES-256-GCM 封存) · `enabled_flag`(bool) · `sort_order`(int) · `remark_text`(v256) · `last_test_status_code`(v16，`untested`/`success`/`failed`) · `last_test_message`(v512，探测结果说明) · `last_test_at`(timestamptz，最近测试时间)
 
-**model_catalogs** — `model_ulid`(PK) · `provider_ulid`(IDX) · `model_name`(v128) · `model_label`(v64) · `temperature`(float64) · `max_tokens`(int) · `context_window_count`(int) · `enabled_flag`(bool) · `default_flag`(IDX,bool，全局唯一默认模型) · `sort_order`(int) · `remark_text`(v256) · `last_test_status_code`(v16) · `last_test_message`(v512) · `last_test_at`(timestamptz)
+**model_catalogs** — `model_ulid`(PK) · `provider_ulid`(IDX，与 `model_name` 组成唯一索引 `uk_model_catalog_provider_name`) · `model_name`(UQ,v128，同供应商下唯一) · `model_label`(v64) · `temperature`(float64) · `max_tokens`(int) · `context_window_count`(int) · `enabled_flag`(bool) · `default_flag`(IDX,bool，全局唯一默认模型) · `sort_order`(int) · `remark_text`(v256) · `last_test_status_code`(v16) · `last_test_message`(v512) · `last_test_at`(timestamptz)
 
 **model_role_grants** — `grant_ulid`(PK，`MGR_`) · `model_ulid`(IDX) · `role_ulid`(IDX)
 
@@ -191,7 +193,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 角色授权与用户授权是两条并列的授权路径：`ModelProviderService.ChatSpecOf` 判定时取「用户显式授权 ∪ 用户所属角色授权」，任一命中即放行。用户被删除时 `UserAdminService.Delete` 连带清理其 `model_user_grants` 行；角色授权则由 `ModelProviderRepo.ReplaceGrants` 整体覆盖。
 
-**model_usage_stats** — `usage_stat_ulid`(PK) · `stat_date`(UQ,v10，`YYYY-MM-DD`) · `provider_ulid`(UQ) · `provider_name`(v64，供应商名快照) · `model_name`(UQ,v128) · `call_type_code`(UQ,v16，`chat`) · `call_count`(bigint) · `success_count`(bigint) · `fail_count`(bigint) · `prompt_tokens`(bigint) · `completion_tokens`(bigint) · `total_tokens`(bigint) · `latency_ms_sum`(bigint)
+**model_usage_stats** — `usage_stat_ulid`(PK) · `stat_date`(UQ,v10，`YYYY-MM-DD`) · `provider_ulid`(UQ) · `provider_name`(v64，供应商名快照) · `model_name`(UQ,v128) · `call_type_code`(UQ,v16，`chat`) · `call_count`(bigint) · `success_count`(bigint) · `fail_count`(bigint) · `prompt_tokens`(bigint) · `completion_tokens`(bigint) · `total_tokens`(bigint) · `unknown_usage_count`(bigint，网关未返回 token 的调用次数) · `latency_ms_sum`(bigint)
 
 唯一索引 `uk_mus_dim` = `stat_date` + `provider_ulid` + `model_name` + `call_type_code` 四列组合。
 
@@ -209,7 +211,7 @@ GORM 仅在字段带 `not null` 标签时生成 `NOT NULL`。当前所有 DO 都
 
 **workflow_templates** — `template_ulid`(PK，`WFT_`) · `template_code`(UQ,v32，模板编码) · `template_name`(v64) · `description_text`(v256，一句话说明) · `step_schema_json`(text，步骤定义 JSON 数组) · `builtin_flag`(bool，内置模板随代码升级同步) · `enabled_flag`(bool) · `sort_order`(int)
 
-**workflow_runs** — `run_ulid`(PK，`WFR_`) · `project_ulid`(IDX) · `user_ulid`(IDX) · `template_code`(IDX,v32) · `template_name`(v64，模板名快照，模板改名不影响历史) · `run_status_code`(IDX,v20，`queued`/`running`/`waiting_review`/`paused`/`succeeded`/`failed`/`cancelled`) · `chapter_ulid_list_json`(text，目标章节 ULID 数组) · `params_json`(text，运行参数 JSON) · `current_index`(int，当前章节下标) · `current_step_index`(int，章节内步骤下标，审核恢复用) · `total_chapter_count`(int) · `finished_chapter_count`(int) · `trace_id`(IDX,v40，链路 ID，串联步骤审计) · `feedback_text`(text，审核退回意见，下一轮起草注入) · `candidate_text`(text，待入库正文，审核通过后写回章节) · `error_message`(v512) · `pause_requested_flag`(bool) · `cancel_requested_flag`(bool) · `started_at`(timestamptz) · `finished_at`(timestamptz)
+**workflow_runs** — `run_ulid`(PK，`WFR_`) · `project_ulid`(IDX) · `user_ulid`(IDX) · `template_code`(IDX,v32) · `template_name`(v64，模板名快照，模板改名不影响历史) · `run_status_code`(IDX,v20，`queued`/`running`/`waiting_review`/`paused`/`succeeded`/`failed`/`canceled`) · `chapter_ulid_list_json`(text，目标章节 ULID 数组) · `params_json`(text，运行参数 JSON) · `current_index`(int，当前章节下标) · `current_step_index`(int，章节内步骤下标，审核恢复用) · `total_chapter_count`(int) · `finished_chapter_count`(int) · `trace_id`(IDX,v40，链路 ID，串联步骤审计) · `feedback_text`(text，审核退回意见，下一轮起草注入) · `candidate_text`(text，待入库正文，审核通过后写回章节) · `error_message`(v512) · `pause_requested_flag`(bool) · `cancel_requested_flag`(bool) · `started_at`(timestamptz) · `finished_at`(timestamptz)
 
 `current_index` 与 `current_step_index` 组成二维游标：`current_index` 指向第几章，`current_step_index` 指向该章内的第几步。
 人工审核通过时两者一起前移，运行因此能从审核点继续而不是从头重跑。

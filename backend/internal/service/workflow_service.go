@@ -19,6 +19,10 @@ type WorkflowService struct {
 	chapterRepo    *repo.ChapterRepo     // 章节仓储（目标章节与定稿入库）
 	volumeRepo     *repo.VolumeRepo      // 卷仓储（无章节时新建章挂载）
 	continuityRepo *repo.ContinuityRepo  // 章节摘要仓储
+	characterRepo  *repo.CharacterRepo   // 角色卡与关系边（就绪度与上下文装配）
+	loreRepo       *repo.LoreRepo        // 世界观设定（就绪度与上下文装配）
+	outlineRepo    *repo.OutlineRepo     // 大纲节点与场景卡（就绪度与上下文装配）
+	promptRepo     *repo.PromptRepo      // 提示词仓储（就绪度检查提示词是否齐备）
 	promptSvc      *PromptService        // 提示词解析（按编码取正文）
 	providerSvc    *ModelProviderService // 模型选择与授权
 	aiClient       *ai.Client            // 模型网关（执行引擎用）
@@ -30,11 +34,13 @@ type WorkflowService struct {
 // NewWorkflowService 构造工作流服务（执行器在同包内装配，避免 service 之间循环依赖）。
 func NewWorkflowService(workflowRepo *repo.WorkflowRepo, projectRepo *repo.ProjectRepo,
 	chapterRepo *repo.ChapterRepo, volumeRepo *repo.VolumeRepo, continuityRepo *repo.ContinuityRepo,
-	promptSvc *PromptService, providerSvc *ModelProviderService, aiClient *ai.Client,
-	notifySvc *NotificationService) *WorkflowService {
+	characterRepo *repo.CharacterRepo, loreRepo *repo.LoreRepo, outlineRepo *repo.OutlineRepo,
+	promptRepo *repo.PromptRepo, promptSvc *PromptService, providerSvc *ModelProviderService,
+	aiClient *ai.Client, notifySvc *NotificationService) *WorkflowService {
 	svc := &WorkflowService{
 		workflowRepo: workflowRepo, projectRepo: projectRepo, chapterRepo: chapterRepo,
-		volumeRepo: volumeRepo, continuityRepo: continuityRepo, promptSvc: promptSvc,
+		volumeRepo: volumeRepo, continuityRepo: continuityRepo, characterRepo: characterRepo,
+		loreRepo: loreRepo, outlineRepo: outlineRepo, promptRepo: promptRepo, promptSvc: promptSvc,
 		providerSvc: providerSvc, aiClient: aiClient, notifySvc: notifySvc,
 	}
 	svc.runner = newWorkflowRunner(svc)
@@ -153,4 +159,3 @@ func (s *WorkflowService) CreateRun(ctx context.Context, userULID string, req *d
 	}
 	return vo, nil
 }
-

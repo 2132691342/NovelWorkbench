@@ -27,6 +27,8 @@ export interface NWRoleVo {
   remark_text: string
   perm_codes: string[]
   builtin_flag: boolean
+  /** 挂载该角色的用户数（后端实时统计，删除前的判断依据） */
+  user_count: number
   created_at: string
   updated_at: string
 }
@@ -35,10 +37,20 @@ export interface NWRoleVo {
 export interface NWAuditVo {
   audit_ulid: string
   log_level_code: string
+  /** span 类型：http / workflow_step / ai_call / job / system */
+  span_type_code: string
   trace_id: string
+  /** 父 span 的动作码（顶级 span 为空） */
+  parent_span_code: string
   user_ulid: string
   user_name: string
   action_code: string
+  /** 动作中文名（后端按动作码映射，历史行可能为空） */
+  action_name: string
+  /** AI 调用的模型名（非 AI 为空） */
+  model_name: string
+  /** AI 调用消耗 token（非 AI 为 0） */
+  token_count: number
   request_path: string
   request_method: string
   target_type: string
@@ -69,6 +81,8 @@ export interface NWUserAdminListReqVo {
   page_size: number
   keyword_text?: string
   user_status_code?: string
+  /** 角色编码过滤（空为全部角色；未知编码返回空页） */
+  role_code?: string
 }
 
 /** 创建用户请求（字段对齐后端 UserAdminCreateREQ） */
@@ -116,6 +130,8 @@ export interface NWAuditListReqVo {
   page_num: number
   page_size: number
   log_level_code?: string
+  /** span 类型过滤（空为全部） */
+  span_type_code?: string
   trace_id?: string
   target_type?: string
   action_code?: string
@@ -123,6 +139,10 @@ export interface NWAuditListReqVo {
   user_ulid?: string
   date_from?: string
   date_to?: string
+  /** 精确起始时刻 RFC3339（优先于 date_from，快捷范围用） */
+  time_from?: string
+  /** 精确结束时刻 RFC3339（优先于 date_to） */
+  time_to?: string
 }
 
 // ============================================================
@@ -276,23 +296,82 @@ export function retryAdminJob(jobUlid: string): Promise<NWJobVo> {
 /** 动作码筛选项（带条数，字段对齐后端 AuditActionOptionVO） */
 export interface NWAuditActionOptionVo {
   action_code: string
+  /** 动作中文名（历史行可能为空） */
+  action_name: string
   total: number
 }
 
-/** 链路时间线（字段对齐后端 AuditTraceVO） */
+/** 链路时间线（字段对齐后端 AuditTraceVO，含请求/响应摘要） */
 export interface NWAuditTraceVo {
   trace_id: string
   total: number
-  item_list: NWAuditVo[]
+  item_list: NWAuditDetailVo[]
 }
 
-/** 审计留存策略（字段对齐后端 AuditRetentionVO） */
+/** 审计留存策略（字段对齐 AuditRetentionVO） */
 export interface NWAuditRetentionVo {
   retention_days: number
+  /** 每日清理时刻（0–23，本地时区整点） */
+  purge_hour: number
   total_count: number
+  /** 登录日志总条数（与审计同一留存窗口） */
+  login_log_total_count: number
+  /** 本次清理删除的审计条数 */
   purged_count: number
+  /** 本次清理删除的登录日志条数 */
+  login_log_purged_count: number
   last_purged_at: string
-  next_purge_at_text: string
+  /** 下次清理时间（RFC3339，后端按配置真实计算） */
+  next_purge_at: string
+}
+
+/** 链路摘要（字段对齐 AuditTraceSummaryVO：一行一次入口请求） */
+export interface NWAuditTraceSummaryVo {
+  trace_id: string
+  user_ulid: string
+  user_name: string
+  root_action_code: string
+  root_action_name: string
+  root_request_path: string
+  log_level_code: string
+  http_status: number
+  resp_code: string
+  resp_message: string
+  span_count: number
+  ai_call_count: number
+  token_count: number
+  total_latency_ms: number
+  slowest_span_ms: number
+  slowest_action_name: string
+  started_at: string
+  finished_at: string
+}
+
+/** 链路列表查询请求（字段对齐 AuditTraceListREQ） */
+export interface NWAuditTraceListReqVo {
+  page_num: number
+  page_size: number
+  log_level_code?: string
+  keyword_text?: string
+  user_ulid?: string
+  action_code?: string
+  span_type_code?: string
+  time_from?: string
+  time_to?: string
+  date_from?: string
+  date_to?: string
+}
+
+/** 审计概览统计（字段对齐 AuditStatsVO） */
+export interface NWAuditStatsVo {
+  trace_count: number
+  span_count: number
+  error_trace_count: number
+  warn_trace_count: number
+  ai_call_count: number
+  token_count: number
+  avg_latency_ms: number
+  slow_trace_count: number
 }
 
 /** 动作码筛选项 */
@@ -313,4 +392,16 @@ export function fetchAuditRetention(): Promise<NWAuditRetentionVo> {
 /** 立即执行一次留存清理 */
 export function purgeAdminAudit(): Promise<NWAuditRetentionVo> {
   return post<NWAuditRetentionVo>('/admin/audit/purge', {})
+}
+
+/** 链路分页列表（审计页主视图：一行一次入口请求） */
+export function listAdminAuditTraces(
+  req: NWAuditTraceListReqVo
+): Promise<NWPageDto<NWAuditTraceSummaryVo>> {
+  return post<NWPageDto<NWAuditTraceSummaryVo>>('/admin/audit/trace/list', req)
+}
+
+/** 审计概览统计（顶部卡片） */
+export function fetchAdminAuditStats(req: NWAuditTraceListReqVo): Promise<NWAuditStatsVo> {
+  return post<NWAuditStatsVo>('/admin/audit/stats', req)
 }

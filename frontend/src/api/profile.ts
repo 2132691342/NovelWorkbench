@@ -9,6 +9,10 @@ export interface NWProfileVo {
   avatar_url: string
   user_status_code: string
   role_codes: string[]
+  /** 角色名称列表（标签云展示用） */
+  role_name_list: string[]
+  /** 权限码并集（"*" 表示全部权限） */
+  perm_codes: string[]
   remark_text: string
   created_at: string
   updated_at: string

@@ -127,8 +127,8 @@
       <div class="prompt-form__row">
         <ElFormItem label="种类">
           <ElSelect v-model="form.prompt_kind_code" :disabled="isBuiltin" class="prompt-form__select">
-            <ElOption label="身份提示词（会话常驻，系统级）" value="system" />
-            <ElOption label="指令提示词（/ 触发，系统级）" value="command" />
+            <ElOption label="身份提示词（可选自建，会话常驻）" value="system" />
+            <ElOption label="任务提示词（/ 触发，系统级）" value="command" />
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="分类">

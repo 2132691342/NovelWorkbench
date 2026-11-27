@@ -9,6 +9,7 @@ import (
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
+	"github.com/2132691342/NovelWorkbench/backend/internal/repo"
 )
 
 // ListModels 查询模型目录（可按供应商过滤；带供应商快照、角色授权与角色名）。
@@ -133,6 +134,10 @@ func (s *ModelProviderService) SaveModel(ctx context.Context, req *domain.ModelC
 			}
 		}
 		if err := s.providerRepo.CreateModel(ctx, do); err != nil {
+			if repo.IsDuplicateKey(err) {
+				return domain.ModelCatalogVO{}, pkg.NewBizError(domain.RespCodeConflict,
+					"该供应商下已存在同名模型："+do.ModelName)
+			}
 			return domain.ModelCatalogVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "模型创建失败", err)
 		}
 		if err := s.providerRepo.ReplaceGrants(ctx, do.ModelULID, req.RoleULIDList); err != nil {
@@ -175,6 +180,10 @@ func (s *ModelProviderService) SaveModel(ctx context.Context, req *domain.ModelC
 		fields["default_flag"] = *req.DefaultFlag
 	}
 	if err := s.providerRepo.UpdateModel(ctx, req.ModelULID, fields); err != nil {
+		if repo.IsDuplicateKey(err) {
+			return domain.ModelCatalogVO{}, pkg.NewBizError(domain.RespCodeConflict,
+				"该供应商下已存在同名模型："+strings.TrimSpace(req.ModelName))
+		}
 		return domain.ModelCatalogVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "模型更新失败", err)
 	}
 	if req.RoleULIDList != nil {

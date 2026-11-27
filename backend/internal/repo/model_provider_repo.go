@@ -4,13 +4,39 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/domain"
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
 )
+
+// ErrDuplicateKey 唯一索引冲突（供应商同名、同供应商下模型同名），供 service 层映射为业务冲突码。
+var ErrDuplicateKey = errors.New("duplicate key")
+
+// IsDuplicateKey 判断错误是否由唯一索引冲突引起（PG 23505 / SQLite UNIQUE 约束）。
+func IsDuplicateKey(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrDuplicateKey) || errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "duplicate key") || strings.Contains(message, "unique constraint") ||
+		strings.Contains(message, "sqlstate 23505")
+}
+
+// wrapWriteError 写入错误归一：唯一索引冲突转成哨兵错误，其余保留原始原因。
+func wrapWriteError(action string, err error) error {
+	if IsDuplicateKey(err) {
+		return fmt.Errorf("%s: %w", action, ErrDuplicateKey)
+	}
+	return fmt.Errorf("%s: %w", action, err)
+}
 
 // ModelProviderRepo 模型生态持久化仓储（供应商 + 模型目录 + 角色授权）。
 type ModelProviderRepo struct {
@@ -22,20 +48,20 @@ func NewModelProviderRepo(db *gorm.DB) *ModelProviderRepo {
 	return &ModelProviderRepo{db: db}
 }
 
-// Create 插入供应商记录。
+// Create 插入供应商记录（同名供应商冲突时返回 ErrDuplicateKey）。
 func (r *ModelProviderRepo) Create(ctx context.Context, do *domain.ModelProviderDO) error {
 	if err := r.db.WithContext(ctx).Create(do).Error; err != nil {
-		return fmt.Errorf("create model provider: %w", err)
+		return wrapWriteError("create model provider", err)
 	}
 	return nil
 }
 
-// Update 按列名增量更新供应商（map 更新防零值丢失）。
+// Update 按列名增量更新供应商（map 更新防零值丢失；同名冲突返回 ErrDuplicateKey）。
 func (r *ModelProviderRepo) Update(ctx context.Context, providerULID string, fields map[string]any) error {
 	result := r.db.WithContext(ctx).Model(&domain.ModelProviderDO{}).
 		Where("provider_ulid = ?", providerULID).Updates(fields)
 	if result.Error != nil {
-		return fmt.Errorf("update model provider: %w", result.Error)
+		return wrapWriteError("update model provider", result.Error)
 	}
 	return nil
 }
@@ -72,29 +98,35 @@ func (r *ModelProviderRepo) List(ctx context.Context) ([]domain.ModelProviderDO,
 	return dos, nil
 }
 
-// Count 统计供应商数量（启动播种判空用）。
-func (r *ModelProviderRepo) Count(ctx context.Context) (int64, error) {
-	var count int64
-	if err := r.db.WithContext(ctx).Model(&domain.ModelProviderDO{}).Count(&count).Error; err != nil {
-		return 0, fmt.Errorf("count model providers: %w", err)
+// FindByNameOrBaseURL 按供应商名称或网关地址查询（启动播种判重：配置只生效一次）。
+func (r *ModelProviderRepo) FindByNameOrBaseURL(ctx context.Context, providerName, baseURL string) (*domain.ModelProviderDO, error) {
+	var do domain.ModelProviderDO
+	err := r.db.WithContext(ctx).
+		Where("provider_name = ? OR base_url = ?", providerName, baseURL).
+		Order("created_at ASC").First(&do).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find model provider by name or base url: %w", err)
 	}
-	return count, nil
+	return &do, nil
 }
 
-// CreateModel 插入模型目录记录。
+// CreateModel 插入模型目录记录（同供应商下模型名冲突时返回 ErrDuplicateKey）。
 func (r *ModelProviderRepo) CreateModel(ctx context.Context, do *domain.ModelCatalogDO) error {
 	if err := r.db.WithContext(ctx).Create(do).Error; err != nil {
-		return fmt.Errorf("create model catalog: %w", err)
+		return wrapWriteError("create model catalog", err)
 	}
 	return nil
 }
 
-// UpdateModel 按列名增量更新模型目录。
+// UpdateModel 按列名增量更新模型目录（同供应商下模型名冲突返回 ErrDuplicateKey）。
 func (r *ModelProviderRepo) UpdateModel(ctx context.Context, modelULID string, fields map[string]any) error {
 	result := r.db.WithContext(ctx).Model(&domain.ModelCatalogDO{}).
 		Where("model_ulid = ?", modelULID).Updates(fields)
 	if result.Error != nil {
-		return fmt.Errorf("update model catalog: %w", result.Error)
+		return wrapWriteError("update model catalog", result.Error)
 	}
 	return nil
 }
@@ -156,13 +188,22 @@ func (r *ModelProviderRepo) ListLegacyProviderModels(ctx context.Context) ([]Leg
 	return rows, nil
 }
 
-// CountModels 统计模型目录总数（旧数据迁移判空用）。
-func (r *ModelProviderRepo) CountModels(ctx context.Context) (int64, error) {
-	var count int64
-	if err := r.db.WithContext(ctx).Model(&domain.ModelCatalogDO{}).Count(&count).Error; err != nil {
-		return 0, fmt.Errorf("count model catalogs: %w", err)
+// ListProviderULIDsWithModel 查询已有模型目录行的供应商 ULID（旧数据迁移按供应商判重）。
+func (r *ModelProviderRepo) ListProviderULIDsWithModel(ctx context.Context) ([]string, error) {
+	var ulidList []string
+	if err := r.db.WithContext(ctx).Model(&domain.ModelCatalogDO{}).
+		Distinct().Pluck("provider_ulid", &ulidList).Error; err != nil {
+		return nil, fmt.Errorf("list providers with model: %w", err)
 	}
-	return count, nil
+	return ulidList, nil
+}
+
+// HasLegacyModelColumn 旧版 chat_model_name 列是否仍存在（新库无此列，迁移直接跳过）。
+func (r *ModelProviderRepo) HasLegacyModelColumn(ctx context.Context) (bool, error) {
+	if !r.db.WithContext(ctx).Migrator().HasTable(&domain.ModelProviderDO{}) {
+		return false, nil
+	}
+	return r.db.WithContext(ctx).Migrator().HasColumn("model_providers", "chat_model_name"), nil
 }
 
 // CountModelsByProvider 统计供应商下的模型数量。

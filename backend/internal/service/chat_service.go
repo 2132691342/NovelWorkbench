@@ -94,6 +94,7 @@ type ChatService struct {
 	providerSvc      *ModelProviderService // 供应商服务（模型选择）
 	aiClient         *ai.Client            // 模型网关（流式调用与用量上报）
 	db               *gorm.DB              // 事务入口
+	auditRecorder    pkg.AuditRecorder     // 审计写入（AI 调用留痕，可为 nil）
 }
 
 // NewChatService 构造对话服务。
@@ -109,6 +110,11 @@ func NewChatService(chatRepo *repo.ChatRepo, projectRepo *repo.ProjectRepo, chap
 		settingRepo: settingRepo, promptSvc: promptSvc, knowledgeService: knowledgeService,
 		toolService: toolService, providerSvc: providerSvc, aiClient: aiClient, db: db,
 	}
+}
+
+// SetAuditRecorder 注入审计写入器（AI 对话留痕，链路 ID 取请求的 X-Request-ID）。
+func (s *ChatService) SetAuditRecorder(recorder pkg.AuditRecorder) {
+	s.auditRecorder = recorder
 }
 
 // SessionCreate 创建会话（会话名缺省时由首条消息前 20 字回填）。
@@ -280,8 +286,26 @@ func (s *ChatService) Send(ctx context.Context, userULID string, req *domain.Cha
 		userInput:          userInput,
 		toolInfoList:       toolInfoList,
 	}
-	replyText, reasoningText, completed := s.streamChat(ctx, events, messages, providerSpec,
-		countMessagesRunes(messages))
+	chatStartedAt := time.Now()
+	replyText, reasoningText, completed := s.streamChat(ctx, events, messages, providerSpec)
+	// AI 调用留痕：一次对话一条 ai_call span（只记模型、token 与耗时，不落提示词原文）
+	chatLatency := time.Since(chatStartedAt)
+	chatTokenCount := estimateTokenCount(countMessagesRunes(messages),
+		utf8.RuneCountInString(replyText)+utf8.RuneCountInString(reasoningText))
+	var chatCallErr error
+	if !completed {
+		chatCallErr = pkg.NewBizError(domain.RespCodeAIProviderError, "AI 生成未完成（客户端断开或模型失败）")
+	}
+	recordAICall(ctx, s.auditRecorder, aiCallMeta{
+		ActionCode:  domain.AuditActionAIChat,
+		ActionName:  "AI 对话",
+		TraceID:     pkg.RequestIDFromContext(ctx),
+		UserULID:    userULID,
+		TargetType:  "chat_session",
+		TargetULID:  session.SessionULID,
+		ModelName:   providerSpec.ChatModelName,
+		PromptChars: countMessagesRunes(messages),
+	}, chatLatency, chatTokenCount, chatCallErr)
 	if !completed {
 		return nil // 客户端断开或生成失败：不落 assistant 消息，用户消息保留对话痕迹
 	}

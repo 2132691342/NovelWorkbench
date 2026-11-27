@@ -167,6 +167,8 @@ func registerAdminRoutes(rg *gin.RouterGroup, deps RouterDeps) {
 	auditGroup.Use(pkg.RequirePermMiddleware(deps.PermChecker, domain.PermAuditRead))
 	{
 		auditGroup.POST("/list", deps.AuditAPI.List)
+		auditGroup.POST("/trace/list", deps.AuditAPI.TraceList)
+		auditGroup.POST("/stats", deps.AuditAPI.Stats)
 		auditGroup.GET("/detail/:AuditULID", deps.AuditAPI.Detail)
 		auditGroup.GET("/trace/:TraceID", deps.AuditAPI.Trace)
 		auditGroup.GET("/action_options", deps.AuditAPI.ActionOptions)
@@ -230,8 +232,11 @@ func registerVolumeRoutes(rg *gin.RouterGroup, handler *VolumeAPI) {
 // registerWorkflowRoutes 注册工作流路由（模板与运行对登录用户开放，操作按运行归属校验）。
 func registerWorkflowRoutes(rg *gin.RouterGroup, handler *WorkflowAPI) {
 	rg.GET("/workflow/template/list", handler.TemplateList)
+	rg.GET("/workflow/readiness/:ProjectULID", handler.Readiness)
 	rg.POST("/workflow/run/create", handler.RunCreate)
+	rg.POST("/workflow/run/quick_start", handler.RunQuickStart)
 	rg.POST("/workflow/run/list", handler.RunList)
+	rg.GET("/workflow/run/pending", handler.RunPending)
 	rg.GET("/workflow/run/detail/:RunULID", handler.RunDetail)
 	rg.GET("/workflow/run/stats", handler.RunStats)
 	rg.POST("/workflow/run/approve", handler.RunApprove)

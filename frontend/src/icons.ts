@@ -56,6 +56,28 @@ import stop from '@iconify-icons/mdi/stop'
 import sync from '@iconify-icons/mdi/sync'
 import tagOutline from '@iconify-icons/mdi/tag-outline'
 import toolboxOutline from '@iconify-icons/mdi/toolbox-outline'
+import accountCheckOutline from '@iconify-icons/mdi/account-check-outline'
+import backupRestore from '@iconify-icons/mdi/backup-restore'
+import checkCircleOutline from '@iconify-icons/mdi/check-circle-outline'
+import checkDecagram from '@iconify-icons/mdi/check-decagram'
+import chevronLeft from '@iconify-icons/mdi/chevron-left'
+import chevronRight from '@iconify-icons/mdi/chevron-right'
+import clipboardCheckOutline from '@iconify-icons/mdi/clipboard-check-outline'
+import deleteSweepOutline from '@iconify-icons/mdi/delete-sweep-outline'
+import formatListBulleted from '@iconify-icons/mdi/format-list-bulleted'
+import helpCircle from '@iconify-icons/mdi/help-circle'
+import inboxArrowDownOutline from '@iconify-icons/mdi/inbox-arrow-down-outline'
+import magnify from '@iconify-icons/mdi/magnify'
+import magnifyScan from '@iconify-icons/mdi/magnify-scan'
+import openInNew from '@iconify-icons/mdi/open-in-new'
+import play from '@iconify-icons/mdi/play'
+import playCircleOutline from '@iconify-icons/mdi/play-circle-outline'
+import restart from '@iconify-icons/mdi/restart'
+import rocketLaunchOutline from '@iconify-icons/mdi/rocket-launch-outline'
+import timelineClockOutline from '@iconify-icons/mdi/timeline-clock-outline'
+import transitConnectionVariant from '@iconify-icons/mdi/transit-connection-variant'
+import translate from '@iconify-icons/mdi/translate'
+import tuneVariant from '@iconify-icons/mdi/tune-variant'
 import viewDashboard from '@iconify-icons/mdi/view-dashboard'
 import viewQuiltOutline from '@iconify-icons/mdi/view-quilt-outline'
 import wand from '@iconify-icons/mdi/wand'
@@ -117,6 +139,28 @@ export const icons = {
   'mdi:sync': sync,
   'mdi:tag-outline': tagOutline,
   'mdi:toolbox-outline': toolboxOutline,
+  'mdi:account-check-outline': accountCheckOutline,
+  'mdi:backup-restore': backupRestore,
+  'mdi:check-circle-outline': checkCircleOutline,
+  'mdi:check-decagram': checkDecagram,
+  'mdi:chevron-left': chevronLeft,
+  'mdi:chevron-right': chevronRight,
+  'mdi:clipboard-check-outline': clipboardCheckOutline,
+  'mdi:delete-sweep-outline': deleteSweepOutline,
+  'mdi:format-list-bulleted': formatListBulleted,
+  'mdi:help-circle': helpCircle,
+  'mdi:inbox-arrow-down-outline': inboxArrowDownOutline,
+  'mdi:magnify': magnify,
+  'mdi:magnify-scan': magnifyScan,
+  'mdi:open-in-new': openInNew,
+  'mdi:play': play,
+  'mdi:play-circle-outline': playCircleOutline,
+  'mdi:restart': restart,
+  'mdi:rocket-launch-outline': rocketLaunchOutline,
+  'mdi:timeline-clock-outline': timelineClockOutline,
+  'mdi:transit-connection-variant': transitConnectionVariant,
+  'mdi:translate': translate,
+  'mdi:tune-variant': tuneVariant,
   'mdi:view-dashboard': viewDashboard,
   'mdi:view-quilt-outline': viewQuiltOutline,
   'mdi:wand': wand

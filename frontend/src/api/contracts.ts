@@ -49,11 +49,19 @@ export interface NWProjectItemVo {
   updated_at: string
 }
 
-/** 系统配置项 */
+/** 系统配置项（字段对齐后端 SettingVO） */
 export interface NWSettingItemVo {
   setting_key: string
   setting_value: string
   setting_desc: string
+  /** 值类型：int/bool/text，决定渲染数字输入、开关还是文本框 */
+  setting_value_type: string
+  /** 默认值（白名单外的历史键为空串） */
+  setting_default_text: string
+  /** 合法最小值（仅 int 有效，0 表示无下限声明） */
+  setting_value_min: number
+  /** 合法最大值（仅 int 有效，0 表示无上限声明） */
+  setting_value_max: number
 }
 
 /** 提示词视图（字段对齐后端 PromptVO） */
@@ -116,6 +124,8 @@ export interface NWMenuVo {
   menu_type_code: string
   scope_code: string
   route_path: string
+  /** 前端组件路径（views/Xxx/index，空为无组件） */
+  component_path: string
   icon_code: string
   perm_code: string
   visible_flag: boolean
@@ -134,6 +144,8 @@ export interface NWPermItemVo {
   menu_code: string
   menu_name: string
   builtin_flag: boolean
+  /** 引用该权限的角色名称（空数组表示尚无角色引用） */
+  role_name_list: string[]
 }
 
 /** 权限目录分组（字段对齐后端 PermGroupVO） */
@@ -166,6 +178,11 @@ export interface NWProjectVo {
   total_word_count: number
   volume_count: number
   chapter_count: number
+  /** 自动化默认参数：开跑向导与一键开跑直接复用 */
+  auto_target_word_count: number
+  auto_gate_score: number
+  auto_review_gate_flag: boolean
+  auto_requirement_text: string
   created_at: string
   updated_at: string
 }
@@ -291,7 +308,7 @@ export interface NWProjectCreateReqVo {
   synopsis_text?: string
 }
 
-/** 更新项目请求（字段对齐后端 ProjectUpdateREQ） */
+/** 更新项目请求（字段对齐后端 ProjectUpdateREQ；除 project_name 外一律三态：缺省不改、空串清空） */
 export interface NWProjectUpdateReqVo {
   project_ulid: string
   project_name: string
@@ -299,6 +316,11 @@ export interface NWProjectUpdateReqVo {
   style_text?: string
   synopsis_text?: string
   project_status?: string
+  /** 自动化默认参数：缺省不改，传值覆盖 */
+  auto_target_word_count?: number
+  auto_gate_score?: number
+  auto_review_gate_flag?: boolean
+  auto_requirement_text?: string
 }
 
 /** 项目分页查询请求（字段对齐后端 ProjectListREQ） */

@@ -10,7 +10,6 @@ import (
 	"io"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/cloudwego/eino/schema"
 
@@ -22,23 +21,20 @@ import (
 // streamChat 消费模型流并转发 thinking/chunk 事件（15s 无输出发心跳，客户端断开即中止）。
 // completed=false 表示客户端断开或生成失败（生成失败已发 error 事件）。
 func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter,
-	messages []*schema.Message, providerSpec ai.ProviderSpec, promptRunes int) (string, string, bool) {
-	startedAt := time.Now()
+	messages []*schema.Message, providerSpec ai.ProviderSpec) (string, string, bool) {
 	var reply strings.Builder
 	var reasoning strings.Builder
 	toolCodeList := make([]string, 0, 2)
 	lastRoundKey := ""
 	// 工具往返：模型调用工具 → 执行 → 回填结果 → 继续生成。上限防止模型反复调用同一工具打转。
 	for round := 0; round < chatToolRoundLimit; round++ {
-		outcome, emittedText := s.streamOnce(ctx, events, messages, providerSpec)
+		outcome := s.streamOnce(ctx, events, messages, providerSpec)
 		if !outcome.ok {
-			s.recordStreamUsage(providerSpec, promptRunes, emittedText, reasoning.String(), startedAt)
 			return "", "", false
 		}
 		reply.WriteString(outcome.contentText)
 		reasoning.WriteString(outcome.reasoningText)
 		if len(outcome.toolCallList) == 0 {
-			s.recordStreamUsage(providerSpec, promptRunes, reply.String(), reasoning.String(), startedAt)
 			events.toolCodeList = toolCodeList
 			return reply.String(), reasoning.String(), true
 		}
@@ -59,7 +55,6 @@ func (s *ChatService) streamChat(ctx context.Context, events *chatEventWriter,
 		}
 	}
 	// 往返超限：仍把已有正文交给前端，并提示停止继续调用工具
-	s.recordStreamUsage(providerSpec, promptRunes, reply.String(), reasoning.String(), startedAt)
 	events.toolCodeList = toolCodeList
 	if reply.Len() == 0 {
 		_ = events.emit(domain.StreamEventError, "", "工具调用次数过多，已中止本轮生成", nil)
@@ -77,14 +72,28 @@ type streamOutcome struct {
 }
 
 // streamOnce 跑一轮流式生成，把增量事件转发给前端并累积完整消息。
+// 用量按「一次模型调用一条记录」在流结束时上报：成功带真实 token，失败带已收集到的 token。
 func (s *ChatService) streamOnce(ctx context.Context, events *chatEventWriter,
-	messages []*schema.Message, providerSpec ai.ProviderSpec) (streamOutcome, string) {
+	messages []*schema.Message, providerSpec ai.ProviderSpec) (outcome streamOutcome) {
 	startedAt := time.Now()
+	firstChunkAt := time.Time{}
+	var usage ai.StreamUsage
+	defer func() {
+		latency := time.Since(startedAt)
+		if !firstChunkAt.IsZero() {
+			latency = time.Since(firstChunkAt) // 真实生成耗时：首包 → 流结束
+		}
+		if outcome.ok {
+			s.aiClient.RecordStreamUsage(providerSpec, usage.TokenUsage(), latency)
+			return
+		}
+		s.aiClient.RecordStreamFailure(providerSpec, usage.TokenUsage(), latency)
+	}()
 	stream, err := s.aiClient.StreamWithTools(ctx, providerSpec, messages, events.toolInfoList)
 	if err != nil {
 		pkg.SLogger().Errorw("模型流式生成启动失败", "error", err)
 		_ = events.emit(domain.StreamEventError, "", "AI 生成启动失败："+err.Error(), nil)
-		return streamOutcome{}, ""
+		return streamOutcome{}
 	}
 	defer stream.Close()
 	type streamItem struct {
@@ -115,11 +124,11 @@ func (s *ChatService) streamOnce(ctx context.Context, events *chatEventWriter,
 	for {
 		select {
 		case <-ctx.Done():
-			return streamOutcome{}, reply.String() // 客户端断开：中止生成并停止落库
+			// 客户端断开：中止生成；模型已被调用，用量仍按一次失败调用上报
+			return streamOutcome{contentText: reply.String()}
 		case item, ok := <-items:
 			if !ok {
-				outcome := streamOutcome{contentText: reply.String(), reasoningText: reasoning.String(), ok: false}
-				return outcome, reply.String()
+				return streamOutcome{contentText: reply.String(), reasoningText: reasoning.String()}
 			}
 			if item.err != nil {
 				if errors.Is(item.err, io.EOF) {
@@ -127,26 +136,30 @@ func (s *ChatService) streamOnce(ctx context.Context, events *chatEventWriter,
 					if mergeErr != nil {
 						pkg.SLogger().Errorw("工具调用分片合并失败", "error", mergeErr)
 						_ = events.emit(domain.StreamEventError, "", "工具调用解析失败，请重试", nil)
-						return streamOutcome{}, reply.String()
+						return streamOutcome{contentText: reply.String()}
 					}
 					return streamOutcome{
 						contentText: reply.String(), reasoningText: reasoning.String(),
 						toolCallList: toolCalls, ok: true,
-					}, reply.String()
+					}
 				}
 				pkg.SLogger().Errorw("模型流式生成失败", "error", item.err)
 				_ = events.emit(domain.StreamEventError, "", "AI 生成失败，请稍后重试", nil)
-				return streamOutcome{}, reply.String()
+				return streamOutcome{contentText: reply.String()}
 			}
 			if item.chunk == nil {
 				continue
 			}
+			if firstChunkAt.IsZero() {
+				firstChunkAt = time.Now()
+			}
+			usage.Add(item.chunk)
 			lastActivityAt = time.Now()
 			if item.chunk.ReasoningContent != "" {
 				reasoning.WriteString(item.chunk.ReasoningContent)
 				if err := events.emit(domain.StreamEventThinking, item.chunk.ReasoningContent, "", nil); err != nil {
 					pkg.SLogger().Warnw("SSE 思考事件写入失败，中止生成", "error", err)
-					return streamOutcome{}, reply.String()
+					return streamOutcome{contentText: reply.String()}
 				}
 				resetTimer(pingTimer)
 			}
@@ -160,18 +173,18 @@ func (s *ChatService) streamOnce(ctx context.Context, events *chatEventWriter,
 			reply.WriteString(item.chunk.Content)
 			if err := events.emit(domain.StreamEventChunk, item.chunk.Content, "", nil); err != nil {
 				pkg.SLogger().Warnw("SSE 事件写入失败，中止生成", "error", err)
-				return streamOutcome{}, reply.String()
+				return streamOutcome{contentText: reply.String()}
 			}
 			resetTimer(pingTimer)
 		case <-pingTimer.C:
 			if err := events.writer.Ping(); err != nil {
-				return streamOutcome{}, reply.String()
+				return streamOutcome{contentText: reply.String()}
 			}
 			if time.Since(lastActivityAt) > chatStreamIdleTimeout {
 				pkg.SLogger().Errorw("模型流式生成长时间无分片，判定网关已断",
 					"session_ulid", events.sessionULID, "idle_seconds", int(time.Since(lastActivityAt).Seconds()))
 				_ = events.emit(domain.StreamEventError, "", "模型长时间无响应，请重试或换用响应更快的模型", nil)
-				return streamOutcome{}, reply.String()
+				return streamOutcome{contentText: reply.String()}
 			}
 			pingTimer.Reset(chatPingInterval)
 		}
@@ -265,17 +278,6 @@ func (s *ChatService) executeToolCalls(ctx context.Context, events *chatEventWri
 		resultList = append(resultList, schema.ToolMessage(resultText, call.ID, schema.WithToolName(toolCode)))
 	}
 	return assistantTurn, resultList, codeList, nil
-}
-
-// recordStreamUsage 流结束后补记 token 用量（首包已按成功调用计次）。
-func (s *ChatService) recordStreamUsage(providerSpec ai.ProviderSpec, promptRunes int,
-	replyText, reasoningText string, startedAt time.Time) {
-	usage := &schema.TokenUsage{
-		PromptTokens:     promptRunes,
-		CompletionTokens: utf8.RuneCountInString(replyText) + utf8.RuneCountInString(reasoningText),
-	}
-	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-	s.aiClient.RecordStreamUsage(providerSpec, usage, time.Since(startedAt))
 }
 
 // resetTimer 重置定时器（先停再排空再重置，避免已触发信号串扰）。

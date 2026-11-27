@@ -55,14 +55,16 @@ export type ChatRefTabCode =
   | 'doc'
   | 'session'
 
-/** 命令弹层候选项：本地动作与指令提示词归一成同一形状 */
+/** 命令弹层候选项：本地动作与任务提示词归一成同一形状 */
 export interface ChatCommandOption {
   code: string
   title: string
   desc: string
   active: boolean
-  /** 来源：action=本地动作（不耗模型）；prompt=指令提示词（系统级注入） */
+  /** 来源：action=本地动作（不耗模型）；prompt=任务提示词（系统级注入） */
   source_code: 'action' | 'prompt'
   /** 图标（mdi 名），本地动作才有 */
   icon: string
+  /** 所属创作流程名（提示词才有，弹层按它分组） */
+  group_name: string
 }

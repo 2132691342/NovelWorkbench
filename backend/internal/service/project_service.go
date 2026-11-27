@@ -40,16 +40,19 @@ func NewProjectService(projectRepo *repo.ProjectRepo, volumeRepo *repo.VolumeRep
 	return &ProjectService{projectRepo: projectRepo, volumeRepo: volumeRepo, chapterRepo: chapterRepo, cascade: cascade, db: db}
 }
 
-// Create 创建项目（状态默认 draft）。
+// Create 创建项目（状态默认 draft，自动化参数取默认值）。
 func (s *ProjectService) Create(ctx context.Context, userULID string, req *domain.ProjectCreateREQ) (domain.ProjectVO, error) {
 	do := &domain.ProjectDO{
-		ProjectULID:   pkg.NewULID(domain.IDPrefixProject),
-		UserULID:      userULID,
-		ProjectName:   req.ProjectName,
-		GenreCode:     req.GenreCode,
-		StyleText:     req.StyleText,
-		SynopsisText:  req.SynopsisText,
-		ProjectStatus: "draft",
+		ProjectULID:         pkg.NewULID(domain.IDPrefixProject),
+		UserULID:            userULID,
+		ProjectName:         req.ProjectName,
+		GenreCode:           req.GenreCode,
+		StyleText:           req.StyleText,
+		SynopsisText:        req.SynopsisText,
+		ProjectStatus:       "draft",
+		AutoTargetWordCount: 2500,
+		AutoGateScore:       80,
+		AutoReviewGateFlag:  true,
 	}
 	if err := s.projectRepo.Create(ctx, do); err != nil {
 		return domain.ProjectVO{}, err
@@ -62,14 +65,31 @@ func (s *ProjectService) Update(ctx context.Context, userULID string, req *domai
 	if _, err := mustOwnProject(ctx, s.projectRepo, userULID, req.ProjectULID); err != nil {
 		return domain.ProjectVO{}, err
 	}
-	fields := map[string]any{
-		"project_name":  req.ProjectName,
-		"genre_code":    req.GenreCode,
-		"style_text":    req.StyleText,
-		"synopsis_text": req.SynopsisText,
+	fields := map[string]any{"project_name": req.ProjectName}
+	// 描述类字段与自动化参数同为三态：缺省不改、传空串即清空
+	if req.GenreCode != nil {
+		fields["genre_code"] = *req.GenreCode
+	}
+	if req.StyleText != nil {
+		fields["style_text"] = *req.StyleText
+	}
+	if req.SynopsisText != nil {
+		fields["synopsis_text"] = *req.SynopsisText
 	}
 	if req.ProjectStatus != "" {
 		fields["project_status"] = req.ProjectStatus
+	}
+	if req.AutoTargetWordCount != nil {
+		fields["auto_target_word_count"] = *req.AutoTargetWordCount
+	}
+	if req.AutoGateScore != nil {
+		fields["auto_gate_score"] = *req.AutoGateScore
+	}
+	if req.AutoReviewGateFlag != nil {
+		fields["auto_review_gate_flag"] = *req.AutoReviewGateFlag
+	}
+	if req.AutoRequirementText != nil {
+		fields["auto_requirement_text"] = *req.AutoRequirementText
 	}
 	if err := s.projectRepo.Update(ctx, req.ProjectULID, fields); err != nil {
 		return domain.ProjectVO{}, err
@@ -103,6 +123,11 @@ func (s *ProjectService) Delete(ctx context.Context, userULID string, req *domai
 		txContinuity := repo.NewContinuityRepo(tx)
 		txChat := repo.NewChatRepo(tx)
 		txKnowledge := repo.NewKnowledgeRepo(tx)
+		txWorkflow := repo.NewWorkflowRepo(tx)
+		// 工作流运行与步骤必须先清：它们引用章节与项目，留着就是指向已删章节的孤儿任务
+		if err := txWorkflow.DeleteRunsByProject(ctx, req.ProjectULID); err != nil {
+			return err
+		}
 		if err := txChapter.DeleteSnapshotsByProject(ctx, req.ProjectULID); err != nil {
 			return err
 		}
@@ -265,16 +290,20 @@ func mustOwnProject(ctx context.Context, projectRepo *repo.ProjectRepo, userULID
 // toProjectVO 组装项目视图对象。
 func toProjectVO(do *domain.ProjectDO, volumeCount, chapterCount int) domain.ProjectVO {
 	return domain.ProjectVO{
-		ProjectULID:    do.ProjectULID,
-		ProjectName:    do.ProjectName,
-		GenreCode:      do.GenreCode,
-		StyleText:      do.StyleText,
-		SynopsisText:   do.SynopsisText,
-		ProjectStatus:  do.ProjectStatus,
-		TotalWordCount: do.TotalWordCount,
-		VolumeCount:    volumeCount,
-		ChapterCount:   chapterCount,
-		CreatedAt:      pkg.FormatTime(do.CreatedAt),
-		UpdatedAt:      pkg.FormatTime(do.UpdatedAt),
+		ProjectULID:         do.ProjectULID,
+		ProjectName:         do.ProjectName,
+		GenreCode:           do.GenreCode,
+		StyleText:           do.StyleText,
+		SynopsisText:        do.SynopsisText,
+		ProjectStatus:       do.ProjectStatus,
+		TotalWordCount:      do.TotalWordCount,
+		VolumeCount:         volumeCount,
+		ChapterCount:        chapterCount,
+		AutoTargetWordCount: do.AutoTargetWordCount,
+		AutoGateScore:       do.AutoGateScore,
+		AutoReviewGateFlag:  do.AutoReviewGateFlag,
+		AutoRequirementText: do.AutoRequirementText,
+		CreatedAt:           pkg.FormatTime(do.CreatedAt),
+		UpdatedAt:           pkg.FormatTime(do.UpdatedAt),
 	}
 }

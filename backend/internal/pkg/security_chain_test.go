@@ -1,6 +1,8 @@
-// 受保护写请求的完整管线回归：请求 ID → 鉴权 → 权限判定 → 审计留痕 → 幂等控制 → 响应包络。
-// 这些中间件按固定顺序串在同一次请求上，任一环断裂都会静默放过错误或重复执行副作用，
-// 因此合并为一条用例，用「步骤N」标注环节，断点即定位。
+// 请求管线与凭据封存的安全回归：
+// 受保护写请求链路（请求 ID → 鉴权 → 权限判定 → 审计留痕 → 幂等控制 → 响应包络）
+// 与供应商密钥封存链路（封存 → 解封还原 → 篡改与材料变更的拒绝路径）。
+// 前者任一环断裂都会静默放过错误或重复执行副作用，后者失效等于模型凭据形同虚设，
+// 因此各合并为一条用例，用「环节N」标注环节，断点即定位。
 
 package pkg
 
@@ -41,7 +43,7 @@ func (s *auditStub) Record(_ context.Context, do *domain.AuditLogDO) error {
 type revokeStub struct{ revoked string }
 
 // Revoke 实现 TokenStore 接口（测试不写黑名单）。
-func (s revokeStub) Revoke(context.Context, string, time.Duration) error { return nil }
+func (revokeStub) Revoke(context.Context, string, time.Duration) error { return nil }
 
 // IsRevoked 实现 TokenStore 接口。
 func (s revokeStub) IsRevoked(_ context.Context, tokenString string) bool {
@@ -106,7 +108,7 @@ func TestRequestPipelineChain(t *testing.T) {
 		t.Fatalf("sign token: %v", err)
 	}
 
-	// 步骤1：放行链路。请求 ID 透传 → 鉴权注入用户 → 权限判定 → 审计落库 → 响应包络。
+	// 环节1：放行链路。请求 ID 透传 → 鉴权注入用户 → 权限判定 → 审计落库 → 响应包络。
 	recorder := &auditStub{}
 	router := gin.New()
 	router.Use(RequestIDMiddleware())
@@ -141,7 +143,7 @@ func TestRequestPipelineChain(t *testing.T) {
 		t.Fatalf("包络或鉴权注入不符: %+v", envelope)
 	}
 
-	// 步骤2：审计必须同时留下请求与响应。缺响应体就等于「只知道发生了什么，不知道结果如何」。
+	// 环节2：审计必须同时留下请求与响应。缺响应体就等于「只知道发生了什么，不知道结果如何」。
 	if recorder.last == nil || recorder.last.ActionCode != "admin/user/update" ||
 		recorder.last.TargetType != "user" || recorder.last.TargetULID != "USR_TARGET" {
 		t.Fatalf("审计内容不符: %+v", recorder.last)
@@ -153,7 +155,7 @@ func TestRequestPipelineChain(t *testing.T) {
 		t.Fatalf("审计应记录响应体: %q", recorder.last.RespBody)
 	}
 
-	// 步骤3：拒绝链路。缺失令牌 / 令牌已吊销 / 账号已禁用 → 401，权限不足 → 403。
+	// 环节3：拒绝链路。缺失令牌 / 令牌已吊销 / 账号已禁用 → 401，权限不足 → 403。
 	rejectCases := []struct {
 		caseName     string
 		authHeader   string
@@ -196,7 +198,7 @@ func TestRequestPipelineChain(t *testing.T) {
 		}
 	}
 
-	// 步骤4：幂等控制。首请求执行一次 → 同键同体重放首响应 → 同键异体拒绝 → 5xx 不缓存允许重试 → 未带键不受影响。
+	// 环节4：幂等控制。首请求执行一次 → 同键同体重放首响应 → 同键异体拒绝 → 5xx 不缓存允许重试 → 未带键不受影响。
 	store := &memoryIdempotencyStore{data: map[string]string{}}
 	executeCount := 0
 	idempotentRouter := gin.New()
@@ -290,5 +292,52 @@ func TestRequestPipelineChain(t *testing.T) {
 	}
 	if plainCount != 2 {
 		t.Fatalf("未带幂等键的请求应每次都执行，实际 %d 次", plainCount)
+	}
+}
+
+// TestSecretSealChain 覆盖供应商密钥的封存链路。
+func TestSecretSealChain(t *testing.T) {
+	const material = "jwt-secret-material"
+	const plain = "sk-provider-key-0123456789"
+
+	// 环节1：封存与解封。同一明文两次封存得到不同密文（nonce 随机），但都能还原。
+	sealed, err := SealSecret(plain, material)
+	if err != nil {
+		t.Fatalf("封存失败: %v", err)
+	}
+	opened, err := OpenSecret(sealed, material)
+	if err != nil || opened != plain {
+		t.Fatalf("解封应还原明文: %q, err=%v", opened, err)
+	}
+	sealed2, err := SealSecret(plain, material)
+	if err != nil {
+		t.Fatalf("二次封存失败: %v", err)
+	}
+	if sealed == sealed2 {
+		t.Fatal("相同明文两次封存必须得到不同密文（nonce 随机）")
+	}
+	if opened2, err := OpenSecret(sealed2, material); err != nil || opened2 != plain {
+		t.Fatalf("二次密文也应还原明文: %q, err=%v", opened2, err)
+	}
+
+	// 环节2：密文被篡改或格式非法必须解不开（认证标签校验失败），不得 panic。
+	tampered := []byte(sealed)
+	if tampered[len(tampered)-1] == 'A' {
+		tampered[len(tampered)-1] = 'B'
+	} else {
+		tampered[len(tampered)-1] = 'A'
+	}
+	for _, bad := range []string{string(tampered), "不是 base64!!!", "YWJj"} {
+		if _, err := OpenSecret(bad, material); err != ErrSecretInvalid {
+			t.Fatalf("非法密文应被拒绝: %q, err=%v", bad, err)
+		}
+	}
+
+	// 环节3：密钥材料变更后历史密文不可解；材料为空直接报错。
+	if _, err := OpenSecret(sealed, "other-material"); err != ErrSecretInvalid {
+		t.Fatalf("材料变更后应解不开: %v", err)
+	}
+	if _, err := SealSecret(plain, ""); err != ErrSecretEmpty {
+		t.Fatalf("材料为空应报错: %v", err)
 	}
 }

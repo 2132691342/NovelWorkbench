@@ -4,6 +4,7 @@
   import {
     ElButton,
     ElDatePicker,
+    ElEmpty,
     ElInput,
     ElOption,
     ElPagination,
@@ -19,6 +20,19 @@
     listAdminLoginLogs,
     { keyword_text: '', login_result_code: '', date_from: '', date_to: '' }
   )
+
+  /** 查询失败标记（Manticore/PG 不可用时给出重试入口） */
+  const failed = ref(false)
+
+  /** 查询包装：失败时置标记，列表仍保留上次结果 */
+  const safeSearch = async () => {
+    failed.value = false
+    try {
+      await search()
+    } catch {
+      failed.value = true
+    }
+  }
 
   /** 日期区间（YYYY-MM-DD），变更时拆分到查询条件 */
   const dateRange = ref<string[] | null>(null)
@@ -39,7 +53,7 @@
   const handleDateChange = (range: [string, string] | null) => {
     query.value.date_from = range?.[0] ?? ''
     query.value.date_to = range?.[1] ?? ''
-    void search()
+    void safeSearch()
   }
 
   onMounted(() => {
@@ -55,10 +69,10 @@
         placeholder="搜索账号或 IP"
         clearable
         class="admin-login__search"
-        @keyup.enter="search()"
-        @clear="search()"
+        @keyup.enter="safeSearch()"
+        @clear="safeSearch()"
       />
-      <ElSelect v-model="query.login_result_code" class="admin-login__result" @change="search()">
+      <ElSelect v-model="query.login_result_code" class="admin-login__result" @change="safeSearch()">
         <ElOption
           v-for="item in resultOptions"
           :key="item.value"
@@ -75,10 +89,17 @@
         class="admin-login__date"
         @change="handleDateChange"
       />
-      <ElButton type="primary" plain @click="search()">查询</ElButton>
+      <ElButton type="primary" plain @click="safeSearch()">查询</ElButton>
       <div class="admin-login__spacer" />
       <span class="nw-hint">共 {{ total }} 条记录</span>
     </div>
+
+    <div v-if="failed && !loading" class="admin-login__failed">
+      <span class="nw-hint">登录日志查询失败，请稍后重试</span>
+      <ElButton size="small" type="primary" plain @click="safeSearch()">重试</ElButton>
+    </div>
+
+
 
     <ElTable v-loading="loading" :data="items" class="admin-login__table">
       <ElTableColumn label="登录时间" width="180">
@@ -114,7 +135,7 @@
         </template>
       </ElTableColumn>
       <template #empty>
-        <span class="nw-hint">暂无登录日志</span>
+        <ElEmpty description="暂无登录日志，试试放宽日期范围" :image-size="70" />
       </template>
     </ElTable>
 
@@ -151,6 +172,16 @@
 
     &__table {
       border-radius: var(--nw-radius-lg);
+    }
+
+    &__failed {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      background: color-mix(in srgb, var(--nw-danger) 8%, transparent);
+      border: 1px solid color-mix(in srgb, var(--nw-danger) 35%, transparent);
+      border-radius: var(--nw-radius-md);
     }
 
     &__account {

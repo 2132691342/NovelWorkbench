@@ -35,6 +35,36 @@ func (a *AuditAPI) List(c *gin.Context) {
 	pkg.Ok(c, page)
 }
 
+// TraceList 分页查询链路（POST /admin/audit/trace/list，审计页主视图）。
+func (a *AuditAPI) TraceList(c *gin.Context) {
+	var req domain.AuditTraceListREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "admin.audit.trace_list", bindErr(err))
+		return
+	}
+	page, err := a.svc.ListTracePage(c.Request.Context(), &req)
+	if err != nil {
+		respondErr(c, "admin.audit.trace_list", err)
+		return
+	}
+	pkg.Ok(c, page)
+}
+
+// Stats 返回区间内审计概览统计（POST /admin/audit/stats）。
+func (a *AuditAPI) Stats(c *gin.Context) {
+	var req domain.AuditTraceListREQ
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, "admin.audit.stats", bindErr(err))
+		return
+	}
+	vo, err := a.svc.Stats(c.Request.Context(), &req)
+	if err != nil {
+		respondErr(c, "admin.audit.stats", err)
+		return
+	}
+	pkg.Ok(c, vo)
+}
+
 // Detail 查询审计详情（GET /admin/audit/detail/{AuditULID}，含请求体与响应体原文）。
 func (a *AuditAPI) Detail(c *gin.Context) {
 	req := domain.AuditDetailREQ{AuditULID: c.Param("AuditULID")}

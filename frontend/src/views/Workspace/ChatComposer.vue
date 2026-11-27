@@ -1,4 +1,4 @@
-<!-- 对话输入区：/ 唤起斜杠命令（本地动作 + 指令提示词），@ 引用素材库与历史会话。
+<!-- 对话输入区：/ 唤起斜杠命令（本地动作 + 任务提示词），@ 引用素材库与历史会话。
      工具由模型自行决定是否调用，界面不提供手动点名入口。 -->
 <script setup lang="ts">
   import { computed, nextTick, ref, watch } from 'vue'
@@ -68,7 +68,7 @@
     sessionUlid: () => props.sessionUlid
   })
 
-  /** 斜杠候选：本地动作在前、指令提示词在后，同一弹层里按来源分组 */
+  /** 斜杠候选：本地动作在前、提示词按创作流程分组在后，同一弹层里按来源与流程分组 */
   const slashOptionList = computed<ChatCommandOption[]>(() => {
     const actionOptions = filterActions(commandFilter.value).map((action) => ({
       code: action.action_code,
@@ -76,13 +76,15 @@
       desc: action.action_desc,
       active: false,
       source_code: 'action' as const,
-      icon: action.action_icon
+      icon: action.action_icon,
+      group_name: '本地动作（立即执行，不消耗模型）'
     }))
+    const keywordText = commandFilter.value.toLowerCase()
     const promptOptions = props.promptList
       .filter(
         (prompt) =>
-          prompt.prompt_code.toLowerCase().includes(commandFilter.value.toLowerCase()) ||
-          prompt.prompt_name.toLowerCase().includes(commandFilter.value.toLowerCase())
+          prompt.prompt_code.toLowerCase().includes(keywordText) ||
+          prompt.prompt_name.toLowerCase().includes(keywordText)
       )
       .map((prompt) => ({
         code: prompt.prompt_code,
@@ -90,8 +92,10 @@
         desc: prompt.description_text,
         active: promptCode.value === prompt.prompt_code,
         source_code: 'prompt' as const,
-        icon: ''
+        icon: '',
+        group_name: prompt.domain_name || '其他提示词'
       }))
+    // 后端按 sort_order 返回，同一流程的两条天然相邻，不再重排，避免中文名排序打乱流程顺序
     return [...actionOptions, ...promptOptions]
   })
 
@@ -374,9 +378,10 @@
         v-model="systemPromptCode"
         size="small"
         clearable
-        placeholder="身份提示词"
+        placeholder="默认（内置作者人格）"
         class="composer__profile"
       >
+        <ElOption label="默认（内置作者人格）" value="" />
         <ElOption
           v-for="item in systemPromptList"
           :key="item.prompt_code"

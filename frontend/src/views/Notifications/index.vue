@@ -1,4 +1,4 @@
-<!-- 通知中心：按状态筛选、标记已读与删除。 -->
+<!-- 通知中心：全部/未读切换、单条与全部已读、展开正文、删除。 -->
 <script setup lang="ts">
   import { computed, onMounted, ref } from 'vue'
   import {
@@ -32,25 +32,41 @@
   const pageNum = ref(1)
   const pageSize = ref(20)
   const loading = ref(false)
-  const activeFilter = ref<string>('all')
+  const activeFilter = ref<ReadFilter>('all')
   const markingAll = ref(false)
   const rowAction = useRowAction()
+  /** 展开正文的通知 ULID 集合（默认只显示摘要） */
+  const expandedSet = ref<string[]>([])
 
   const filterTabs: Array<{ value: ReadFilter; label: string }> = [
     { value: 'all', label: '全部' },
-    { value: 'unread', label: '未读' },
-    { value: 'read', label: '已读' }
+    { value: 'unread', label: '未读' }
   ]
 
   const unreadCount = computed(() => notificationStore.unreadCount)
 
-  const typeLabel = (typeCode: string) =>
-    ({ system: '系统', task: '任务', account: '账号' })[typeCode] ?? typeCode
+  const typeMeta: Record<string, { label: string; icon: string; badge: string }> = {
+    system: { label: '系统', icon: 'mdi:cog-outline', badge: 'neutral' },
+    task: { label: '任务', icon: 'mdi:progress-clock', badge: 'warning' },
+    account: { label: '账号', icon: 'mdi:account-circle-outline', badge: 'success' }
+  }
 
-  const typeBadge = (typeCode: string) => {
-    if (typeCode === 'task') return 'warning'
-    if (typeCode === 'account') return 'success'
-    return 'neutral'
+  const metaOf = (typeCode: string) =>
+    typeMeta[typeCode] ?? { label: typeCode, icon: 'mdi:bell-outline', badge: 'neutral' }
+
+  /** 正文摘要：默认截断，展开后显示全文 */
+  const summaryOf = (row: NWNotificationVo) =>
+    row.notification_body_text?.length > 80
+      ? `${row.notification_body_text.slice(0, 80)}…`
+      : row.notification_body_text
+
+  const isExpanded = (ulid: string) => expandedSet.value.includes(ulid)
+
+  const toggleExpand = (row: NWNotificationVo) => {
+    if (!row.notification_body_text) return
+    expandedSet.value = isExpanded(row.notification_ulid)
+      ? expandedSet.value.filter((ulid) => ulid !== row.notification_ulid)
+      : [...expandedSet.value, row.notification_ulid]
   }
 
   const load = async () => {
@@ -59,7 +75,7 @@
       const page = await listNotifications({
         page_num: pageNum.value,
         page_size: pageSize.value,
-        read_status_code: activeFilter.value as ReadFilter
+        read_status_code: activeFilter.value
       })
       items.value = page.items ?? []
       total.value = page.total ?? 0
@@ -78,6 +94,7 @@
 
   const changeFilter = async () => {
     pageNum.value = 1
+    expandedSet.value = []
     await load()
   }
 
@@ -89,10 +106,12 @@
   const markRead = async (row: NWNotificationVo) => {
     if (row.read_flag) return
     await markNotificationsRead([row.notification_ulid])
+    ElMessage.success('已标记为已读')
     await refreshAll()
   }
 
   const markAllRead = async () => {
+    if (unreadCount.value === 0) return
     markingAll.value = true
     try {
       await markAllNotificationsRead()
@@ -106,9 +125,9 @@
   const remove = async (row: NWNotificationVo) => {
     try {
       await ElMessageBox.confirm(
-        `将删除通知「${row.notification_title_text}」，确定吗？`,
+        `将删除通知「${row.notification_title_text}」，删除后不可恢复。`,
         '删除通知',
-        { type: 'warning' }
+        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
       )
     } catch {
       return
@@ -123,6 +142,10 @@
     })
   }
 
+  const emptyHint = computed(() =>
+    activeFilter.value === 'unread' ? '没有未读通知，全部已处理完' : '暂时没有通知'
+  )
+
   onMounted(() => {
     void refreshAll()
   })
@@ -131,11 +154,11 @@
 <template>
   <div class="nw-page">
     <div class="nw-toolbar">
-      <ElTabs v-model="activeFilter" class="notifications__tabs" @tab-change="changeFilter">
-        <ElTabPane v-for="tab in filterTabs" :key="tab.value" :name="tab.value" :label="tab.label" />
-      </ElTabs>
+      <h2 class="notifications__title">
+        通知中心
+        <span v-if="unreadCount > 0" class="nw-badge nw-badge--warning">{{ unreadCount }} 条未读</span>
+      </h2>
       <div class="notifications__spacer" />
-      <span class="nw-hint">{{ unreadCount }} 条未读 · 共 {{ total }} 条</span>
       <ElButton
         type="primary"
         plain
@@ -145,9 +168,17 @@
       >
         全部已读
       </ElButton>
-      <ElButton @click="refreshAll()">
+      <ElButton :loading="loading" @click="refreshAll()">
         <Icon icon="mdi:refresh" :size="15" />
       </ElButton>
+    </div>
+
+    <div class="nw-toolbar">
+      <ElTabs v-model="activeFilter" class="notifications__tabs" @tab-change="changeFilter">
+        <ElTabPane v-for="tab in filterTabs" :key="tab.value" :name="tab.value" :label="tab.label" />
+      </ElTabs>
+      <div class="notifications__spacer" />
+      <span class="nw-hint">共 {{ total }} 条</span>
     </div>
 
     <div v-loading="loading" class="notifications__list">
@@ -160,10 +191,20 @@
       >
         <div class="notice-card__head">
           <div class="notice-card__title-row">
-            <span v-if="!row.read_flag" class="notice-card__dot" />
+            <span class="notice-card__icon" :class="`is-${metaOf(row.notification_type_code).badge}`">
+              <Icon :icon="metaOf(row.notification_type_code).icon" :size="14" />
+            </span>
+            <span
+              v-if="!row.read_flag"
+              class="notice-card__dot"
+              title="未读"
+            />
             <h3 class="notice-card__title">{{ row.notification_title_text }}</h3>
-            <span class="nw-badge" :class="`nw-badge--${typeBadge(row.notification_type_code)}`">
-              {{ typeLabel(row.notification_type_code) }}
+            <span
+              class="nw-badge"
+              :class="`nw-badge--${metaOf(row.notification_type_code).badge}`"
+            >
+              {{ metaOf(row.notification_type_code).label }}
             </span>
           </div>
           <span class="nw-hint" :title="formatTime(row.created_at)">
@@ -171,7 +212,17 @@
           </span>
         </div>
 
-        <p class="notice-card__body">{{ row.notification_body_text }}</p>
+        <p
+          v-if="row.notification_body_text"
+          class="notice-card__body"
+          :class="{ 'is-expanded': isExpanded(row.notification_ulid) }"
+          @click="toggleExpand(row)"
+        >
+          {{ isExpanded(row.notification_ulid) ? row.notification_body_text : summaryOf(row) }}
+          <span v-if="row.notification_body_text.length > 80" class="notice-card__more">
+            {{ isExpanded(row.notification_ulid) ? '收起' : '展开' }}
+          </span>
+        </p>
 
         <div class="notice-card__actions">
           <ElButton
@@ -201,7 +252,7 @@
         </div>
       </ElCard>
 
-      <ElEmpty v-if="!loading && items.length === 0" description="没有通知" />
+      <ElEmpty v-if="!loading && items.length === 0" :description="emptyHint" />
     </div>
 
     <div v-if="total > pageSize" class="notifications__pager">
@@ -219,6 +270,15 @@
 
 <style lang="less" scoped>
   .notifications {
+    &__title {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 15px;
+      font-weight: 650;
+      color: var(--nw-ink);
+    }
+
     &__tabs {
       :deep(.el-tabs__header) {
         margin: 0;
@@ -237,7 +297,7 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
-      min-height: 120px;
+      min-height: 140px;
     }
 
     &__pager {
@@ -248,9 +308,10 @@
 
   .notice-card {
     border-radius: var(--nw-radius-lg);
+    transition: border-color 0.15s ease;
 
     &.is-unread {
-      border-left: 3px solid var(--nw-primary);
+      border-left: 3px solid var(--el-color-primary);
     }
 
     &__head {
@@ -267,10 +328,31 @@
       min-width: 0;
     }
 
+    &__icon {
+      display: grid;
+      width: 24px;
+      height: 24px;
+      color: var(--el-text-color-secondary);
+      background: var(--el-fill-color-light);
+      border-radius: 50%;
+      flex: none;
+      place-items: center;
+
+      &.is-warning {
+        color: #b45309;
+        background: #fffbeb;
+      }
+
+      &.is-success {
+        color: #047857;
+        background: #ecfdf5;
+      }
+    }
+
     &__dot {
       width: 7px;
       height: 7px;
-      background: var(--nw-primary);
+      background: var(--el-color-primary);
       border-radius: 50%;
       flex: none;
     }
@@ -288,9 +370,20 @@
       margin: 8px 0 10px;
       font-size: 12.5px;
       line-height: 1.7;
-      color: var(--nw-text-secondary);
+      color: var(--el-text-color-regular);
       white-space: pre-wrap;
       word-break: break-word;
+      cursor: pointer;
+      transition: color 0.15s ease;
+
+      &:hover {
+        color: var(--nw-ink);
+      }
+    }
+
+    &__more {
+      margin-left: 4px;
+      color: var(--el-color-primary);
     }
 
     &__actions {

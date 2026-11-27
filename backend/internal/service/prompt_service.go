@@ -30,16 +30,10 @@ func (s *PromptService) SeedDefaults(ctx context.Context) error {
 		return err
 	}
 	for _, domainItem := range ai.BuiltinDomains() {
-		if err := s.seedOne(ctx, &domainItem, domain.PromptKindSystem, domainItem.SystemPromptCode,
-			domainItem.SystemPromptName, "other", domainItem.DomainName+"：身份与底线",
-			domainItem.SystemPromptText, domainItem.SortOrder); err != nil {
-			return err
-		}
 		for i := range domainItem.CommandList {
 			command := &domainItem.CommandList[i]
-			if err := s.seedOne(ctx, &domainItem, domain.PromptKindCommand, command.PromptCode,
-				command.PromptName, command.CategoryCode, command.DescriptionText,
-				command.PromptText, command.SortOrder); err != nil {
+			if err := s.seedOne(ctx, &domainItem, command.PromptCode, command.PromptName,
+				command.CategoryCode, command.DescriptionText, command.PromptText, command.SortOrder); err != nil {
 				return err
 			}
 		}
@@ -47,10 +41,10 @@ func (s *PromptService) SeedDefaults(ctx context.Context) error {
 	return nil
 }
 
-// seedOne 播种单条内置提示词：不存在则插入；指纹不一致且未自改则覆盖正文。
-func (s *PromptService) seedOne(ctx context.Context, domainItem *ai.BuiltinDomain, kindCode, promptCode,
+// seedOne 播种单条内置任务提示词：不存在则插入；指纹不一致且未自改则覆盖正文。
+func (s *PromptService) seedOne(ctx context.Context, domainItem *ai.BuiltinDomain, promptCode,
 	promptName, categoryCode, descriptionText, promptText string, sortOrder int) error {
-	assetHash := ai.PromptAssetHash(promptCode, promptName, kindCode, categoryCode, descriptionText, promptText, sortOrder)
+	assetHash := ai.PromptAssetHash(promptCode, promptName, ai.PromptKindCommand, categoryCode, descriptionText, promptText, sortOrder)
 	existing, err := s.promptRepo.GetByCode(ctx, domain.PromptScopeGlobal, "", promptCode)
 	if err != nil {
 		return err
@@ -60,9 +54,9 @@ func (s *PromptService) seedOne(ctx context.Context, domainItem *ai.BuiltinDomai
 			PromptULID:      pkg.NewULID(domain.IDPrefixPrompt),
 			PromptCode:      promptCode,
 			PromptName:      promptName,
-			PromptKindCode:  kindCode,
+			PromptKindCode:  domain.PromptKindCommand,
 			ScopeCode:       domain.PromptScopeGlobal,
-			DomainCode:      domainItem.DomainCode,
+			DomainCode:      domainItem.FlowCode,
 			CategoryCode:    categoryCode,
 			DescriptionText: descriptionText,
 			PromptText:      promptText,
@@ -77,8 +71,8 @@ func (s *PromptService) seedOne(ctx context.Context, domainItem *ai.BuiltinDomai
 	}
 	return s.promptRepo.Update(ctx, existing.PromptULID, map[string]any{
 		"prompt_name":      promptName,
-		"prompt_kind_code": kindCode,
-		"domain_code":      domainItem.DomainCode,
+		"prompt_kind_code": domain.PromptKindCommand,
+		"domain_code":      domainItem.FlowCode,
 		"category_code":    categoryCode,
 		"description_text": descriptionText,
 		"prompt_text":      promptText,
@@ -88,17 +82,15 @@ func (s *PromptService) seedOne(ctx context.Context, domainItem *ai.BuiltinDomai
 }
 
 // dropRetiredBuiltins 删除不在当前内置清单中的旧内置提示词（用户自建提示词不受影响）。
+// 内置身份提示词已下线，库里遗留的 novelist/reviser/planner 等 system 行在这里一并清掉。
 func (s *PromptService) dropRetiredBuiltins(ctx context.Context) error {
 	builtinList, err := s.promptRepo.ListBuiltin(ctx)
 	if err != nil {
 		return err
 	}
 	codeSet := ai.BuiltinCommandCodeSet()
-	for code := range ai.BuiltinSystemCodeSet() {
-		codeSet[code] = true
-	}
 	for i := range builtinList {
-		if codeSet[builtinList[i].PromptCode] {
+		if !isRetiredBuiltin(&builtinList[i], codeSet) {
 			continue
 		}
 		if err := s.promptRepo.Delete(ctx, builtinList[i].PromptULID); err != nil {
@@ -106,6 +98,12 @@ func (s *PromptService) dropRetiredBuiltins(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// isRetiredBuiltin 判断一条内置提示词是否已下线（纯函数）：
+// 编码不在当前清单里，或种类不是任务提示词，都算下线——内置身份提示词已整体下线。
+func isRetiredBuiltin(do *domain.PromptDO, codeSet map[string]bool) bool {
+	return !codeSet[do.PromptCode] || do.PromptKindCode != domain.PromptKindCommand
 }
 
 // List 查询提示词列表：项目 ULID 非空时合并「项目提示词 + 全局提示词」并标记被覆盖项。
@@ -176,7 +174,7 @@ func (s *PromptService) Save(ctx context.Context, req *domain.PromptREQ) (domain
 	if kindCode == "" {
 		kindCode = domain.PromptKindCommand
 	}
-	// 指令提示词以 /编码 触发，与写作台的本地动作同占一个命名空间，冲突会让触发语义变得不可预期
+	// 任务提示词以 /编码 触发，与写作台的本地动作同占一个命名空间，冲突会让触发语义变得不可预期
 	if kindCode == domain.PromptKindCommand && domain.IsReservedActionCode(req.PromptCode) {
 		return domain.PromptVO{}, pkg.NewBizError(domain.RespCodeInvalidParam,
 			"编码 /"+req.PromptCode+" 已被写作台本地动作占用，请换一个编码")
@@ -242,11 +240,7 @@ func (s *PromptService) Save(ctx context.Context, req *domain.PromptREQ) (domain
 		// 内置资产：与出厂正文一致则仍算出厂内容，否则标记作者改动，后续代码升级不再覆盖。
 		assetHash := ai.PromptAssetHash(req.PromptCode, req.PromptName, kindCode, categoryCode,
 			req.DescriptionText, req.PromptText, req.SortOrder)
-		customizedFlag := assetHash != ai.BuiltinCommandHashOf(req.PromptCode)
-		if kindCode == domain.PromptKindSystem {
-			customizedFlag = assetHash != ai.BuiltinSystemHashOf(req.PromptCode)
-		}
-		fields["customized_flag"] = customizedFlag
+		fields["customized_flag"] = assetHash != ai.BuiltinCommandHashOf(req.PromptCode)
 	}
 	if err := s.promptRepo.Update(ctx, current.PromptULID, fields); err != nil {
 		return domain.PromptVO{}, err
@@ -311,7 +305,7 @@ func (s *PromptService) PromptTextOf(ctx context.Context, projectULID, promptCod
 }
 
 // SystemPromptOf 解析对话应使用的身份提示词：显式编码优先，其次启用的全局默认身份提示词，
-// 全部缺失时回退到内置基础提示词（保证链路永远有身份约束）。
+// 全部缺失时回退到内置作者人格（身份提示词已改为可选自建，兜底必须非空）。
 func (s *PromptService) SystemPromptOf(ctx context.Context, projectULID, promptCode string) string {
 	if strings.TrimSpace(promptCode) != "" {
 		if do, err := s.resolveByCode(ctx, projectULID, promptCode); err == nil {
@@ -319,10 +313,16 @@ func (s *PromptService) SystemPromptOf(ctx context.Context, projectULID, promptC
 		}
 	}
 	globalPrompt, err := s.promptRepo.GetDefaultSystem(ctx)
-	if err == nil && globalPrompt != nil {
+	return pickSystemPromptText(globalPrompt, err)
+}
+
+// pickSystemPromptText 选出兜底身份提示词正文（纯函数）：
+// 库内有启用的全局身份提示词就用它，否则用内置作者人格，绝不返回空串。
+func pickSystemPromptText(globalPrompt *domain.PromptDO, err error) string {
+	if err == nil && globalPrompt != nil && strings.TrimSpace(globalPrompt.PromptText) != "" {
 		return globalPrompt.PromptText
 	}
-	return ai.SystemPrompt("")
+	return ai.BaseSystemPrompt
 }
 
 // resolveByCode 按 (项目, 编码) 解析启用中的提示词：项目提示词优先于全局提示词。

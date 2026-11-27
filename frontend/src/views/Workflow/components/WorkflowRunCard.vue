@@ -1,9 +1,11 @@
-<!-- 单条工作流运行卡片：状态、进度、章节信息与操作按钮。 -->
+<!-- 单条工作流运行卡片：状态、进度、当前章、耗时与「去审核」主按钮。
+     待审核时整卡高亮并把主按钮换成「去审核」，因为那是此刻唯一该做的动作。 -->
 <script setup lang="ts">
+  import { computed } from 'vue'
   import type { NWWorkflowRunVo } from '@/api/workflow'
   import { formatTime } from '@/utils/time'
 
-  defineProps<{
+  const props = defineProps<{
     run: NWWorkflowRunVo
     acting: boolean
   }>()
@@ -23,17 +25,33 @@
     paused: { label: '已暂停', type: 'info' }
   }
 
-  const progressOf = (run: NWWorkflowRunVo) => {
-    if (run.total_chapter_count === 0) return 0
-    return Math.round((run.finished_chapter_count / run.total_chapter_count) * 100)
-  }
+  const waitingReview = computed(() => props.run.run_status_code === 'waiting_review')
+
+  const progressOf = computed(() => {
+    if (props.run.total_chapter_count === 0) return 0
+    return Math.round((props.run.finished_chapter_count / props.run.total_chapter_count) * 100)
+  })
+
+  /** 耗时：跑完看总时长，还在跑看到此刻 */
+  const elapsedText = computed(() => {
+    const startTime = new Date(props.run.started_at || props.run.created_at).getTime()
+    if (Number.isNaN(startTime)) return '—'
+    const endTime = props.run.finished_at
+      ? new Date(props.run.finished_at).getTime()
+      : Date.now()
+    const seconds = Math.max(0, Math.round((endTime - startTime) / 1000))
+    if (seconds < 60) return `${seconds} 秒`
+    const minutes = Math.round(seconds / 60)
+    if (minutes < 60) return `${minutes} 分钟`
+    return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`
+  })
 
   const statusLabel = (code: string) => statusMeta[code]?.label ?? code
 </script>
 
 <template>
   <article
-    :class="['wf-run', { 'is-review': run.run_status_code === 'waiting_review' }]"
+    :class="['wf-run', { 'is-review': waitingReview }]"
     @click="emit('detail', run)"
   >
     <header class="wf-run__head">
@@ -56,7 +74,7 @@
 
     <div class="wf-run__progress">
       <ElProgress
-        :percentage="progressOf(run)"
+        :percentage="progressOf"
         :status="run.run_status_code === 'failed' ? 'exception' : undefined"
         :stroke-width="5"
         :show-text="false"
@@ -66,11 +84,27 @@
       </span>
     </div>
 
+    <p class="wf-run__foot-meta">
+      <span>耗时 {{ elapsedText }}</span>
+      <span v-if="!run.review_gate_flag" class="wf-run__dot">·</span>
+      <span v-if="!run.review_gate_flag">免审核直通</span>
+    </p>
+
     <p v-if="run.error_message" class="wf-run__error">{{ run.error_message }}</p>
+    <p v-if="waitingReview" class="wf-run__review-hint">
+      <Icon icon="mdi:account-check-outline" :size="13" />
+      <span>当前章已出稿，等你点头才继续</span>
+    </p>
 
     <footer class="wf-run__footer">
-      <ElButton size="small" text @click.stop="emit('detail', run)">
-        {{ run.run_status_code === 'waiting_review' ? '去审核' : '详情' }}
+      <ElButton
+        :type="waitingReview ? 'primary' : 'default'"
+        :plain="!waitingReview"
+        size="small"
+        @click.stop="emit('detail', run)"
+      >
+        <Icon :icon="waitingReview ? 'mdi:account-check-outline' : 'mdi:eye-outline'" :size="14" />
+        <span class="wf-run__btn-text">{{ waitingReview ? '去审核' : '详情' }}</span>
       </ElButton>
       <ElButton
         v-if="run.run_status_code === 'running'"

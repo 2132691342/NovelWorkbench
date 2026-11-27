@@ -9,7 +9,7 @@
 | --- | --- | --- |
 | 业务基础路径 | `/api/v1` | `router.go` 的 `v1 := router.Group("/api/v1")` |
 | 探针路径 | `/health`、`/ready`，注册在 `/api/v1` 之外 | `router.go` 的 `NewRouter` |
-| 接口总数 | `/api/v1` 下 127 条，另有 2 条探针，共 129 条 | `router.go` |
+| 接口总数 | `/api/v1` 下 132 条，另有 2 条探针，共 134 条 | `router.go` |
 | 允许方法 | 仅 `GET` / `POST`；`OPTIONS` 只用于 CORS 预检 | `pkg.MethodWhitelistMiddleware` |
 | 请求编码 | `POST` 默认 `application/json`（`ShouldBindJSON`）；`/knowledge/upload` 为 `multipart/form-data` | 各 `*_api.go` |
 | 查询参数 | `GET` 用 query（`ShouldBindQuery`），路径变量用 `c.Param` | 各 `*_api.go` |
@@ -62,7 +62,7 @@ CORS 放行 `Origin`、`Content-Type`、`Authorization`、`X-Request-ID`，暴�
 | `ERR_UNAUTHORIZED` | 401 | 未登录或登录失效 | 缺令牌、JWT 解析失败、令牌已吊销、账号禁用 |
 | `ERR_FORBIDDEN` | 403 | 无权限 | 缺少权限码、非资源归属人、模型未授权 |
 | `ERR_NOT_FOUND` | 404 | 资源不存在 | ULID 查不到 |
-| `ERR_CONFLICT` | 409 | 资源冲突 | 重名、邮箱重复、重复提交 |
+| `ERR_CONFLICT` | 409 | 资源冲突 | 重名、邮箱重复、重复提交；模型供应商名称重复（`uk_model_provider_name`）、同一供应商下模型重名（`uk_model_catalog_provider_name`）——唯一索引冲突时服务层捕获 `repo.IsDuplicateKey` 转成该码 |
 | `ERR_BIZ_FAILED` | 400 | 通用业务失败 | 删除默认模型、删除含模型的供应商、内置提示词删除 |
 | `ERR_AI_PROVIDER` | 502 | AI 调用失败 | 无可用模型、供应商停用、上游报错 |
 | `ERR_STORAGE` | 503 | 基础设施异常 | MinIO / Manticore / RabbitMQ 失败、`/ready` 依赖未就绪 |
@@ -119,7 +119,25 @@ flowchart LR
 
 审计规则（`pkg/access_middleware.go`）：只记录 `POST`；`action_code` 取路径去掉 `/api/v1/` 前缀；所有 POST 都会读取 body 提取目标（键白名单覆盖 user / role / menu / project / chapter / document / prompt / tool / model / provider / chat_session / notification），body 采样上限 32KB、`multipart` 不采样且读后还原，凭据字段（`password_text`、`new_password_text`、`old_password_text`、`api_key_text`、`access_token`）脱敏为 `***`；响应体同样采样落库（上限 32KB，超限追加「已截断」标记，非 JSON 流式响应记占位说明），并从响应包络解析 `resp_code` / `resp_message`，按 HTTP 状态推导 `log_level_code`（`info` / `warn` / `error`），`trace_id` 取请求链路 ID；落库失败只记 `audit_record_failed` 告警。审计详情接口返回 `request_body` 与 `resp_body`，前端详情抽屉同时展示两者。
 
-### 4.3 写请求幂等
+### 4.3 审计 span 模型与动作名
+
+一条审计行是链路里的一个 **span**，`span_type_code` 取值固定五种：
+
+| span_type_code | 写入点 | 说明 |
+| --- | --- | --- |
+| `http` | `pkg.AuditMiddleware` | 入口 POST 请求，链路的根 span，`parent_span_code` 为空 |
+| `workflow_step` | `service/workflow_steps.go` | 工作流每一步执行，`parent_span_code=workflow/run/create` |
+| `ai_call` | `service/audit_ai.go`（对话 / 工作流 / 开书共用） | 一次模型调用，带 `model_name` / `token_count`，不落 prompt 全文 |
+| `job` | 预留，当前无写入点 | 异步任务（索引 worker 目前不写审计，列表里不会出现该类型） |
+| `system` | `service/audit_service.go` | 系统维护动作（如 `system/audit.purge`） |
+
+`action_name` 的中文名由 `pkg/audit_names.go` 的 `auditActionNameMap` 提供：键是动作码（路径去掉 `/api/v1/`），未登记时回落为动作码本身；`AuditActionLabel` 供中间件与查询补全共用，`AuditActionNameOf` 额外按前缀归类后台与 AI 动作（如 `ai/workflow/<步骤类型>` 映射为「AI 出稿 / 修订 / 复审 / 摘要」）。服务层 `AuditService.Record` 在 `ActionName` 为空时自动补齐，历史行缺列也能在列表里显示中文名。
+
+**列名转义与保留字**：`model_name` 是 Manticore 25.0 的保留字，裸写会让 `CREATE TABLE` / `ALTER TABLE ADD COLUMN` / `INSERT` 报 `P03: syntax error, unexpected MODEL_NAME`。因此 `repo/audit_schema_repo.go` 里所有列名都经 `quoteIdent` 加反引号（DDL 列定义、补列、INSERT 列清单、SELECT 列、`WHERE` 过滤列、`GROUP BY`、`ORDER BY` 一视同仁），列定义收敛到 `auditColumnSpecList` 并由 `audit_chain_test.go` 断言与 INSERT 列清单一致。读取侧不变：Manticore 返回的行 map 仍用不带反引号的列名。
+
+**结构退化自愈**：若建表失败后降级写入，Manticore 会自动把全部列建成 `text`（stored field），此时按 `span_type_code` / `log_level_code` 过滤会报 `filters are supported only on attributes`。`EnsureSchema` 末尾的 `rebuildIfDegraded` 会用 `DESC` 检查过滤核心列（`log_level_code` / `span_type_code` / `trace_id` / `action_code` / `created_at_ts`），一旦发现被建成 `text`，就 `DROP` + 重建审计表并记 `Errorw("检测到审计表结构退化，已重建")`；**该动作会丢弃全部历史审计**，只在退化（表已不可筛选）时触发。
+
+### 4.4 写请求幂等
 
 `pkg.IdempotencyMiddleware`（`backend/internal/pkg/idempotency.go`）对**写动作**提供「同一次点击只执行一次」语义：
 
@@ -132,7 +150,7 @@ flowchart LR
 
 前端在 `frontend/src/request/index.ts` 为每个 POST 生成 `Idempotency-Key`（26 位 ULID，见 `utils/idempotency.ts`），并对「写动作 + 相同 URL + 相同请求体」的在途请求做单飞合并，双击不会产生两条并发写入。
 
-### 4.4 删除幂等
+### 4.5 删除幂等
 
 所有删除接口遵循「目标已不存在 = 删除成功」：`project`、`volume`、`chapter`、`character`、`character relation`、`lore`、`outline node`、`outline scene`、`knowledge doc`、`chat session`、`prompt`、`tool`、`role`、`menu`、`model provider`、`model catalog`、`user` 在查不到目标时直接返回 `SUCCESS`。越权（目标存在但不归属当前用户）仍返回 `ERR_FORBIDDEN`，不会因幂等被吞掉。
 
@@ -147,7 +165,7 @@ flowchart LR
 | `system:role:manage` | `PermRoleManage` | `/admin/role/*`（3 条） |
 | `system:menu:manage` | `PermMenuManage` | `/menu/list`、`/menu/detail/:MenuULID`、`/menu/save`、`/menu/delete` |
 | `system:perm:read` | `PermPermissionRead` | `/menu/permission/catalog` |
-| `system:audit:read` | `PermAuditRead` | `/admin/audit/list`、`/admin/audit/detail/:AuditULID` |
+| `system:audit:read` | `PermAuditRead` | `/admin/audit/*`（6 条：list / detail / trace / action_options / retention / purge） |
 | `system:loginlog:read` | `PermLoginLogRead` | `/admin/login_log/list` |
 | `system:model:manage` | `PermModelManage` | `/model/provider/*`、`/model/catalog/*`（10 条） |
 | `system:usage:read` | `PermUsageRead` | `/model/usage/overview` |
@@ -172,6 +190,26 @@ flowchart LR
 ### 5.1 密码版本与令牌失效
 
 `users.pwd_epoch` 记录密码版本，签发 JWT 时写入 `pwd_epoch` 声明；鉴权中间件每次比对令牌版本与库内版本，落后即返回 `ERR_UNAUTHORIZED`「密码已变更，请重新登录」。本人改密与管理员重置密码都会 `pwd_epoch + 1`，因此改密后所有旧令牌立刻失效。本人改密接口返回新令牌（`UserPasswordChangeDTO`），前端收到后立即替换本地令牌，避免「改完密码把自己踢下线」。
+
+### 5.2 密码强度规则
+
+设置新密码的三条入口共用同一判定（`service/password_rule.go` 的 `validatePasswordStrength`）：`/admin/user/create` 的 `password_text`、`/admin/user/reset_password` 的 `new_password_text`、`/auth/password/change` 的 `new_password_text`。规则为「长度 ≥ 8 且同时包含字母与数字」，不满足返回 `ERR_INVALID_PARAM`；改密时新密码与当前密码相同也会被拒绝。登录比对不经过该校验，历史短密码仍可登录，仅在下次改密时被要求升级。前端 `views/Admin/components/passwordStrength.ts` 是同一规则的镜像，三处表单复用。
+
+### 5.3 管理端视图字段的派生规则
+
+| 字段 | 端点 | 派生规则 |
+| --- | --- | --- |
+| `user_count` | `/admin/role/list` | 实时统计 `user_roles` 中挂载该角色的用户数，用于删除前判断影响面；统计失败按 0 返回，不阻断列表 |
+| `role_name_list` | `/auth/profile`、`/menu/permission/catalog` | 角色名称（非编码），用于个人中心标签云与权限目录的「引用角色」；未授权为空数组而非 null |
+| `perm_codes` 含 `*` | `/auth/profile` | 表示拥有全部权限，前端不再逐项展示 |
+| `setting_value_type` / `setting_value_min` / `setting_value_max` / `setting_default_text` | `/setting/list`、`/setting/update` | 由后端白名单派生：未登记的键按 `text` 下发且不带默认值与区间；`setting_value_max` 为 0 表示未声明区间 |
+| `role_code`（`/admin/user/list` 入参） | 用户列表 | 非空时改走 `user_roles` 关联查询；未知编码返回空页而不是报错 |
+| `component_path` | `/menu/*` | 前端组件路径；分组类型必须为空，否则 `/menu/save` 返回 `ERR_INVALID_PARAM` |
+| `unknown_usage_count` | `/model/usage/overview`（总览、`daily_list` 每日点） | 网关未返回 usage 的调用次数。记账时 `ai.UsageRecord.UsageKnownFlag=false` 就 `+1`，同时 `prompt_tokens` / `completion_tokens` / `total_tokens` 都按 0 累加，因此「有调用次数但 token 全 0」可被解释而非当成漏记 |
+| `total_tokens` / `total_tokens_total` | `/model/usage/overview` | 逐条累加 `prompt_tokens + completion_tokens`（`RecordUsage` 内相加，不是查询期计算），按日 `SUM(total_tokens)`；`completion_tokens` 单独 `SUM` 供双轴图 |
+| `avg_latency_ms` | `/model/usage/overview` | 单日 = `SUM(latency_ms_sum) / MAX(SUM(call_count), 1)`；区间 = 各日 `avg_latency_ms × call_count` 之和再除以区间调用总数（加权，0 调用返回 0） |
+| `success_rate_value` | `/model/usage/overview` | 区间 = `(call_count_total - fail_count_total) / call_count_total`，取 0–1；调用总数为 0 时不计算，保持 0 |
+| `daily_list` 缺失日期 | `/model/usage/overview` | 区间内无调用的日期补零值点（`stat_date` 有值、其余为 0），前端不必自己补齐 x 轴 |
 
 ## 6. 探针
 
@@ -250,7 +288,7 @@ stateDiagram-v2
 | 归一入口 | `PageREQ.Normalize()`，由各 service 在查询前调用 |
 | 响应结构 | `PageDTO<T>`：`total`、`page_num`、`page_size`、`items` |
 
-返回 `PageDTO` 的端点（10 条）：
+返回 `PageDTO` 的端点（11 条）：
 
 | 端点 | 分页字段来源 |
 | --- | --- |
@@ -259,6 +297,7 @@ stateDiagram-v2
 | `GET /knowledge/chunk/list/:DocULID` | query |
 | `POST /chat/history` | JSON body |
 | `POST /notification/list` | JSON body |
+| `POST /workflow/run/list` | JSON body |
 | `POST /admin/user/list` | JSON body |
 | `POST /admin/role/list` | JSON body |
 | `POST /admin/audit/list` | JSON body |

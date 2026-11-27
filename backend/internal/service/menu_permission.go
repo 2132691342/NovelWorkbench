@@ -11,13 +11,33 @@ import (
 	"github.com/2132691342/NovelWorkbench/backend/internal/pkg"
 )
 
-// PermissionCatalog 权限目录：按权限码首段分组，返回全部已登记权限。
+// PermissionCatalog 权限目录：按权限码首段分组，返回全部已登记权限（含引用角色）。
 func (s *MenuService) PermissionCatalog(ctx context.Context) ([]domain.PermGroupVO, error) {
 	dos, err := s.menuRepo.ListAll(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return buildPermCatalog(dos), nil
+	groups := buildPermCatalog(dos)
+	if s.roleSvc == nil {
+		return groups, nil
+	}
+	// 引用关系是「影响面」信息：读失败只降级为不显示角色，不让整张目录报错
+	roleNameMap, mapErr := s.roleSvc.PermCodeRoleNameMap(ctx)
+	if mapErr != nil {
+		pkg.SLogger().Warnw("权限目录引用角色读取失败", "error", mapErr)
+		return groups, nil
+	}
+	for gi := range groups {
+		for pi := range groups[gi].PermList {
+			permCode := groups[gi].PermList[pi].PermCode
+			if names, ok := roleNameMap[permCode]; ok {
+				groups[gi].PermList[pi].RoleNameList = names
+			} else {
+				groups[gi].PermList[pi].RoleNameList = []string{}
+			}
+		}
+	}
+	return groups, nil
 }
 
 // buildPermCatalog 由菜单行汇总权限目录（纯函数）：

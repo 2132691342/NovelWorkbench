@@ -129,6 +129,20 @@ func (r *WorkflowRepo) ListRunsByStatus(ctx context.Context, statusCodeList []st
 	return dos, nil
 }
 
+// ListPendingReviewRuns 查询当前用户待审核的运行（更新时间倒序，Dashboard 收件箱用）。
+func (r *WorkflowRepo) ListPendingReviewRuns(ctx context.Context, userULID string, limit int) ([]domain.WorkflowRunDO, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var dos []domain.WorkflowRunDO
+	if err := r.db.WithContext(ctx).
+		Where("user_ulid = ? AND run_status_code = ?", userULID, domain.WorkflowRunStatusWaitingReview).
+		Order("updated_at DESC").Limit(limit).Find(&dos).Error; err != nil {
+		return nil, fmt.Errorf("list pending review workflow runs: %w", err)
+	}
+	return dos, nil
+}
+
 // CountRunsByStatus 统计各状态运行数（工作流概览卡片）。
 func (r *WorkflowRepo) CountRunsByStatus(ctx context.Context, projectULID string) (map[string]int64, error) {
 	type statusCount struct {
@@ -151,8 +165,20 @@ func (r *WorkflowRepo) CountRunsByStatus(ctx context.Context, projectULID string
 	return result, nil
 }
 
-// DeleteRunsByProject 删除项目下的全部运行与步骤（项目级联删除用）。
+// DeleteRunsByProject 删除项目下的全部运行与其步骤（项目级联删除用）。
+// 步骤表没有外键约束，必须显式先删，否则删完项目会留下指向已删章节的孤儿步骤。
 func (r *WorkflowRepo) DeleteRunsByProject(ctx context.Context, projectULID string) error {
+	var runULIDList []string
+	if err := r.db.WithContext(ctx).Model(&domain.WorkflowRunDO{}).
+		Where("project_ulid = ?", projectULID).Pluck("run_ulid", &runULIDList).Error; err != nil {
+		return fmt.Errorf("list workflow runs by project: %w", err)
+	}
+	if len(runULIDList) > 0 {
+		if err := r.db.WithContext(ctx).Where("run_ulid IN ?", runULIDList).
+			Delete(&domain.WorkflowStepDO{}).Error; err != nil {
+			return fmt.Errorf("delete workflow steps by project: %w", err)
+		}
+	}
 	if err := r.db.WithContext(ctx).Where("project_ulid = ?", projectULID).
 		Delete(&domain.WorkflowRunDO{}).Error; err != nil {
 		return fmt.Errorf("delete workflow runs: %w", err)
@@ -176,6 +202,24 @@ func (r *WorkflowRepo) UpdateStep(ctx context.Context, stepULID string, fields m
 		return fmt.Errorf("update workflow step: %w", result.Error)
 	}
 	return nil
+}
+
+// FindRunningGateStep 查当前章门禁上那条 running 的门禁行（进入门禁时写入，审核时原地更新）。
+// 找不到返回 (nil, nil)：历史数据或异常路径下调用方回退为插入一行。
+func (r *WorkflowRepo) FindRunningGateStep(ctx context.Context, runULID, chapterULID string,
+	stepIndex int) (*domain.WorkflowStepDO, error) {
+	var do domain.WorkflowStepDO
+	result := r.db.WithContext(ctx).
+		Where("run_ulid = ? AND chapter_ulid = ? AND step_index = ? AND step_type_code = ? AND step_status_code = ?",
+			runULID, chapterULID, stepIndex, domain.WorkflowStepTypeHumanReview, domain.WorkflowStepStatusRunning).
+		Order("created_at DESC").Limit(1).Find(&do)
+	if result.Error != nil {
+		return nil, fmt.Errorf("find running workflow gate step: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &do, nil
 }
 
 // ListStepsByRun 查询一次运行的全部步骤（按创建顺序，即执行时间线）。

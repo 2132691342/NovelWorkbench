@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cloudwego/eino/schema"
 
@@ -48,7 +49,8 @@ func (s *WorkflowService) stepSummary(ctx context.Context, runULID string, chapt
 	}
 	stepCtx, cancel := context.WithTimeout(ctx, workflowStepTimeout)
 	defer cancel()
-	summaryText, err := s.generateText(stepCtx, spec, workflowGenericSystemPrompt, rendered)
+	summaryText, err := s.generateText(stepCtx, spec, workflowGenericSystemPrompt, rendered,
+		domain.WorkflowStepTypeSummary, runDO.TraceID, runDO.RunULID)
 	if err != nil {
 		return workflowStepResult{}, "", "", err
 	}
@@ -82,7 +84,7 @@ func (s *WorkflowService) enterReviewGate(ctx context.Context, runULID string, s
 	if err != nil || runDO == nil {
 		return pkg.NewBizError(domain.RespCodeStorageError, "运行实例读取失败")
 	}
-	if err := s.recordStep(ctx, runDO, domain.WorkflowStepTypeHumanReview, stepDef.StepName,
+	if err := s.recordStep(ctx, runDO, stepIndex, domain.WorkflowStepTypeHumanReview, stepDef.StepName,
 		domain.WorkflowStepStatusRunning, "等待人工审核", "", 0); err != nil {
 		return err
 	}
@@ -142,6 +144,8 @@ func (s *WorkflowService) finishRun(ctx context.Context, runULID string) {
 			RefULID:               runDO.RunULID,
 		})
 	}
+	s.recordRunAudit(ctx, runDO, domain.WorkflowRunStatusSucceeded,
+		fmt.Sprintf("共 %d 章全部完成", runDO.TotalChapterCount))
 }
 
 // failRun 标记运行失败并发出站内通知。
@@ -164,6 +168,7 @@ func (s *WorkflowService) failRun(ctx context.Context, runDO *domain.WorkflowRun
 			RefULID:               runDO.RunULID,
 		})
 	}
+	s.recordRunAudit(ctx, runDO, domain.WorkflowRunStatusFailed, message)
 }
 
 // recordStepOf 按步骤定义落一条步骤记录（步骤索引与类型来自模板）。
@@ -191,6 +196,70 @@ func (s *WorkflowService) recordStepOf(ctx context.Context, runULID, chapterULID
 	})
 }
 
+// recordGateAudit 记录一次人工审核决定（挂在运行的链路下，运行时间线才看得出「谁在什么时候点头」）。
+// 审核是 HTTP 请求，本身已有根 span；这里的子 span 让运行的 trace_id 时间线保持完整。
+func (s *WorkflowService) recordGateAudit(ctx context.Context, runDO *domain.WorkflowRunDO, stepName, statusCode, noteText string) {
+	if s.auditRecorder == nil || runDO == nil {
+		return
+	}
+	levelCode, httpStatus := domain.AuditLevelInfo, 200
+	if statusCode == domain.WorkflowStepStatusRejected {
+		levelCode, httpStatus = domain.AuditLevelWarn, 400
+	}
+	do := &domain.AuditLogDO{
+		LogLevelCode:   levelCode,
+		SpanTypeCode:   domain.AuditSpanTypeWorkflow,
+		TraceID:        runDO.TraceID,
+		ParentSpanCode: domain.AuditActionWorkflowRunCreate,
+		UserULID:       pkg.ActorFromContext(ctx),
+		ActionCode:     "workflow/gate/" + statusCode,
+		ActionName:     "工作流人工审核",
+		RequestPath:    "workflow://" + runDO.TemplateCode,
+		RequestMethod:  "INTERNAL",
+		TargetType:     "workflow_run",
+		TargetULID:     runDO.RunULID,
+		RespCode:       "GATE_" + strings.ToUpper(statusCode),
+		RespMessage:    pkg.TruncateText(stepName+"："+noteText, 512),
+		HTTPStatus:     httpStatus,
+	}
+	if err := s.auditRecorder.Record(ctx, do); err != nil {
+		pkg.SLogger().Warnw("工作流审核审计写入失败", "run_ulid", runDO.RunULID, "error", err)
+	}
+}
+
+// recordRunAudit 记录运行进入终态（完成/失败/取消），让运行链路有一个明确的收尾 span。
+func (s *WorkflowService) recordRunAudit(ctx context.Context, runDO *domain.WorkflowRunDO, statusCode, messageText string) {
+	if s.auditRecorder == nil || runDO == nil {
+		return
+	}
+	levelCode, httpStatus := domain.AuditLevelInfo, 200
+	switch statusCode {
+	case domain.WorkflowRunStatusFailed:
+		levelCode, httpStatus = domain.AuditLevelError, 500
+	case domain.WorkflowRunStatusCanceled:
+		levelCode, httpStatus = domain.AuditLevelWarn, 400
+	}
+	do := &domain.AuditLogDO{
+		LogLevelCode:   levelCode,
+		SpanTypeCode:   domain.AuditSpanTypeWorkflow,
+		TraceID:        runDO.TraceID,
+		ParentSpanCode: domain.AuditActionWorkflowRunCreate,
+		UserULID:       runDO.UserULID,
+		ActionCode:     "workflow/run/" + statusCode,
+		ActionName:     "工作流运行收尾",
+		RequestPath:    "workflow://" + runDO.TemplateCode,
+		RequestMethod:  "INTERNAL",
+		TargetType:     "workflow_run",
+		TargetULID:     runDO.RunULID,
+		RespCode:       "RUN_" + strings.ToUpper(statusCode),
+		RespMessage:    pkg.TruncateText(messageText, 512),
+		HTTPStatus:     httpStatus,
+	}
+	if err := s.auditRecorder.Record(ctx, do); err != nil {
+		pkg.SLogger().Warnw("工作流运行收尾审计写入失败", "run_ulid", runDO.RunULID, "error", err)
+	}
+}
+
 // recordStepAudit 为一步执行写审计（链路 ID 取运行的 trace_id，按步骤状态映射级别）。
 func (s *WorkflowService) recordStepAudit(ctx context.Context, runULID, chapterULID string,
 	stepDef domain.WorkflowStepDefDTO, statusCode string, latencyMs int64) {
@@ -201,29 +270,38 @@ func (s *WorkflowService) recordStepAudit(ctx context.Context, runULID, chapterU
 	if err != nil || runDO == nil {
 		return
 	}
-	httpStatus := 200
-	levelCode := domain.AuditLevelInfo
-	switch statusCode {
-	case domain.WorkflowStepStatusFailed:
-		httpStatus, levelCode = 500, domain.AuditLevelError
-	case domain.WorkflowStepStatusSkipped, domain.WorkflowStepStatusRejected:
-		httpStatus, levelCode = 400, domain.AuditLevelWarn
-	}
+	httpStatus, levelCode := stepAuditLevelOf(statusCode)
 	do := &domain.AuditLogDO{
-		LogLevelCode:  levelCode,
-		TraceID:       runDO.TraceID,
-		UserULID:      runDO.UserULID,
-		ActionCode:    "workflow/step/" + stepDef.StepTypeCode,
-		RequestPath:   "workflow://" + runDO.TemplateCode,
-		RequestMethod: "INTERNAL",
-		TargetType:    "workflow_run",
-		TargetULID:    runDO.RunULID,
-		RespCode:      "STEP_" + strings.ToUpper(statusCode),
-		RespMessage:   stepDef.StepName + "：" + statusCode,
-		HTTPStatus:    httpStatus,
-		LatencyMs:     latencyMs,
+		LogLevelCode:   levelCode,
+		SpanTypeCode:   domain.AuditSpanTypeWorkflow,
+		TraceID:        runDO.TraceID,
+		ParentSpanCode: domain.AuditActionWorkflowRunCreate,
+		UserULID:       runDO.UserULID,
+		ActionCode:     "workflow/step/" + stepDef.StepTypeCode,
+		ActionName:     pkg.AuditActionLabel("workflow/step/" + stepDef.StepTypeCode),
+		RequestPath:    "workflow://" + runDO.TemplateCode,
+		RequestMethod:  "INTERNAL",
+		TargetType:     "workflow_run",
+		TargetULID:     runDO.RunULID,
+		RespCode:       "STEP_" + strings.ToUpper(statusCode),
+		RespMessage:    stepDef.StepName + "：" + statusCode,
+		HTTPStatus:     httpStatus,
+		LatencyMs:      latencyMs,
 	}
 	_ = s.auditRecorder.Record(ctx, do)
+}
+
+// stepAuditLevelOf 把步骤状态映射成审计级别与 HTTP 状态（仅失败与人工退回算异常）。
+// skipped（体检达标跳过修订）是正常结果，记 warn 会让每次健康运行在审计页都顶着橙色级别。
+func stepAuditLevelOf(statusCode string) (httpStatus int, levelCode string) {
+	switch statusCode {
+	case domain.WorkflowStepStatusFailed:
+		return 500, domain.AuditLevelError
+	case domain.WorkflowStepStatusRejected:
+		return 400, domain.AuditLevelWarn
+	default:
+		return 200, domain.AuditLevelInfo
+	}
 }
 
 // 工作流步骤的系统提示词：起草类产出会被原样写进章节，必须明确「只交正文」。
@@ -233,12 +311,31 @@ const (
 )
 
 // generateText 流式累积一次模型输出（结构化长输出用非流式会被网关首包超时打断）。
-func (s *WorkflowService) generateText(ctx context.Context, spec ai.ProviderSpec, systemText, promptText string) (string, error) {
+// stepTypeCode 用于 AI 调用留痕（ai/workflow/<步骤类型>），空则按通用 AI 步骤记录。
+func (s *WorkflowService) generateText(ctx context.Context, spec ai.ProviderSpec, systemText, promptText,
+	stepTypeCode, traceID, runULID string) (string, error) {
+	startedAt := time.Now()
+	firstChunkAt := time.Time{}
+	var usage ai.StreamUsage
+	succeeded := false
+	// 用量按「一次模型调用一条记录」在流结束时上报，避免只有次数没有 token 的伪统计。
+	defer func() {
+		latency := time.Since(startedAt)
+		if !firstChunkAt.IsZero() {
+			latency = time.Since(firstChunkAt)
+		}
+		if succeeded {
+			s.aiClient.RecordStreamUsage(spec, usage.TokenUsage(), latency)
+			return
+		}
+		s.aiClient.RecordStreamFailure(spec, usage.TokenUsage(), latency)
+	}()
 	stream, err := s.aiClient.Stream(ctx, spec, []*schema.Message{
 		{Role: schema.System, Content: systemText},
 		{Role: schema.User, Content: promptText},
 	})
 	if err != nil {
+		s.recordAICallAudit(ctx, spec, stepTypeCode, traceID, runULID, promptText, startedAt, "", err)
 		return "", pkg.WrapBizError(domain.RespCodeAIProviderError, "模型调用失败", err)
 	}
 	defer stream.Close()
@@ -252,55 +349,39 @@ func (s *WorkflowService) generateText(ctx context.Context, spec ai.ProviderSpec
 			if strings.Contains(recvErr.Error(), "EOF") {
 				break
 			}
+			s.recordAICallAudit(ctx, spec, stepTypeCode, traceID, runULID, promptText, startedAt, builder.String(), recvErr)
 			return "", pkg.WrapBizError(domain.RespCodeAIProviderError, "模型输出中断", recvErr)
 		}
-		if chunk != nil {
-			builder.WriteString(chunk.Content)
+		if chunk == nil {
+			continue
 		}
+		if firstChunkAt.IsZero() {
+			firstChunkAt = time.Now()
+		}
+		usage.Add(chunk)
+		builder.WriteString(chunk.Content)
 	}
-	return strings.TrimSpace(builder.String()), nil
+	replyText := strings.TrimSpace(builder.String())
+	succeeded = true
+	s.recordAICallAudit(ctx, spec, stepTypeCode, traceID, runULID, promptText, startedAt, replyText, nil)
+	return replyText, nil
 }
 
-// chapterContextText 装配章节上下文：项目设定、角色卡、前章摘要与大纲要求。
-func (s *WorkflowService) chapterContextText(ctx context.Context, chapter *domain.ChapterDO,
-	params domain.WorkflowRunParamsDTO) (string, error) {
-	project, err := s.projectRepo.GetByULID(ctx, chapter.ProjectULID)
-	if err != nil {
-		return "", err
-	}
-	var builder strings.Builder
-	if project != nil {
-		if project.SynopsisText != "" {
-			builder.WriteString("【项目简介】\n" + project.SynopsisText + "\n\n")
-		}
-		if project.StyleText != "" {
-			builder.WriteString("【文风要求】\n" + project.StyleText + "\n\n")
-		}
-	}
-	builder.WriteString("【本章】第 " + intToText(int64(chapter.ChapterOrder)) + " 章 " + chapter.ChapterName + "\n")
-	if chapter.SummaryText != "" {
-		builder.WriteString("章节梗概：" + chapter.SummaryText + "\n")
-	}
-	summaries, err := s.continuityRepo.ListSummariesByProject(ctx, chapter.ProjectULID, "", "")
-	if err == nil && len(summaries) > 0 {
-		builder.WriteString("\n【前情摘要】\n")
-		appended := 0
-		for i := range summaries {
-			if summaries[i].ChapterULID == chapter.ChapterULID {
-				continue
-			}
-			builder.WriteString("- " + truncateRunes(summaries[i].SummaryText, 300) + "\n")
-			appended++
-			if appended >= 5 {
-				break
-			}
-		}
-	}
-	hookText, err := s.pendingHookText(ctx, chapter.ProjectULID)
-	if err == nil && hookText != "" {
-		builder.WriteString("\n" + hookText)
-	}
-	return strings.TrimSpace(builder.String()), nil
+// recordAICallAudit 为一次工作流内的模型调用写 ai_call 审计（挂在创建运行的请求之下）。
+func (s *WorkflowService) recordAICallAudit(ctx context.Context, spec ai.ProviderSpec, stepTypeCode,
+	traceID, runULID, promptText string, startedAt time.Time, replyText string, callErr error) {
+	actionCode := "ai/workflow/" + stepTypeCode
+	recordAICall(ctx, s.auditRecorder, aiCallMeta{
+		ActionCode:     actionCode,
+		ActionName:     pkg.AuditActionLabel(actionCode),
+		ParentSpanCode: domain.AuditActionWorkflowRunCreate,
+		TraceID:        traceID,
+		TargetType:     "workflow_run",
+		TargetULID:     runULID,
+		ModelName:      spec.ChatModelName,
+		PromptChars:    utf8.RuneCountInString(promptText),
+	}, time.Since(startedAt),
+		estimateTokenCount(utf8.RuneCountInString(promptText), utf8.RuneCountInString(replyText)), callErr)
 }
 
 // pendingHookText 取项目内未回收的伏笔摘要（限制条数与长度，避免上下文膨胀）。

@@ -12,6 +12,7 @@
     type FormRules
   } from 'element-plus'
   import { resetAdminUserPassword, type NWUserAdminVo } from '@/api/admin'
+  import { checkPasswordStrength } from './passwordStrength'
 
   const emit = defineEmits<{ saved: [] }>()
 
@@ -28,7 +29,16 @@
   const rules: FormRules = {
     new_password_text: [
       { required: true, message: '请输入新密码', trigger: 'blur' },
-      { min: 6, max: 64, message: '长度 6-64 个字符', trigger: 'blur' }
+      {
+        validator: (_rule, value: string, callback: (error?: Error) => void) => {
+          if (!checkPasswordStrength(value).passed) {
+            callback(new Error('密码至少 8 位，且同时包含字母与数字'))
+            return
+          }
+          callback()
+        },
+        trigger: 'blur'
+      }
     ],
     confirm_password_text: [
       { required: true, message: '请再次输入新密码', trigger: 'blur' },
@@ -78,7 +88,7 @@
 <template>
   <ElDialog v-model="visible" title="重置密码" width="420px" append-to-body destroy-on-close>
     <p class="reset-password__hint">
-      将为「{{ target?.user_name }}」设置新密码，对方下次登录即生效。
+      将为「{{ target?.user_name }}」设置新密码，对方下次登录即生效；该账号已登录的会话会立即失效。
     </p>
     <ElForm ref="formRef" :model="form" :rules="rules" label-position="top">
       <ElFormItem label="新密码" prop="new_password_text">
@@ -87,7 +97,7 @@
           type="password"
           show-password
           maxlength="64"
-          placeholder="至少 6 位"
+          placeholder="至少 8 位，含字母与数字"
         />
       </ElFormItem>
       <ElFormItem label="确认新密码" prop="confirm_password_text">

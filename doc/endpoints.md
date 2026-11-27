@@ -117,15 +117,18 @@
 | POST | `/chat/session/list` | `ChatSessionListREQ` | `[]ChatSessionVO` |
 | POST | `/chat/session/delete` | `ChatSessionDeleteREQ` | `null` |
 
-### 1.8.1 自动化工作流（11 条）
+### 1.8.1 自动化工作流（13 条）
 
 | 方法 | 路径 | 请求 | 响应 data |
 | --- | --- | --- | --- |
 | GET | `/workflow/template/list` | 无 | `[]WorkflowTemplateVO` |
 | POST | `/workflow/run/create` | `WorkflowRunCreateREQ` | `WorkflowRunVO` |
+| POST | `/workflow/run/quick_start` | `WorkflowQuickStartREQ` | `WorkflowQuickStartVO` |
 | POST | `/workflow/run/list` | `WorkflowRunListREQ` | `PageDTO<WorkflowRunVO>` |
 | GET | `/workflow/run/detail/:RunULID` | 路径变量 | `WorkflowRunDetailVO` |
 | GET | `/workflow/run/stats` | `?project_ulid=` 可选 | `WorkflowRunStatsVO` |
+| GET | `/workflow/readiness/:ProjectULID` | 路径变量 | `WorkflowReadinessVO` |
+| GET | `/workflow/run/pending` | 无 | `[]WorkflowRunVO` |
 | POST | `/workflow/run/approve` | `WorkflowRunApproveREQ` | `WorkflowRunVO` |
 | POST | `/workflow/run/reject` | `WorkflowRunRejectREQ` | `WorkflowRunVO` |
 | POST | `/workflow/run/pause` | `WorkflowRunIDREQ` | `WorkflowRunVO` |
@@ -171,7 +174,7 @@
 | GET | `/model/usage/overview` | `system:usage:read` | query：`from_date`、`to_date` | `ModelUsageOverviewVO` |
 | GET | `/system/status` | `system:status:read` | 无 | `SystemStatusVO` |
 
-### 1.11 系统管理（14 条）
+### 1.11 系统管理（18 条）
 
 | 方法 | 路径 | 权限门禁 | 请求 | 响应 data |
 | --- | --- | --- | --- | --- |
@@ -184,6 +187,8 @@
 | POST | `/admin/role/save` | `system:role:manage` | `RoleSaveREQ` | `RoleVO` |
 | POST | `/admin/role/delete` | `system:role:manage` | `RoleDeleteREQ` | `null` |
 | POST | `/admin/audit/list` | `system:audit:read` | `AuditListREQ` | `PageDTO<AuditVO>` |
+| POST | `/admin/audit/trace/list` | `system:audit:read` | `AuditTraceListREQ` | `PageDTO<AuditTraceSummaryVO>` |
+| POST | `/admin/audit/stats` | `system:audit:read` | `AuditTraceListREQ` | `AuditStatsVO` |
 | GET | `/admin/audit/detail/:AuditULID` | `system:audit:read` | 路径变量 | `AuditDetailVO` |
 | GET | `/admin/audit/trace/:TraceID` | `system:audit:read` | 路径变量 | `AuditTraceVO` |
 | GET | `/admin/audit/action_options` | `system:audit:read` | 无 | `[]AuditActionOptionVO` |
@@ -198,13 +203,20 @@
 
 审计相关：
 - 审计数据存 Manticore `nw_audit`，不在 PostgreSQL；列表的 `keyword_text` 与 `action_code` 合并成一次全文匹配，因此两者同时给出时是「都要命中」。
-- `date_from` / `date_to` 为 `YYYY-MM-DD`，服务端换算为本地时区的毫秒区间（含当日 23:59:59.999）。
-- `POST /admin/audit/purge` 立即执行一次留存清理，返回删除条数与当前总条数。
+- `date_from` / `date_to` 为 `YYYY-MM-DD`，服务端换算为本地时区的毫秒区间（含当日 23:59:59.999）；`time_from` / `time_to` 为 RFC3339 精确时刻，存在时优先于日期字段（前端「近 1 小时」等快捷范围用它）。
+- `span_type_code` 过滤取值 `http` / `workflow_step` / `ai_call` / `job` / `system`（`binding:"omitempty,oneof=..."`），空表示全部。
+- `AuditVO` / `AuditDetailVO` 的 span 字段：`span_type_code`（类型）、`action_name`（中文动作名，历史行可能为空）、`parent_span_code`（父 span 动作码，顶级为空）、`model_name`（AI 调用的模型名，非 AI 为空）、`token_count`（AI 调用 token，非 AI 为 0）。
+- `AuditTraceVO.item_list` 为 `AuditDetailVO[]`（含请求/响应摘要），按 `created_at_ts` 升序，单条链路上限 200 条。
+- `AuditRetentionVO` 字段：`retention_days`、`purge_hour`（每日清理整点 0–23）、`total_count`（审计条数）、`login_log_total_count`（登录日志条数）、`purged_count` / `login_log_purged_count`（本次清理删除数）、`last_purged_at`、`next_purge_at`（RFC3339，按当前配置真实计算）。
+- `POST /admin/audit/purge` 立即执行一次留存清理（审计 + 登录日志），返回两类删除条数与当前条数；清理动作本身会落一条 `system/audit.purge` 审计。
+- **`POST /admin/audit/trace/list`** 是审计页的主视图：一行一次入口请求，返回 `AuditTraceSummaryVO`（`root_action_code` / `root_action_name` / `root_request_path` / `span_count` / `ai_call_count` / `token_count` / `total_latency_ms` / `slowest_span_ms` / `slowest_action_name` / `log_level_code`（链路内最严重）/ `http_status` / `resp_code` / `resp_message` / `started_at` / `finished_at`）与 `trace_id`。筛选项与 `AuditListREQ` 同名同义，另加 `span_type_code`（保留含该类型 span 的链路）。
+- **`POST /admin/audit/stats`** 用与链路列表相同的筛选条件返回区间概览 `AuditStatsVO`：`trace_count`、`span_count`、`error_trace_count`、`warn_trace_count`（仅含 warn 的链路）、`ai_call_count`、`token_count`、`avg_latency_ms`（按根 span 算）、`slow_trace_count`（链路耗时 >5s）。
 
 工作流相关：
 - `chapter_ulid_list` 为空时按「项目内空白章 → 按 `new_chapter_count` 新建」的顺序解析目标章节；两者都无结果时报 `ERR_BIZ_FAILED`。
 - `target_word_count` 与 `gate_score` 越界直接拒绝（不是静默钳制），避免运行中途标准变化。
 - `review_gate_flag` 缺省为 true；显式传 false 才会关闭人工审核门禁。
+- **`POST /workflow/run/quick_start`** 是一键开跑入口：只需 `project_ulid`，其余参数从项目上的 `auto_*` 默认值取（`auto_target_word_count` / `auto_gate_score` / `auto_review_gate_flag` / `auto_requirement_text`），请求里显式给出的字段覆盖默认。`template_code` 留空时按目标章节现状自动选：有空白章或指定了 `new_chapter_count` → `chapter_draft`；全是成稿 → `chapter_polish`。返回 `WorkflowQuickStartVO`：`run_vo`、`template_code`、`chapter_count`、`ready_flag`、`blocking_count`、`blocking_hint_list`（未就绪阻塞项的前 3 条建议）。**素材缺口不阻塞开跑**，只通过 `ready_flag=false` 与提示列表告知。
 
 
 
@@ -242,5 +254,3 @@
 | `ref_summary_ulid_list` | 素材库 · 章节摘要 | 显式引用块 |
 | `ref_doc_ulid_list` | 素材库 · 文档 | 全文按切片拼接后进块 |
 | `ref_session_ulid_list` | 历史会话 | 逐条编号归档后进块，一条不删；当前会话自身被拒 |
-
-

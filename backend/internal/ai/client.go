@@ -181,6 +181,13 @@ func (c *Client) Generate(ctx context.Context, spec ProviderSpec, messages []*sc
 		c.record(spec, CallTypeChat, false, nil, time.Since(startedAt))
 		return nil, err
 	}
+	return c.generateWith(ctx, spec, chatModel, messages)
+}
+
+// generateWith 执行一次非流式调用并上报用量（调用次数与 token 落在同一条记录上）。
+func (c *Client) generateWith(ctx context.Context, spec ProviderSpec, chatModel model.BaseChatModel,
+	messages []*schema.Message) (*schema.Message, error) {
+	startedAt := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, callTimeout(spec))
 	defer cancel()
 	reply, err := chatModel.Generate(callCtx, messages)
@@ -223,34 +230,32 @@ func (c *Client) StreamWithTools(ctx context.Context, spec ProviderSpec, message
 	return c.streamWith(ctx, spec, withTools, messages)
 }
 
-// streamWith 执行流式调用并上报首包结果（成功起点与失败次数）。
+// streamWith 执行流式调用：只负责取流，不记账。
+// 一次流式调用只有一条用量记录，由调用方在流结束后用 RecordStreamUsage / RecordStreamFailure 上报，
+// 这样调用次数与 token 必然落在同一条记录上，不会出现「有调用次数、token 全为 0」的伪统计。
 func (c *Client) streamWith(ctx context.Context, spec ProviderSpec, chatModel model.BaseChatModel,
 	messages []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-	startedAt := time.Now()
 	stream, err := chatModel.Stream(ctx, messages)
 	if err != nil {
-		c.record(spec, CallTypeChat, false, nil, time.Since(startedAt))
 		return nil, fmt.Errorf("chat stream: %w", err)
 	}
-	c.record(spec, CallTypeChat, true, nil, time.Since(startedAt))
 	return stream, nil
 }
 
-// RecordStreamUsage 流式生成结束后补记 token 用量（流式首包已记一次成功调用）。
+// RecordStreamUsage 流式生成正常结束后上报用量（一次调用只调用一次）。
+// usage 为 nil 表示网关未返回用量：token 记 0，并标记为用量未知，由 service 单独计数解释。
 func (c *Client) RecordStreamUsage(spec ProviderSpec, usage *schema.TokenUsage, latency time.Duration) {
-	if c.usage == nil || usage == nil {
-		return
-	}
-	c.usage.RecordUsage(context.Background(), UsageRecord{
-		ProviderULID:     spec.ProviderULID,
-		ProviderName:     spec.ProviderName,
-		ModelName:        spec.ChatModelName,
-		CallTypeCode:     CallTypeChat,
-		SuccessFlag:      true,
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		LatencyMs:        latency.Milliseconds(),
-	})
+	c.recordStream(spec, true, usage, latency)
+}
+
+// RecordStreamFailure 流式生成失败或中止后上报用量（一次调用只调用一次）。
+func (c *Client) RecordStreamFailure(spec ProviderSpec, usage *schema.TokenUsage, latency time.Duration) {
+	c.recordStream(spec, false, usage, latency)
+}
+
+// recordStream 上报一次流式调用的完整记录（调用次数 + 成功标志 + token + 耗时）。
+func (c *Client) recordStream(spec ProviderSpec, success bool, usage *schema.TokenUsage, latency time.Duration) {
+	c.record(spec, CallTypeChat, success, usage, latency)
 }
 
 // ProbeResult 供应商对话连通性测试结果。
@@ -346,18 +351,19 @@ func ParseRerankIDs(content string, allowed []string) ([]string, error) {
 	return parseRerankIDs(content, allowed)
 }
 
-// record 上报一次调用（token 用量可为空，如流式首包）。
+// record 上报一次调用（usage 为 nil 表示网关未返回用量，按「用量未知」计数）。
 func (c *Client) record(spec ProviderSpec, callType string, success bool, usage *schema.TokenUsage, latency time.Duration) {
 	if c.usage == nil {
 		return
 	}
 	record := UsageRecord{
-		ProviderULID: spec.ProviderULID,
-		ProviderName: spec.ProviderName,
-		ModelName:    spec.ChatModelName,
-		CallTypeCode: callType,
-		SuccessFlag:  success,
-		LatencyMs:    latency.Milliseconds(),
+		ProviderULID:   spec.ProviderULID,
+		ProviderName:   spec.ProviderName,
+		ModelName:      spec.ChatModelName,
+		CallTypeCode:   callType,
+		SuccessFlag:    success,
+		UsageKnownFlag: usage != nil,
+		LatencyMs:      latency.Milliseconds(),
 	}
 	if usage != nil {
 		record.PromptTokens = usage.PromptTokens

@@ -1,0 +1,234 @@
+// 链路瀑布的共享样式：抽屉头部汇总、时间刻度与逐条 span 行。
+// 抽屉与时间线组件共用同一套类名，因此样式放在这里由两者各自引入。
+
+.audit-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  &__failed {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+  }
+
+  &__head {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    padding: 12px 14px;
+    background: var(--nw-surface-subtle);
+    border: 1px solid var(--nw-border-soft);
+    border-radius: var(--nw-radius-md);
+  }
+
+  &__stat {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+
+    &.is-wide {
+      grid-column: span 2;
+    }
+  }
+
+  &__stat-label {
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__stat-value {
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--nw-ink);
+
+    small {
+      margin-left: 4px;
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--el-text-color-placeholder);
+    }
+
+    &.is-slow {
+      font-size: 13px;
+      color: var(--nw-warning);
+      word-break: break-all;
+    }
+
+    &.is-error {
+      color: var(--nw-danger);
+    }
+  }
+
+  &__trace-id {
+    margin: 0;
+    font-family: var(--nw-font-mono);
+    word-break: break-all;
+  }
+
+  &__axis {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 4px 0 26px;
+    font-family: var(--nw-font-mono);
+    font-size: 10.5px;
+    color: var(--el-text-color-placeholder);
+  }
+
+  &__mono {
+    font-family: var(--nw-font-mono);
+    font-size: 11px;
+  }
+
+  &__list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+
+  &__footer {
+    margin: 0;
+  }
+}
+
+.trace-row {
+  padding: 8px 10px;
+  background: var(--nw-surface);
+  border: 1px solid var(--nw-border-soft);
+  border-radius: var(--nw-radius-md);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+
+  &:hover {
+    border-color: var(--el-color-primary);
+  }
+
+  &.is-child {
+    margin-left: 18px;
+  }
+
+  &.is-slowest {
+    border-color: var(--nw-warning);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--nw-warning) 30%, transparent);
+  }
+
+  &.is-error {
+    border-color: color-mix(in srgb, var(--nw-danger) 55%, var(--nw-border-soft));
+  }
+
+  &__head {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    cursor: pointer;
+  }
+
+  &__icon {
+    margin-top: 2px;
+    color: var(--el-color-primary);
+    flex: none;
+  }
+
+  &__main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+
+  &__name {
+    font-size: 12.5px;
+    color: var(--nw-ink);
+  }
+
+  &__latency {
+    margin-left: auto;
+    font-family: var(--nw-font-mono);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--nw-ink);
+  }
+
+  &__track {
+    position: relative;
+    height: 8px;
+    margin: 5px 0 3px;
+    overflow: hidden;
+    background: var(--nw-surface-subtle);
+    border-radius: 999px;
+  }
+
+  &__track-fill {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: var(--el-color-primary);
+    border-radius: inherit;
+    transition:
+      left 0.25s ease,
+      width 0.25s ease;
+
+    &.is-warn {
+      background: var(--nw-warning);
+    }
+
+    &.is-error {
+      background: var(--nw-danger);
+    }
+  }
+
+  &.is-slowest &__track-fill {
+    background: var(--nw-warning);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nw-warning) 60%, transparent);
+  }
+
+  &__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__detail {
+    padding-top: 8px;
+    margin-top: 8px;
+    border-top: 1px dashed var(--nw-border-soft);
+  }
+
+  &__message {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--el-text-color-regular);
+  }
+
+  &__payload {
+    margin: 0 0 6px;
+    font-family: var(--nw-font-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+    word-break: break-all;
+  }
+
+  &__payload-label {
+    display: inline-block;
+    padding: 0 6px;
+    margin-right: 6px;
+    color: var(--el-color-primary);
+    background: var(--nw-primary-soft);
+    border-radius: var(--nw-radius-sm);
+  }
+}

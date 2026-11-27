@@ -113,9 +113,22 @@ type WordStatVO struct {
 	AIWordDelta int64  `json:"ai_word_delta"` // AI 生成
 }
 
+// 配置值类型编码：前端据此选择数字输入、开关或文本框。
+const (
+	SettingValueTypeInt  = "int"  // 整数（带区间）
+	SettingValueTypeBool = "bool" // 布尔（开关）
+	SettingValueTypeText = "text" // 纯文本
+)
+
 // SettingVO 配置视图对象。
+// 除键值与说明外，额外下发默认值、值类型与合法区间，供设置页按类型渲染控件并就地校验，
+// 避免前端为每个配置键硬编码一份规则（键增删时前端无需改代码）。
 type SettingVO struct {
-	SettingKey   string `json:"setting_key"`   // 配置键
-	SettingValue string `json:"setting_value"` // 配置值
-	SettingDesc  string `json:"setting_desc"`  // 说明
+	SettingKey         string `json:"setting_key"`          // 配置键
+	SettingValue       string `json:"setting_value"`        // 当前值
+	SettingDesc        string `json:"setting_desc"`         // 说明
+	SettingValueType   string `json:"setting_value_type"`   // 值类型：int/bool/text（前端据此选控件）
+	SettingDefaultText string `json:"setting_default_text"` // 默认值（白名单外的历史键为空）
+	SettingValueMin    int    `json:"setting_value_min"`    // 合法最小值（仅 int 有效，0 表示无下限声明）
+	SettingValueMax    int    `json:"setting_value_max"`    // 合法最大值（仅 int 有效，0 表示无上限声明）
 }

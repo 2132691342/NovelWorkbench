@@ -117,6 +117,8 @@ export interface NWModelUsageDailyVo {
   stat_date: string
   call_count: number
   fail_count: number
+  /** 网关未返回 token 的调用数 */
+  unknown_usage_count?: number
   total_tokens: number
   completion_tokens: number
   avg_latency_ms: number
@@ -127,6 +129,8 @@ export interface NWModelUsageGroupVo {
   group_name: string
   call_count: number
   fail_count: number
+  /** 网关未返回 token 的调用数 */
+  unknown_usage_count?: number
   total_tokens: number
   avg_latency_ms: number
   success_rate_value: number
@@ -136,6 +140,8 @@ export interface NWModelUsageGroupVo {
 export interface NWModelUsageOverviewVo {
   call_count_total: number
   fail_count_total: number
+  /** 网关未返回 token 的调用数 */
+  unknown_usage_count?: number
   total_tokens_total: number
   avg_latency_ms: number
   success_rate_value: number

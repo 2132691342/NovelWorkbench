@@ -145,7 +145,7 @@
 4. `loadContextInput`（`service/chat_loader.go`）：引用章节（首项标记当前章）、引用文档全文、引用章节摘要、引用角色与设定、RAG 召回（失败降级为空）、项目角色、设定（排除 `note`）、当前章前后章梗概、被引用的历史会话（逐条归档）。
 5. `buildContextBlocks` 组装块并给优先级：当前章 100、显式引用 90、RAG 70、章节梗概 60、角色与设定 50；历史不进块。
 6. `ai.AssembleContext` 按优先级排序拼接全部块，不按总量丢弃；单块超上限时保留首尾并返回 `condensed_keys` 记日志。
-7. 命中指令提示词时用 `ai.RenderPrompt` 渲染 `{{user_input}}` / `{{chapter_content}}` / `{{context}}` / `{{prompt_code}}`，得到独立的系统级指令消息。
+7. 命中任务提示词时用 `ai.RenderPrompt` 渲染 `{{user_input}}` / `{{chapter_content}}` / `{{context}}` / `{{prompt_code}}`，得到独立的系统级指令消息。
 8. 落库用户消息（含引用与 token 估算），会话名为空则回填。
 9. `promptSvc.SystemPromptOf` 解析身份提示词；`buildChatMessages` 组装：身份（系统）→ 上下文（系统）→ 指令（系统）→ 历史（原生角色）→ 用户输入（用户）。
 10. `providerSvc.ChatSpecOf` 取模型规格（供应商不可用时流未开始，返回 JSON 包络）；`toolDeclarations` 取启用工具的声明，读失败只告警并退化为不带工具。
@@ -184,21 +184,22 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 - 占位符只支持四个内置变量；未登记的占位符在保存期就被拒绝，避免运行期静默渲染成空串。
 - 提示词不按关键词自动命中参考资料：作者用 `@` 显式挑选素材或历史会话，模型就只看到被选中的内容，行为更可预期。
 
-取舍：把提示词做成数据而不是代码，让作者不改代码、不发版就能调提示词；代价是占位符一致性必须在保存期校验。作用域覆盖规则让「全局默认 + 项目特化」成为可能，代价是列表页必须显式标注「被覆盖」。内置资产刻意只保留 3 个域 10 条（见 [prompts.md](prompts.md)）：多步骤编排交给[工作流](workflow.md)，提示词只描述单次任务，作者在 `/` 菜单里一眼能看懂。
+取舍：把提示词做成数据而不是代码，让作者不改代码、不发版就能调提示词；代价是占位符一致性必须在保存期校验。作用域覆盖规则让「全局默认 + 项目特化」成为可能，代价是列表页必须显式标注「被覆盖」。内置资产刻意只保留 4 个创作流程共 8 条（见 [prompts.md](prompts.md)）：多步骤编排交给[工作流](workflow.md)，提示词只描述单次任务，作者在 `/` 菜单里一眼能看懂。
 
 ## 9. 提示词注入与身份解析
 
 **职责与实现**
 
-身份提示词决定「AI 是谁」，指令提示词决定「这一单活怎么干」。二者都以**系统级消息**进入消息序列，用户在对话框输入的内容始终是**用户级消息**。
+身份提示词决定「AI 是谁」（可选自建），任务提示词决定「这一单活怎么干」（内置 8 条）。二者都以**系统级消息**进入消息序列，用户在对话框输入的内容始终是**用户级消息**。
 
-`SystemPromptOf(projectULID, systemPromptCode)` 的解析顺序：显式身份提示词编码（须启用且为全局或属于当前项目）→ 启用的全局默认身份提示词（`GetDefaultSystem`，排序号最小）→ `ai.SystemPrompt("")` 内置兜底。项目层再叠加 `projects.style_text`（`ai.ComposeSystemPrompt`）。
+`SystemPromptOf(projectULID, systemPromptCode)` 的解析顺序：显式身份提示词编码（须启用且为全局或属于当前项目）→ 启用的全局默认身份提示词（`GetDefaultSystem`，排序号最小）→ `ai.BaseSystemPrompt` 内置作者人格。项目层再叠加 `projects.style_text`（`ai.ComposeSystemPrompt`）。库里没有任何身份提示词时，兜底人格保证系统消息非空。
 
 **边界与权衡**
 
 - 身份提示词不受上下文块收敛影响：它走 `system` 角色，是独立的一条消息，不参与 `ai.AssembleContext` 的单块收敛。
 - 项目提示词的归属校验只看项目存在，与提示词库一致；对话期 @ 引用项目提示词时会再校验一次 `project_ulid` 匹配，防止跨项目引用。
-- 身份与指令同时下发、互不覆盖：身份写底线，指令写动作，模型看到的是「以什么身份 + 这次做什么」。
+- 身份与任务提示词同时下发、互不覆盖：身份写底线，任务写动作，模型看到的是「以什么身份 + 这次做什么」。
+- 身份提示词不再内置：旧 `novelist` / `reviser` / `planner` 由 `dropRetiredBuiltins` 在启动播种时清掉，作者要固定风格需自建一条 `system` 提示词。
 
 取舍：把系统提示词做成可编辑资产，让「换一种 AI 身份」不需要改代码；代价是每次对话多一次身份提示词查询（单行按编码/默认排序取，代价可忽略）。
 
@@ -210,7 +211,7 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 `ai/builtin_tools.go`：6 个内置工具定义（`chapter_check`、`deai_scan`、`chapter_digest`、`character_scan`、`foreshadow_scan`、`lore_lookup`）与 `ContentHash` 指纹。`service/tool_service.go` 的 `SeedDefaults`：按 `tool_code` 查缺补插；指纹变化且未自改时覆盖；已下线编码删除。`Invoke`：按编码取工具 → 校验启用 → `execute` 分发（各执行器在 `service/tool_executor.go`）。`chapter_check` / `deai_scan` 复用 `ai/check.Analyze`；`chapter_digest` 抽取每段首句并取章末钩子；`character_scan` 统计角色卡姓名（含别名）在本章的命中；`foreshadow_scan` 用双字片段粗匹配伏笔相关词；`lore_lookup` 按关键词查设定并剥掉富文本标签。结果统一截断到 4000 字符。
 
-**调用由模型决定，不由命令注入**：`ToolDeclarations` 把启用工具转成 eino `ToolInfo`（function name 即工具编码）随请求下发，模型据此自行决定调不调、调哪个、传什么参数。服务端不按关键词猜测、不接受请求体点名，`#` 触发符与 `tool_code_list` 字段都已移除。
+**调用由模型决定，不由命令注入**：`ToolDeclarations` 把启用工具转成 eino `ToolInfo`（function name 即工具编码）随请求下发，模型据此自行决定调不调、调哪个、传什么参数。服务端不按关键词猜测、不接受请求体点名，`#` 触发符已移除；`tool_code_list` 只在响应侧（`done` 事件与消息头）回显本轮实际调用的工具，不是请求入参。
 
 一次往返的形态：
 
@@ -249,14 +250,20 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 | `service/workflow_service.go` | 模板播种、运行创建、列表、详情、统计 |
 | `service/workflow_params.go` | 参数收敛、目标章节解析、空白章节创建 |
 | `service/workflow_engine.go` | 执行器：goroutine 调度、逐章推进、审核门禁、失败处理 |
-| `service/workflow_steps.go` | 各步骤实现（出稿/体检/复审/摘要/入库）与上下文装配 |
+| `service/workflow_steps.go` | 各步骤实现（出稿/体检/复审/摘要/入库）与门禁判定 |
+| `service/workflow_context.go` | 章节上下文装配：项目设定、人物关系、世界观、大纲节点、场景卡、前情摘要、伏笔 |
+| `service/workflow_readiness.go` | 开跑就绪度：九项素材/配置检查、评分、补齐路由 |
 | `service/workflow_control.go` | 审核通过/退回、暂停/继续/取消/重试、中断恢复 |
-| `api/workflow_api.go` | 11 个接口的 HTTP 处理器 |
+| `service/workflow_helper.go` | 步骤记录、门禁收口动作（原地更新 / 回退插入）、参数解码与状态判定 |
+| `api/workflow_api.go` | 13 个接口的 HTTP 处理器 |
 
 **边界与权衡**
 
 - 候选正文（`workflow_runs.candidate_text`）与章节正文分离：AI 产出不直接写作品数据，只有 `apply` 步骤或人工审核通过才落库，覆盖前自动留快照。
 - 体检复用 `ai/check.Analyze`，与对话期 `chapter_check` 工具、写作台体检面板共用同一实现，三处判定不会漂移。
+- 上下文装配（`workflow_context.go`）逐块取数、逐块限长、取不到就跳过：缺素材只让产出变差，不该让整次运行失败。除正文外各块合计控制在 3000 字内。
+- 就绪度只提示不硬拦：`Readiness` 给出分数、阻塞项与 `fix_route`，前端在页面顶部和向导第 2 步展示；作者坚持要跑时仍可继续，但必须先看到警告。检查项编码是前后端契约，改动要同步前端图标映射。
+- 待审核收件箱（`GET /workflow/run/pending`）把「AI 停下来等人」收敛成一个固定落点，工作台首页直接给「去审核」入口，并用 `?run=` 让工作流页自动打开对应抽屉。
 - 执行器是进程内 goroutine，不是分布式队列：单实例部署足够，代价是重启时需 `RecoverInterrupted` 把 running 退回 queued。
 - 同一运行用进程内 `activeSet` 去重，重复 start 直接忽略；多实例部署时需换成分布式锁（当前未做，因为部署形态是单实例）。
 - 运行总时长 = 60 分钟 + 每章 20 分钟：推理模型单章可能跑十几分钟，固定上限会让长任务必然中断。
@@ -277,8 +284,9 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 | 默认模型 | 全局唯一，设置前先 `ClearDefaultModel`；默认模型不可删除 |
 | 授权 | 角色授权与用户直授都可整体覆盖，可用集合取并集；管理员（`*`）无需授权即可见全部启用模型 |
 | 关联清理 | 删用户 → `DeleteUserGrantsByUser`；删角色 → `DeleteRoleGrantsByRole`；删模型 → `DeleteGrantsByModel`。不存在悬空授权 |
+| 去重 | `service/model_catalog_dedupe.go` 按 `(provider_ulid, model_name)` 与 `provider_name` 收敛重复行（保留有引用/手工/更新的行，迁移授权与默认标记），`main.go` 在 AutoMigrate 前后各跑一次；唯一冲突返回 `ERR_CONFLICT` |
 
-`service/model_provider_service.go` 的 `SeedDefault`：供应商表为空且配置了网关时播种「出厂默认」，并授权给全部内置角色；`MigrateLegacyModels` 在模型目录为空时把仅带 `chat_model_name` 的供应商行补成目录行（幂等）。`SaveProvider`：首次创建必须填 Key；更新时 Key 传空表示保持不变。`TestProvider` / `TestModel` → `probe`：构造 `ProviderSpec` 后调 `gateway.Probe` 跑一次极小对话，结果（状态、消息、延迟、回复）回写 `last_test_*` 字段。`DeleteProvider`：其下仍有模型时拒绝。`service/model_catalog_service.go` 的 `SaveModel` / `DeleteModel` / `SetDefaultModel` / `TestModel` / `GrantModel`：`temperatureOf` 缺省 0.7；`GrantModel` 同时覆盖两张授权表。`service/model_access_service.go` 的 `usableModelList`：管理员看全部「模型启用且供应商启用」的模型，其他用户取「角色授权 ∪ 用户直授」再过滤；`pickModel` 依次尝试指定 ULID、`default_flag`、第一个可用。`ChatSpecOf` / `DefaultChatSpec` / `Capability`：前者给对话链路（含授权与停用校验），中者给检索重排等后台链路（只看系统默认模型），后者给前端模型下拉。
+`service/model_provider_service.go` 的 `SeedDefault`：配置了网关且按供应商名或 BaseURL 查不到同名/同网关行时播种「出厂默认」，并授权给全部内置角色；`MigrateLegacyModels` 逐 provider 判断，只把「仍带旧列 `chat_model_name` 且尚无目录行」的供应商补成目录行（幂等）。`SaveProvider`：首次创建必须填 Key；更新时 Key 传空表示保持不变。`TestProvider` / `TestModel` → `probe`：构造 `ProviderSpec` 后调 `gateway.Probe` 跑一次极小对话，结果（状态、消息、延迟、回复）回写 `last_test_*` 字段。`DeleteProvider`：其下仍有模型时拒绝。`service/model_catalog_service.go` 的 `SaveModel` / `DeleteModel` / `SetDefaultModel` / `TestModel` / `GrantModel`：`temperatureOf` 缺省 0.7；`GrantModel` 同时覆盖两张授权表。`service/model_access_service.go` 的 `usableModelList`：管理员看全部「模型启用且供应商启用」的模型，其他用户取「角色授权 ∪ 用户直授」再过滤；`pickModel` 依次尝试指定 ULID、`default_flag`、第一个可用。`ChatSpecOf` / `DefaultChatSpec` / `Capability`：前者给对话链路（含授权与停用校验），中者给检索重排等后台链路（只看系统默认模型），后者给前端模型下拉。
 
 **边界与权衡**
 
@@ -306,7 +314,9 @@ SSE 协议由 `api/chat_api.go` 的 `sseChatWriter` 实现：`data: {json}` 单�
 
 **职责与实现**
 
-`model_usage_stats` 按「日期 × 供应商 × 模型 × 调用类型」唯一聚合调用次数、成功/失败数、输入/输出/总 token、耗时总和。当前调用类型只有 `chat`。
+`model_usage_stats` 按「日期 × 供应商 × 模型 × 调用类型」唯一聚合调用次数、成功/失败数、输入/输出/总 token、耗时总和、用量未知次数。当前调用类型只有 `chat`。
+
+记账口径：一次模型调用只产生一条用量记录，调用次数与 token 必然落在同一条上。流式调用不在首包记账，而是在流结束（正常读完或出错）时一次性上报成功/失败标志、真实 token 与耗时（首包→流结束）；`ai.StreamUsage` 汇总各分片 `ResponseMeta.Usage` 的最大值，网关全程未返回用量时该次调用记 `unknown_usage_count + 1` 而 token 记 0，从数据上区分「网关不给用量」与「记账漏了 token」。非流式调用由 `Generate` 在返回时一次上报。
 
 `service/model_usage_service.go` 的 `NewModelUsageService` 启动 `flushLoop`；`RecordUsage` 在内存 map 中按维度累加，`sync.Mutex` 保护。`flushLoop` 每 5 秒 `Flush` 一次，`ctx` 取消时做最后一次落库；`Flush` 先整体换出新 map 再逐条 `UpsertIncrement`，单条失败只告警并丢弃该批。`Overview`：查询前先 `Flush`；`resolveUsageRange` 缺省近 14 天、非法日期回退默认、起止倒置自动交换；`fillUsageDaily` 补零；`weightedAvgLatency` 用每日调用数加权求平均延迟。上报方：`ai/client.go` 通过 `ai.UsageRecorder` 接口调用，`cmd/server/main.go` 用 `aiClient.SetUsageRecorder(usageService)` 注入，避免 `ai` 依赖存储层。前端 `views/Admin/Usage.vue` 提供 7/14/30 天预设、四项指标、双轴趋势图与两张分布表。
 

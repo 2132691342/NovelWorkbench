@@ -210,3 +210,37 @@ func (r *KnowledgeRepo) StatsByProject(ctx context.Context, projectULID string) 
 	}
 	return vo, nil
 }
+
+// ListAllDocULIDs 返回全部文档 ULID（启动期对账孤儿切片与孤儿对象时用）。
+func (r *KnowledgeRepo) ListAllDocULIDs(ctx context.Context) ([]string, error) {
+	ulidList := make([]string, 0, 64)
+	if err := r.db.WithContext(ctx).Model(&domain.KnowledgeDocumentDO{}).
+		Pluck("doc_ulid", &ulidList).Error; err != nil {
+		return nil, fmt.Errorf("list knowledge document ulids: %w", err)
+	}
+	return ulidList, nil
+}
+
+// ListAllObjectKeys 返回文档表中记录的全部对象键（启动期清理 MinIO 孤儿对象用）。
+func (r *KnowledgeRepo) ListAllObjectKeys(ctx context.Context) ([]string, error) {
+	keyList := make([]string, 0, 64)
+	if err := r.db.WithContext(ctx).Model(&domain.KnowledgeDocumentDO{}).
+		Where("object_key <> ''").Pluck("object_key", &keyList).Error; err != nil {
+		return nil, fmt.Errorf("list knowledge object keys: %w", err)
+	}
+	return keyList, nil
+}
+
+// DeleteChunksByDocList 删除给定文档集合之外的全部切片，返回删除条数。
+// 文档行被删而切片残留会让全文检索召回已删除的内容。
+func (r *KnowledgeRepo) DeleteChunksByDocList(ctx context.Context, docULIDList []string) (int64, error) {
+	query := r.db.WithContext(ctx).Model(&domain.KnowledgeChunkDO{})
+	if len(docULIDList) > 0 {
+		query = query.Where("doc_ulid NOT IN ?", docULIDList)
+	}
+	result := query
+	if err := result.Error; err != nil {
+		return 0, fmt.Errorf("delete orphan knowledge chunks: %w", err)
+	}
+	return result.RowsAffected, nil
+}

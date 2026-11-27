@@ -188,7 +188,7 @@ func TestChatAssemblyChain(t *testing.T) {
 		t.Fatalf("历史不应注入上下文块: %q", assembled)
 	}
 
-	// 步骤4：消息序列成型。身份（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史 role 映射 → 用户输入（用户）。
+	// 步骤4：消息序列成型。身份（系统）→ 上下文（系统）→ 任务提示词（系统）→ 历史 role 映射 → 用户输入（用户）。
 	out := buildChatMessages(chatMessageInput{
 		SystemPromptText: "你是连载作者",
 		StyleText:        "文风约束",
@@ -212,7 +212,7 @@ func TestChatAssemblyChain(t *testing.T) {
 		t.Fatalf("第二条应为系统级上下文: %+v", out[1])
 	}
 	if out[2].Role != "system" || out[2].Content != "续写指令" {
-		t.Fatalf("第三条应为系统级指令提示词: %+v", out[2])
+		t.Fatalf("第三条应为系统级任务提示词: %+v", out[2])
 	}
 	if out[3].Role != "user" || out[3].Content != "历史问" ||
 		out[4].Role != "assistant" || out[4].Content != "历史答" {

@@ -1,11 +1,13 @@
-// 写作台对话链路的回归：SSE 报文解析 → 事件归并到展示态 → 斜杠命令解析与注册表。
-// 三者是同一次「作者发出指令、模型流式回话」的前后端两半：报文解析偏差会丢事件或重复事件，
-// 归并偏差会让正文重复累加或思考被清空，命令解析偏差会让本地动作被误发给模型。
+// 前端装配链路的回归：路由路径拼接 → 路由名生成 → 项目占位替换 → SSE 报文解析 → 事件归并 → 斜杠命令解析。
+// 这些环节是同一次「作者操作 → 页面响应」的前后端两半：路由拼接多一个结尾斜杠会让整片菜单落到 404，
+// 占位替换失败会让项目作用域页面拿不到当前项目，报表文解析偏差会丢事件或重复事件，
+// 事件归并偏差会让正文重复累加或思考被清空，命令解析偏差会让本地动作被误发给模型。
 
 import { describe, expect, it } from 'vitest'
+import { pathResolve, routeNameOf, substituteProject } from '@/utils/routerHelper'
 import { parseSseBuffer } from '@/composables/useSSE'
-import { applyStreamEvent } from './chatStream'
-import type { ChatDisplayMessage } from './types'
+import { applyStreamEvent } from '@/views/Workspace/chatStream'
+import type { ChatDisplayMessage } from '@/views/Workspace/types'
 import type { NWChatStreamEventVo } from '@/api/contracts'
 import {
   COMPOSER_ACTION_LIST,
@@ -13,7 +15,7 @@ import {
   filterActions,
   matchActionByCode,
   parseLeadingSlashToken
-} from './composerCommands'
+} from '@/views/Workspace/composerCommands'
 
 /** 构造一条空白助手消息。 */
 function blankMessage(): ChatDisplayMessage {
@@ -49,7 +51,42 @@ function streamEvent(overrides: Partial<NWChatStreamEventVo>): NWChatStreamEvent
   }
 }
 
-describe('写作台对话链路', () => {
+describe('前端装配链路', () => {
+  it('路由装配：路径拼接不产生结尾斜杠，路由名唯一，项目占位可替换', () => {
+    // 环节1：路径拼接。结尾斜杠会让 strict 路由匹配失败（点击落到 404）。
+    expect(pathResolve('/group_project', '')).toBe('/group_project')
+    expect(pathResolve('/workspace/PRJ_1', '')).toBe('/workspace/PRJ_1')
+    expect(pathResolve('/', 'dashboard')).toBe('/dashboard')
+    expect(pathResolve('/admin', 'users')).toBe('/admin/users')
+    // 绝对路径与外部链接原样返回，不参与拼接。
+    expect(pathResolve('/group_project', '/dashboard')).toBe('/dashboard')
+    expect(pathResolve('/', 'https://example.com/a/')).toBe('https://example.com/a/')
+
+    // 环节2：路由名。菜单编码转 PascalCase，编码全局唯一保证路由名不重复。
+    expect(routeNameOf('admin_login_log')).toBe('AdminLoginLog')
+    expect(routeNameOf('group-project')).toBe('GroupProject')
+
+    // 环节3：项目占位替换。菜单索引与当前 URL 靠同一个 ULID 对上。
+    const [record] = substituteProject(
+      [
+        {
+          path: '/group_project',
+          name: 'GroupProject',
+          meta: {},
+          children: [{ path: '/workspace/:project_ulid', name: 'Workspace', meta: {} }]
+        }
+      ],
+      'PRJ_01M825916VFP0AJQ683T9QPTVK'
+    )
+    expect(record.children?.[0].path).toBe('/workspace/PRJ_01M825916VFP0AJQ683T9QPTVK')
+    // 无当前项目时保留占位符，避免把非法路径注册进路由表。
+    const [noProject] = substituteProject(
+      [{ path: '/outline/:project_ulid', name: 'Outline', meta: {} }],
+      ''
+    )
+    expect(noProject.path).toBe('/outline/:project_ulid')
+  })
+
   it('流式输出：报文跨 chunk 拆分正确，事件归并后思考与正文互不污染', () => {
     // 环节1：报文解析。第一段是一个完整事件加一个被截断的半行。
     const first = parseSseBuffer('data: {"seq":1,"event_type":"chunk"}\ndata: {"seq":2,"event_ty')

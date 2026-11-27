@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 
 	"github.com/2132691342/NovelWorkbench/backend/internal/ai"
 	"github.com/2132691342/NovelWorkbench/backend/internal/api"
@@ -43,6 +44,17 @@ func main() {
 		pkg.SLogger().Errorw("审计字段回调注册失败", "error", err)
 		os.Exit(1)
 	}
+	// 唯一索引要求存量数据先干净：模型目录/供应商有重复行时 AutoMigrate 建索引会整体失败。
+	// 因此迁移前先做一次幂等去重（老库首启时表还不存在，函数内部直接跳过）。
+	dedupeModelEcosystem(ctx, db, "迁移前")
+	// 模型生态表单独迁移：唯一索引可能因存量重复失败，需要「去重 → 重试」而不是让整个启动失败。
+	modelTables := []any{
+		&domain.ModelProviderDO{},
+		&domain.ModelCatalogDO{},
+		&domain.ModelRoleGrantDO{},
+		&domain.ModelUserGrantDO{},
+		&domain.ModelUsageStatDO{},
+	}
 	if err := db.AutoMigrate(
 		&domain.UserDO{},
 		&domain.ProjectDO{},
@@ -69,11 +81,6 @@ func main() {
 		&domain.RoleDO{},
 		&domain.UserRoleDO{},
 		&domain.AuditLogDO{},
-		&domain.ModelProviderDO{},
-		&domain.ModelCatalogDO{},
-		&domain.ModelRoleGrantDO{},
-		&domain.ModelUserGrantDO{},
-		&domain.ModelUsageStatDO{},
 		&domain.NotificationDO{},
 		&domain.LoginLogDO{},
 		&domain.PromptDO{},
@@ -85,18 +92,32 @@ func main() {
 		pkg.SLogger().Errorw("数据库迁移失败", "error", err)
 		os.Exit(1)
 	}
+	// 模型生态表：首次建唯一索引失败时补列 → 去重 → 重试，避免老库因存量重复行直接起不来。
+	if err := db.AutoMigrate(modelTables...); err != nil {
+		pkg.SLogger().Warnw("模型生态表迁移失败，清理重复数据后重试", "error", err)
+		dedupeModelEcosystem(ctx, db, "重试前")
+		if err := db.AutoMigrate(modelTables...); err != nil {
+			pkg.SLogger().Errorw("数据库迁移失败（唯一索引仍未建立）", "error", err)
+			os.Exit(1)
+		}
+	}
+	// 迁移后再跑一次（幂等空转）：兜住迁移过程中才被补齐列/表的老库，保证播种前数据已唯一。
+	dedupeModelEcosystem(ctx, db, "迁移后")
 	// 审计日志已迁到 Manticore：PG 里的历史审计表不再被读写，启动时清掉避免两份数据打架。
 	if db.Migrator().HasTable(&domain.AuditLogDO{}) {
 		if err := db.Migrator().DropTable(&domain.AuditLogDO{}); err != nil {
 			pkg.SLogger().Warnw("清理旧审计表失败", "error", err)
 		}
 	}
-	// 已下线的会话摘要列：历史改为全量注入后不再有「压缩摘要」概念，留着只会成为死数据
-	if err := db.Migrator().DropColumn(&domain.ChatSessionDO{}, "summary_text"); err != nil {
-		pkg.SLogger().Warnw("清理会话摘要列失败", "error", err)
-	}
-	if err := db.Migrator().DropColumn(&domain.ChatSessionDO{}, "compact_at"); err != nil {
-		pkg.SLogger().Warnw("清理会话压缩时间列失败", "error", err)
+	// 已下线的会话摘要列：历史改为全量注入后不再有「压缩摘要」概念，留着只会成为死数据。
+	// 先判存在再删：列早已不在时 DROP 会报 SQLSTATE 42703，每次启动刷两条无意义警告。
+	for _, retiredColumn := range []string{"summary_text", "compact_at"} {
+		if !db.Migrator().HasColumn(&domain.ChatSessionDO{}, retiredColumn) {
+			continue
+		}
+		if err := db.Migrator().DropColumn(&domain.ChatSessionDO{}, retiredColumn); err != nil {
+			pkg.SLogger().Warnw("清理会话下线列失败", "column", retiredColumn, "error", err)
+		}
 	}
 	// 已下线模块的遗留表与列：AutoMigrate 只补不删，这些残留在库里是死数据，读写均已不再使用
 	for _, retiredTable := range []string{"skills", "skill_references", "prompt_profiles", "slash_commands"} {
@@ -178,7 +199,7 @@ func main() {
 	roleService := service.NewRoleService(roleRepo, userRepo, menuRepo, providerRepo)
 	menuService := service.NewMenuService(menuRepo, roleService)
 	userAdminService := service.NewUserAdminService(userRepo, roleRepo, providerRepo, notificationService)
-	auditService := service.NewAuditService(auditRepo, userRepo, settingRepo)
+	auditService := service.NewAuditService(auditRepo, userRepo, settingRepo, loginLogRepo)
 	outlineService := service.NewOutlineService(outlineRepo, projectRepo)
 	continuityService := service.NewContinuityService(continuityRepo, projectRepo)
 	projectService := service.NewProjectService(projectRepo, volumeRepo, chapterRepo, db, service.ProjectCascadeDeps{
@@ -242,8 +263,11 @@ func main() {
 	chatService := service.NewChatService(chatRepo, projectRepo, chapterRepo, characterRepo, loreRepo,
 		knowledgeRepo, continuityRepo, settingRepo, promptService, knowledgeService, toolService,
 		providerService, aiClient, db)
+	// 对话是 AI 调用最频繁的入口：显式注入审计写入器，模型调用才能进链路时间线。
+	chatService.SetAuditRecorder(auditService)
 	workflowService := service.NewWorkflowService(repo.NewWorkflowRepo(db), projectRepo, chapterRepo,
-		volumeRepo, continuityRepo, promptService, providerService, aiClient, notificationService)
+		volumeRepo, continuityRepo, characterRepo, loreRepo, outlineRepo, promptRepo,
+		promptService, providerService, aiClient, notificationService)
 	// 步骤是后台链路，不经过 HTTP 中间件，必须显式注入审计写入器才能进链路时间线。
 	workflowService.SetAuditRecorder(auditService)
 
@@ -354,6 +378,8 @@ func main() {
 	}, providerService)
 	bootstrapService := service.NewBootstrapService(providerService, aiClient, projectRepo, volumeRepo,
 		chapterRepo, characterRepo, loreRepo, outlineRepo, db)
+	// 开书方案生成同样是一次昂贵的模型调用，纳入链路审计。
+	bootstrapService.SetAuditRecorder(auditService)
 	router := api.NewRouter(cfg.Server.Mode, api.RouterDeps{
 		AuthMW:        authMW,
 		AuditMW:       auditMW,
@@ -441,4 +467,21 @@ func main() {
 		}
 	}
 	pkg.SLogger().Infow("服务已关闭")
+}
+
+// dedupeModelEcosystem 启动期清理模型生态重复数据（幂等；失败只告警，不阻断启动）。
+// 唯一索引对存量重复行零容忍：清理不掉就无法建索引，因此这里必须尽力而为并留下可排查日志。
+func dedupeModelEcosystem(ctx context.Context, db *gorm.DB, stageText string) {
+	result, err := service.DedupeModelCatalogs(ctx, db)
+	if err != nil {
+		pkg.SLogger().Warnw("模型生态去重失败，唯一索引可能无法建立", "stage", stageText, "error", err)
+		return
+	}
+	if result.DeletedCatalogCount == 0 && result.DeletedProviderCount == 0 && result.MigratedGrantCount == 0 {
+		return
+	}
+	pkg.SLogger().Infow("模型生态去重完成", "stage", stageText,
+		"deleted_catalogs", result.DeletedCatalogCount,
+		"deleted_providers", result.DeletedProviderCount,
+		"migrated_grants", result.MigratedGrantCount)
 }

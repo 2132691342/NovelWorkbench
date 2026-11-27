@@ -6,6 +6,7 @@
   import { useI18n } from 'vue-i18n'
   import { deleteProject, listProjects } from '@/api/project'
   import { getStatsOverview } from '@/api/stats'
+  import { listPendingWorkflowRuns, type NWWorkflowRunVo } from '@/api/workflow'
   import type { NWProjectVo, NWStatsOverviewVo } from '@/api/contracts'
   import { usePageQuery } from '@/composables/usePageQuery'
   import { useProjectStore } from '@/store/modules/project'
@@ -31,6 +32,10 @@
     trend_list: []
   })
 
+  /** 待审核收件箱：跨项目汇总，最多 10 条，点一下直达该次运行的审核界面 */
+  const pendingList = ref<NWWorkflowRunVo[]>([])
+  const pendingLoading = ref(false)
+
   const formDialog = ref<InstanceType<typeof ProjectFormDialog>>()
   const bootstrapDialog = ref<InstanceType<typeof BootstrapDialog>>()
   const rowAction = useRowAction()
@@ -52,7 +57,25 @@
     stats.value = await getStatsOverview()
   }
 
-  const refreshAll = () => Promise.all([load(), loadStats(), projectStore.loadProjectOptions()])
+  const loadPending = async () => {
+    pendingLoading.value = true
+    try {
+      pendingList.value = await listPendingWorkflowRuns()
+    } catch {
+      pendingList.value = []
+    } finally {
+      pendingLoading.value = false
+    }
+  }
+
+  /** 跳到工作流页并自动打开该运行的抽屉（页面读 ?run= 处理） */
+  const openPendingRun = (run: NWWorkflowRunVo) => {
+    projectStore.selectProject(run.project_ulid)
+    void router.push({ path: `/workflow/${run.project_ulid}`, query: { run: run.run_ulid } })
+  }
+
+  const refreshAll = () =>
+    Promise.all([load(), loadStats(), loadPending(), projectStore.loadProjectOptions()])
 
   const remove = async (row: NWProjectVo) => {
     try {
@@ -140,6 +163,35 @@
     </div>
 
     <TrendChart :trend-list="stats.trend_list" />
+
+    <section v-loading="pendingLoading" class="dashboard__pending">
+      <header class="dashboard__pending-head">
+        <h3 class="dashboard__pending-title">
+          <Icon icon="mdi:inbox-arrow-down-outline" :size="16" />
+          <span>待审核任务</span>
+          <span v-if="pendingList.length" class="dashboard__pending-count">{{ pendingList.length }}</span>
+        </h3>
+        <span class="nw-hint">AI 停在审核点，等你点头</span>
+      </header>
+
+      <ul v-if="pendingList.length" class="dashboard__pending-list">
+        <li v-for="run in pendingList" :key="run.run_ulid" class="pending-row">
+          <div class="pending-row__main">
+            <span class="pending-row__project">{{ run.project_name }}</span>
+            <span class="pending-row__chapter">{{ run.current_chapter_name || '待审核章节' }}</span>
+          </div>
+          <div class="pending-row__meta">
+            <span>{{ run.template_name }}</span>
+            <span>{{ run.finished_chapter_count }}/{{ run.total_chapter_count }} 章</span>
+          </div>
+          <ElButton type="primary" size="small" @click="openPendingRun(run)">
+            <Icon icon="mdi:account-check-outline" :size="14" />
+            <span class="ml-4px">去审核</span>
+          </ElButton>
+        </li>
+      </ul>
+      <p v-else-if="!pendingLoading" class="dashboard__pending-empty">暂无待审核</p>
+    </section>
 
     <div v-loading="loading" class="dashboard__grid">
       <ElCard v-for="row in items" :key="row.project_ulid" shadow="hover" class="project-card">
@@ -253,6 +305,108 @@
     &__pager {
       display: flex;
       justify-content: flex-end;
+    }
+
+    &__pending {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 14px 16px;
+      background: var(--nw-surface);
+      border: 1px solid var(--nw-border);
+      border-radius: var(--nw-radius-lg);
+      box-shadow: var(--nw-shadow-card);
+    }
+
+    &__pending-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    &__pending-title {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin: 0;
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--nw-ink);
+    }
+
+    &__pending-count {
+      padding: 0 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--nw-warning);
+      background: var(--nw-surface-subtle);
+      border-radius: 999px;
+    }
+
+    &__pending-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+
+    &__pending-empty {
+      margin: 4px 0;
+      font-size: 12px;
+      color: var(--el-text-color-placeholder);
+    }
+  }
+
+  .pending-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 10px;
+    background: var(--nw-surface-subtle);
+    border: 1px solid var(--nw-border-soft);
+    border-radius: var(--nw-radius-md);
+    transition: border-color 0.16s ease;
+
+    &:hover {
+      border-color: var(--nw-primary);
+    }
+
+    &__main {
+      display: flex;
+      flex: 1;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: baseline;
+      min-width: 0;
+    }
+
+    &__project {
+      overflow: hidden;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--nw-ink);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &__chapter {
+      overflow: hidden;
+      font-size: 11.5px;
+      color: var(--nw-warning);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &__meta {
+      display: flex;
+      gap: 10px;
+      font-size: 11.5px;
+      color: var(--el-text-color-placeholder);
     }
   }
 

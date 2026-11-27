@@ -1,4 +1,4 @@
-<!-- 输入区弹层：斜杠命令（本地动作 + 指令提示词）与 @ 引用选择器，同一定位层互斥展示。 -->
+<!-- 输入区弹层：斜杠命令（本地动作 + 任务提示词）与 @ 引用选择器，同一定位层互斥展示。 -->
 <script setup lang="ts">
   import { ref, watch } from 'vue'
   import type { ChatCommandOption, ChatRefItem, ChatRefTabCode } from './types'
@@ -64,15 +64,10 @@
   const sourceLabel = (option: ChatCommandOption): string =>
     option.source_code === 'action' ? '本地' : '注入'
 
-  /** 来源标题：动作与提示词混排时只在切换处插一条分隔 */
-  const SOURCE_TITLE_MAP: Record<ChatCommandOption['source_code'], string> = {
-    action: '本地动作（立即执行，不消耗模型）',
-    prompt: '指令提示词（以系统级消息注入本轮）'
-  }
-
+  /** 分组标题：本地动作一组，提示词按创作流程各一组（后端 domain_name 驱动） */
   const groupTitle = (index: number, optionList: ChatCommandOption[]): string => {
-    if (index > 0 && optionList[index].source_code === optionList[index - 1].source_code) return ''
-    return SOURCE_TITLE_MAP[optionList[index].source_code]
+    if (index > 0 && optionList[index].group_name === optionList[index - 1].group_name) return ''
+    return optionList[index].group_name
   }
 
   /** 引用来源标签：聚合页签下必须标出来源，否则同名条目无法区分 */

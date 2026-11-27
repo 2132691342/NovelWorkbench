@@ -110,12 +110,13 @@ type MenuNavDTO struct {
 
 // PermItemVO 权限目录条目。
 type PermItemVO struct {
-	PermCode    string `json:"perm_code"`    // 权限码
-	PermName    string `json:"perm_name"`    // 权限名称
-	PermDesc    string `json:"perm_desc"`    // 说明
-	MenuCode    string `json:"menu_code"`    // 归属菜单编码（空为动作权限）
-	MenuName    string `json:"menu_name"`    // 归属菜单名称
-	BuiltinFlag bool   `json:"builtin_flag"` // 是否内置权限（不可删除）
+	PermCode     string   `json:"perm_code"`      // 权限码
+	PermName     string   `json:"perm_name"`      // 权限名称
+	PermDesc     string   `json:"perm_desc"`      // 说明
+	MenuCode     string   `json:"menu_code"`      // 归属菜单编码（空为动作权限）
+	MenuName     string   `json:"menu_name"`      // 归属菜单名称
+	BuiltinFlag  bool     `json:"builtin_flag"`   // 是否内置权限（不可删除）
+	RoleNameList []string `json:"role_name_list"` // 引用该权限的角色名称（空表示尚无角色引用）
 }
 
 // PermGroupVO 权限目录分组。

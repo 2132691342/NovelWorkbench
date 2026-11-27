@@ -22,6 +22,8 @@
 | `src/store/modules/` | `user`（含导航树与权限码）、`permission`（路由表）、`project`、`app`、`locale`、`tagsView`、`notification` |
 | `src/components/` | 通用组件（`Menu`、`ContentWrap`、`CountTo`、`Footer`、`LocaleDropdown`、Logo、Breadcrumb、TagsView、ContextMenu、Collapse、Echart、ConfigGlobal、UserInfo、Backtop、Error） |
 | `src/views/` | 业务页面目录 |
+| `src/views/Workflow/components/` | 工作流页的 7 个组件：`WorkflowReadinessPanel.vue`（九项就绪度）、`WorkflowCreateDialog.vue`（三步向导）、`WorkflowConstraintStep.vue`（第 3 步约束表单）、`WorkflowRunCard.vue`（运行卡片）、`WorkflowRunDrawer.vue`（运行详情抽屉）、`WorkflowReviewPanel.vue`（待审核时的候选正文与通过/退回）、`WorkflowStepTimeline.vue`（按章分组的时间线） |
+| `src/views/Workspace/` | 写作台：`index.vue`（三栏装配与顶栏动作）、`WorkspaceTree.vue`（卷章目录树）、`ChapterEditor.vue`（CodeMirror）、`ChapterCheckPanel.vue`（体检结果）、`AiPanel.vue` + `ChatComposer.vue` / `ChatMessage.vue` / `ComposerPopup.vue` / `ThinkingPanel.vue`（AI 面板与输入区）、`SnapshotDialog.vue`（快照）、`chatStream.ts` / `composerCommands.ts` / `useChatRefs.ts` / `wordCount.ts`（流式解析、斜杠注册表、引用装配、字数） |
 | `src/composables/` | `usePageQuery.ts`（分页列表状态）、`useSSE.ts`（流式请求） |
 | `src/views/Workspace/useChatSessions.ts` | AI 面板的会话与历史装配（会话列表、当前会话、消息加载与增删） |
 | `src/utils/` | `storage.ts`、`time.ts`、`table.ts`（表格行类型还原）、`routerHelper.ts` |
@@ -178,15 +180,15 @@
 
 | 触发符 | 内容 | 执行方 | 是否耗模型 |
 | --- | --- | --- | --- |
-| `/` | 本地动作（9 个）+ 指令提示词 | 前端就地执行 / 后端注入系统级消息 | 否 / 是 |
+| `/` | 本地动作（8 个）+ 任务提示词（8 条，按流程分组） | 前端就地执行 / 后端注入系统级消息 | 否 / 是 |
 | `@` | 素材库（角色/设定/章节/摘要/文档）+ 历史会话 | 后端按 ULID 装配进上下文块，会话逐条归档 | 否 |
 
-- **斜杠动作**：`composerCommands.ts` 是唯一事实来源，`/help` `/clear` `/new` `/attach` `/copy` `/check` `/focus` `/snapshot` 共 9 个。
-  动作编码在客户端保留，后端 `domain.IsReservedActionCode` 同步拒绝同编码的指令提示词保存（否则同一句 `/help` 会依实现顺序走向两个分支）。
-  弹层里动作排在前、标「本地」，提示词排在后、标「注入」，一眼可辨哪条会调用模型。
+- **斜杠动作**：`composerCommands.ts` 是唯一事实来源，`/help` `/clear` `/new` `/attach` `/copy` `/check` `/focus` `/snapshot` 共 8 个。
+  动作编码在客户端保留，后端 `domain.IsReservedActionCode` 同步拒绝同编码的任务提示词保存（否则同一句 `/help` 会依实现顺序走向两个分支）。
+  弹层里动作排在前、标「本地」；任务提示词排在后、标「注入」，按创作流程（开书规划 / 写正文 / 修问题 / 质检）分组，每条带「什么时候用」，一眼可辨该点哪条、哪条会调用模型。
 - **动作分发**：输入区自理 `/clear`；`/help` `/new` `/attach` `/copy` 交给 `AiPanel`；`/check` `/focus` `/snapshot` 冒泡到写作台用当前章执行。
   正文以 `/动作` 开头直接回车也会执行动作并保留剩余正文，不进入发送链路。
-- **斜杠提示词**：输入 `/` 唤起指令提示词候选（按编码与名称过滤，↑↓ 选择，Enter/Tab 确认，Esc 关闭），选中后写成 `/prompt_code` 徽标并清掉触发词。
+- **斜杠提示词**：输入 `/` 唤起任务提示词候选（按创作流程分组，按编码与名称过滤，↑↓ 选择，Enter/Tab 确认，Esc 关闭），选中后写成 `/prompt_code` 徽标并清掉触发词。
 - **@ 引用**：输入 `@` 唤起选择器，默认「全部」页签跨六类来源聚合检索（名称前缀 > 名称包含 > 说明包含），另有角色/设定/章节/摘要/文档/会话六个分页签；
   `← →` 切页签、`↑ ↓` 选条目、`Enter` 确认，多选后以标签形式挂到输入区，发送时装配为 `ref_*_ulid_list`。
   聚合页签下每条候选标出来源，选中按条目自身来源写回对应列表；触发词被删掉即自动收起，方向键交还正文。
@@ -221,7 +223,7 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 
 - 组件解析：`import.meta.glob('../views/**/*.{vue,tsx}')` 构建期收集，`component_path`（如 `views/Workspace/index`）按字符串取懒加载函数；
   找不到组件时路由仍注册但页面显示 404，管理端改错路径不会让整个前端白屏。
-- 路径拼接：`pathResolve()` 会合并重复斜杠并去掉**结尾斜杠**。路由表是 `strict: true`，`/workspace/PRJ_x/` 与 `/workspace/PRJ_x` 不匹配同一个记录，尾斜杠会让任何菜单点击都落到 Fallback（回归用例：`src/utils/routerChain.test.ts`）。
+- 路径拼接：`pathResolve()` 会合并重复斜杠并去掉**结尾斜杠**。路由表是 `strict: true`，`/workspace/PRJ_x/` 与 `/workspace/PRJ_x` 不匹配同一个记录，尾斜杠会让任何菜单点击都落到 Fallback（回归用例：`src/appChain.test.ts`）。
 - 分组节点（`menu_type_code=group`）只生成 children 与 `redirect`，不渲染自身页面。
 - 新增页面：写 `.vue` → 在「菜单管理」登记 `component_path` → 刷新即生效，**不需要前端发版**。
 - 顶栏入口（如「个人中心」）也必须登记菜单行并置 `visible_flag=false`：菜单即路由，未登记就没有路由，点击只会 404（回归用例：`backend/internal/service/access_control_chain_test.go`）。
@@ -278,9 +280,9 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 
 | 页面 | 关键实现 |
 | --- | --- |
-| 仪表盘 | 统计卡（项目数/总字数/今日新增/AI 产出）+ 近 30 天趋势（ECharts）+ 项目卡片网格（进入写作台/大纲/素材、编辑、删除）+ 分页 + **AI 开书向导**（`views/Dashboard/components/BootstrapDialog.vue`：创意 → 方案预览与逐字段修改 → 一次性落库并进入写作台） |
-| 写作台 | 三栏：目录树（卷/章增删改、搜索、折叠）/ CodeMirror 正文编辑器（2s 防抖自动保存、字数实时、梗概折叠）/ AI 面板（模型与会话切换、`/` 提示词、`#` 工具、`@` 引用、流式、插入/替换）；顶栏「体检」打开 `ChapterCheckPanel`（量化门禁结果 + 问题清单 + 一键交给 AI 修） |
-| 自动化工作流 | 顶部四张状态卡（执行中/待审核/已完成/失败）+ 运行卡片网格（进度条、当前章、错误摘要、暂停/继续/重试）+ **新建任务弹窗**（选模板 → 预览步骤链 → 选章节范围 → 字数/门禁/审核开关）+ **运行详情抽屉**（待审核时直接展示候选正文与通过/退回，下方是当前章的步骤时间线）。有运行在跑时每 5 秒自动刷新，无活跃运行即停 |
+| 仪表盘 | 统计卡（项目数/总字数/今日新增/AI 产出）+ 近 30 天趋势（ECharts）+ **待审核任务**区块（`GET /workflow/run/pending`，跨项目最多 10 条，点「去审核」带 `?run=` 直达工作流审核抽屉）+ 项目卡片网格（进入写作台/大纲/素材、编辑、删除）+ 分页 + **AI 开书向导**（`views/Dashboard/components/BootstrapDialog.vue`：创意 → 方案预览与逐字段修改 → 一次性落库并进入写作台） |
+| 写作台 | 三栏：目录树（卷/章增删改、搜索、折叠）/ CodeMirror 正文编辑器（2s 防抖自动保存、字数实时、梗概折叠）/ AI 面板（模型与会话切换、`/` 提示词、`@` 引用、流式、插入/替换）；顶栏「体检」打开 `ChapterCheckPanel`（量化门禁结果 + 问题清单 + 一键交给 AI 修），另有「AI 复审」（带体检问题清单请编辑复审本章）与「本章开跑」（跳 `/workflow/{project}?chapter={chapter}` 预选该章） |
+| 自动化工作流 | 顶部 **就绪度面板**（`WorkflowReadinessPanel.vue`：分数 + 九项未就绪清单 + 「去补齐」）+ 四张状态卡（执行中/待审核/已完成/失败）+ 运行卡片网格（进度条、当前章、错误摘要、暂停/继续/重试）+ **新建任务三步向导**（`WorkflowCreateDialog.vue`：选流程 → 查素材（内嵌就绪度）→ 定约束（`WorkflowConstraintStep.vue`：字数/门禁/审核开关/章节范围））+ **运行详情抽屉**（`WorkflowRunDrawer.vue`：待审核时由 `WorkflowReviewPanel.vue` 直接展示候选正文与通过/退回，下方 `WorkflowStepTimeline.vue` 按章分组的时间线）。支持 `?run=`（直达审核抽屉）与 `?chapter=`（预选该章开跑）两种深链。有运行在跑时每 5 秒自动刷新，无活跃运行即停 |
 | 创作规划 | 大纲树 + 场景卡（左侧节点、右侧场景列表与编辑器） |
 | 连续性看板 | 三个页签：时间事实（主体+谓词+客体+来源章节，复核确认/推翻）、伏笔台账（计划→埋设→呼应→回收）、章节摘要（可由事实一键起草）；顶部统计待确认事实与未回收伏笔。事实与伏笔的表单在 `views/Continuity/components/EntityDialogs.vue` |
 | 素材库 | 单一入口，胶囊分段切换四个子页（`?tab=` 深链直达）：角色（角色表 + X6 关系图谱）、设定（卡片列表 + 搜索 + 抽屉）、笔记（左列表 + 右双栏 Markdown 编辑预览）、文档（统计卡 + 上传/重索引/删除 + 检索 + 切片 + 原文预览）。四个子页首次点开才挂载并保留状态 |
@@ -288,10 +290,10 @@ vue-router 记录 { path, name: PascalCase(menu_code), meta: { title, icon, perm
 | 模型供应商 | 能力探测横幅 + 供应商表（协议、密钥掩码、连通性测试）+ 模型目录表（默认、授权角色/用户）+ 授权弹窗（按角色与按用户两个页签）+ 用量面板（ECharts 双轴） |
 | 工具管理 | 内置/自建标记 + 启停开关 + 抽屉编辑（说明、参数声明）+ 试运行抽屉（结果文本 + 指标） |
 | 提示词库 | 按流程域分组（身份在前、指令在后）+ 种类/作用域过滤器 + 内置/已改/被覆盖标记 + 抽屉编辑（种类、作用域、正文、启停）+ 只读预览 |
-| 管理端 | 用户（角色分配、重置密码；备注可清空）、角色（权限目录勾选，内置 `admin` 锁定为通配、其余角色可反复编辑，行内删除带 loading）、菜单（树形父级、路由、组件路径、权限码；删除后自动清理角色悬挂权限码）、权限目录（只读分组）、审计（留存提示条 + 关键字/动作下拉/级别/日期筛选 + 详情抽屉（请求体与响应体并列）+ 链路时间线抽屉 + 立即清理）、登录日志、任务中心（统计与重试）、用量分析、运行状态（依赖健康） |
-| 系统设置 | 配置项分组编辑（布尔项用开关）+ 整体保存 |
-| 个人中心 | 账号信息 + 资料编辑 + 改密 |
-| 通知中心 | 全部/未读/已读筛选 + 标记已读 + 删除，联动顶栏铃铛计数 |
+| 管理端 | 用户（关键字 + 状态 + 角色筛选、重置筛选、账号点开详情抽屉、编辑抽屉（新建含初始密码强度提示）、重置密码、启用/停用开关（停用二次确认并说明立即无法登录）、删除二次确认；操作列行内 loading，分页只在超过一页时出现）、角色（内置标记、权限数（`*` 记「全部」）、用户数、编辑抽屉（权限按目录分组、组头全选/半选、权限码搜索、已选统计、内置角色禁改编码、`admin` 锁定为通配）、删除内置角色按钮禁用带 tooltip，仍有用户时透出后端原文）、菜单（树形缩进 + 展开折叠 + 全部展开/折叠、可见/启用开关即时保存失败回滚、有下级时删除禁用带 tooltip、编辑抽屉上级树选择排除自身与后代、分组禁用路由/组件、权限码重复登记就地提示）、权限目录（按模块分组、搜索命中数统计、一键复制权限码、展示归属菜单与引用角色）、审计（留存提示条 + 关键字/动作下拉/级别/span 类型/日期筛选 + 详情抽屉（请求体与响应体并列）+ 链路时间线抽屉 + 立即清理，支持 `?trace_id=` 深链自动开时间线）、登录日志、任务中心（统计与重试）、用量分析、运行状态（依赖健康） |
+| 系统设置 | 分组卡片（知识库检索 / 写作目标 / 审计留存 / 其他）+ 按 `setting_value_type` 渲染控件（int 数字输入带区间与默认值、bool 开关、其余文本框）+ 顶部「有 N 项未保存」提示条 + 保存全部/放弃修改 + 逐项失败定位（失败项标红并保留草稿）+ `onBeforeRouteLeave` 拦截未保存改动 |
+| 个人中心 | 账号信息卡（只读登录名、状态、角色标签云、注册/更新时间、用户标识）+ 资料编辑（邮箱/头像地址/备注）+ 改密（当前密码 + 强度条 + 二次确认，成功后清会话跳登录页）+ 权限只读标签云（`*` 记为全部权限） |
+| 通知中心 | 全部/未读切换 + 全部已读 + 单条已读 + 删除二次确认 + 标题旁未读数徽标 + 类型图标/时间/正文摘要，点击摘要展开全文；空态按当前筛选给出对应文案，操作后同步刷新顶栏铃铛 |
 
 ## 6. 编辑器与可视化分工
 

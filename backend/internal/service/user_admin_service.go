@@ -28,22 +28,40 @@ func NewUserAdminService(userRepo *repo.UserRepo, roleRepo *repo.RoleRepo,
 		providerRepo: providerRepo, notificationSvc: notificationSvc}
 }
 
-// ListPage 分页查询用户（含角色编码）。
+// ListPage 分页查询用户（含角色编码）。role_code 非空时按角色过滤，空则查全部。
 func (s *UserAdminService) ListPage(ctx context.Context, req *domain.UserAdminListREQ) (domain.PageDTO[domain.UserAdminVO], error) {
 	req.Normalize()
-	dos, total, err := s.userRepo.ListPage(ctx, req)
+	var (
+		dos   []domain.UserDO
+		total int64
+		err   error
+	)
+	if req.RoleCode != "" {
+		dos, total, err = s.userRepo.ListPageByRoleCode(ctx, req)
+	} else {
+		dos, total, err = s.userRepo.ListPage(ctx, req)
+	}
 	if err != nil {
 		return domain.PageDTO[domain.UserAdminVO]{}, err
 	}
-	roleCodeMap, err := s.roleCodeMap(ctx, dos)
+	vos, err := s.assembleUserVOs(ctx, dos)
 	if err != nil {
 		return domain.PageDTO[domain.UserAdminVO]{}, err
+	}
+	return domain.NewPageDTO(total, req.PageREQ, vos), nil
+}
+
+// assembleUserVOs 批量补角色编码并组装视图对象（列表与详情共用，避免两条查询路径各写一份）。
+func (s *UserAdminService) assembleUserVOs(ctx context.Context, dos []domain.UserDO) ([]domain.UserAdminVO, error) {
+	roleCodeMap, err := s.roleCodeMap(ctx, dos)
+	if err != nil {
+		return nil, err
 	}
 	vos := make([]domain.UserAdminVO, 0, len(dos))
 	for i := range dos {
 		vos = append(vos, toUserAdminVO(&dos[i], roleCodeMap[dos[i].UserULID]))
 	}
-	return domain.NewPageDTO(total, req.PageREQ, vos), nil
+	return vos, nil
 }
 
 // Create 创建用户（登录名/邮箱唯一，角色缺省挂载普通用户）。
@@ -57,6 +75,9 @@ func (s *UserAdminService) Create(ctx context.Context, req *domain.UserAdminCrea
 		return domain.UserAdminVO{}, err
 	} else if existing != nil {
 		return domain.UserAdminVO{}, pkg.NewBizError(domain.RespCodeConflict, "邮箱已被占用")
+	}
+	if err := validatePasswordStrength(req.PasswordText); err != nil {
+		return domain.UserAdminVO{}, err
 	}
 	hashBytes, err := bcrypt.GenerateFromPassword([]byte(req.PasswordText), bcrypt.DefaultCost)
 	if err != nil {
@@ -183,6 +204,9 @@ func (s *UserAdminService) Delete(ctx context.Context, req *domain.UserAdminDele
 // ResetPassword 重置用户密码（bcrypt 哈希后覆盖）。
 func (s *UserAdminService) ResetPassword(ctx context.Context, req *domain.UserResetPasswordREQ) error {
 	if _, err := s.mustGetUser(ctx, req.UserULID); err != nil {
+		return err
+	}
+	if err := validatePasswordStrength(req.NewPasswordText); err != nil {
 		return err
 	}
 	hashBytes, err := bcrypt.GenerateFromPassword([]byte(req.NewPasswordText), bcrypt.DefaultCost)

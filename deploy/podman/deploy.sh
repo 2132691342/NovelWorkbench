@@ -126,6 +126,11 @@ for i in $(seq 1 "$READY_TRIES"); do
     podman ps --format '{{.Names}} | {{.Status}} | {{.Ports}}'
     exit 0
   fi
+  # 容器刚起时 podman 可能还没写好宿主端口跳转（rootless 下常见），每轮重试补齐：
+  # 一次失败就放弃会让「容器 healthy、宿主端口超时」变成必须人工介入的部署失败。
+  if [ "$index" != "ok" ]; then
+    repair_port_dnat "$PUBLIC_PORT" nw-frontend
+  fi
   sleep "$READY_INTERVAL"
 done
 log "健康自检未通过，容器现场："

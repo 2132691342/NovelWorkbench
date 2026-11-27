@@ -6,6 +6,7 @@
     ElCard,
     ElInput,
     ElMessage,
+    ElMessageBox,
     ElOption,
     ElPagination,
     ElSelect,
@@ -83,7 +84,18 @@
     }
   }
 
+  /** 重试失败任务：二次确认后再提交，避免误点重复入队 */
   const retry = async (row: NWJobVo) => {
+    if (retryingUlid.value) return
+    try {
+      await ElMessageBox.confirm(
+        `确认重新执行「${row.doc_name || row.doc_ulid || row.job_ulid}」？失败原因会保留在列表里便于比对。`,
+        '确认重试任务',
+        { type: 'warning', confirmButtonText: '确认重试', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
     retryingUlid.value = row.job_ulid
     try {
       await retryAdminJob(row.job_ulid)

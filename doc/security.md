@@ -15,6 +15,7 @@
 | 改密失效 | `users.pwd_epoch` 递增，令牌内版本落后立即 401；本人改密返回新令牌续期 |
 | 注册 | 不开放，账号只能由管理员创建 |
 | 个人改密 | 必须校验旧密码，成功后写安全通知 |
+| 密码强度 | 新密码 ≥8 位且同时包含字母与数字；本人改密与管理员重置共用同一规则（`service/password_rule.go` 的 `validatePasswordStrength`），历史短密码仍可登录，仅下次改密时被要求升级 |
 
 登录结果处理（`AuthService.Login`）：
 
@@ -120,9 +121,12 @@ Authorization: Bearer <token>
 ### 4.1 审计日志
 
 - 所有 POST 请求（除登录、登出、`/chat/send`）记录一条审计，无论成败。
-- **存储位置是 Manticore 全文表**（`nw_audit`），不在 PostgreSQL。全文表天然支持 CJK ngram 检索与毫秒时间范围过滤，列表页的关键字、动作模糊与链路查询都由它直接完成；PostgreSQL 里的历史审计表在启动时自动清理。
-- 每日 03:00 由后台任务清理超过留存天数的记录（默认 30 天，`audit_retention_days` 可调），审计页也提供「立即清理」。
-- 字段：级别（`info` / `warn` / `error`，按 HTTP 状态推导）、链路 ID（与响应包络 `trace_id` 同值）、操作者 ULID 与登录名快照、动作码（路径去掉 `/api/v1/`）、请求路径与方法、脱敏请求体、**脱敏响应体**、目标类型与目标 ULID、业务响应码与说明、HTTP 状态、耗时、IP、UA。
+- **存储位置是 Manticore 全文表**（`nw_audit`），不在 PostgreSQL。全文表天然支持 CJK ngram 检索与毫秒时间范围过滤，列表页的关键字、动作模糊与链路查询都由它直接完成；PostgreSQL 里的历史审计表在启动时自动清理。表结构变更可重复执行：启动时 `EnsureSchema` 先 `CREATE TABLE IF NOT EXISTS`，再用 `ensureColumns` 对已存在的旧表逐列 `ALTER TABLE ... ADD COLUMN` 补齐 `span_type_code` / `parent_span_code` / `action_name` / `model_name` / `token_count`（列已存在或并发补列时报错被忽略）。
+- **模型是 span 化的**：一行 = 一条链路里的一个 span，`span_type_code` 取 `http`（入口请求）/ `workflow_step`（工作流步骤）/ `ai_call`（模型调用）/ `system`（系统维护）；`job` 是异步任务的**预留类型，当前无写入点**（索引 worker 不写审计，列表里不会出现该类型）；`action_name` 是中文动作名（`pkg/audit_names.go` 的动作码映射，未登记时回落动作码本身）；`parent_span_code` 指向父 span 的动作码（顶级 HTTP span 为空），工作流步骤与 AI 调用挂到创建运行的那次请求之下。
+- 每日在 `audit_purge_hour`（0–23，默认 3）指定的整点由后台任务清理超过留存天数的记录（默认 30 天，`audit_retention_days` 可调），审计页也提供「立即清理」（二次确认）。`GET /admin/audit/retention` 返回真实计算的 `next_purge_at`（RFC3339）与 `last_purged_at`，不再用固定文案。
+- 每次清理本身也写一条 `span_type_code=system`、`action_code=system/audit.purge` 的审计，记录删除条数与剩余条数——「清理」这个动作同样可被追溯。
+- 字段：级别（`info` / `warn` / `error`，按 HTTP 状态或调用结果推导）、链路 ID（与响应包络 `trace_id` 同值）、操作者 ULID 与登录名快照、动作码（路径去掉 `/api/v1/`）、请求路径与方法、脱敏请求体、**脱敏响应体**、目标类型与目标 ULID、业务响应码与说明、HTTP 状态、耗时、IP、UA。
+- **AI 调用留痕**：对话（`ai/chat`）、工作流每一步（`ai/workflow/<步骤类型>`）、开书方案（`ai/bootstrap/plan`）各写一条 `ai_call` span，记录 `model_name`、`token_count`、`latency_ms`、`resp_code`（成功 `SUCCESS` / 失败 `ERR_AI_PROVIDER`）。**只记提示词字符数与模型名，绝不落 prompt 全文与模型输出原文**，避免把作品正文与密钥写进审计表。审计写入失败只 `Warn`，不影响主流程。
 - 请求体与响应体都采样落库（各 32KB 上限，超限追加截断标记）；响应体非 JSON（SSE 流、上传回执）记占位说明。详情接口 `AuditDetailVO` 同时返回 `request_body` 与 `resp_body`，前端抽屉并列展示——「只记请求不记响应」无法回答「这次写到底改成了什么」。
 - 所有 POST 都读取 body 提取目标，上限 32KB，读后还原供 handler 绑定；`multipart` 请求不采样。
 - 目标提取白名单覆盖 user / role / menu / project / chapter / document / prompt / tool / model / provider / chat_session / notification，取第一个命中的键。

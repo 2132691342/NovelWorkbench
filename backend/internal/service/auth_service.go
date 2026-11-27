@@ -80,17 +80,13 @@ func (s *AuthService) Profile(ctx context.Context, userULID string) (domain.User
 	return s.withRoleCodes(ctx, toUserVO(do))
 }
 
-// ProfileDetail 查询个人中心资料（含备注与更新时间）。
+// ProfileDetail 查询个人中心资料（含备注、更新时间、角色名与权限码概览）。
 func (s *AuthService) ProfileDetail(ctx context.Context, userULID string) (domain.UserProfileVO, error) {
 	do, err := s.mustGetUser(ctx, userULID)
 	if err != nil {
 		return domain.UserProfileVO{}, err
 	}
-	roleCodes, err := s.roleRepo.ListRoleCodesByUserULID(ctx, userULID)
-	if err != nil {
-		return domain.UserProfileVO{}, err
-	}
-	return toUserProfileVO(do, roleCodes), nil
+	return s.buildProfileVO(ctx, do)
 }
 
 // UpdateProfile 更新本人资料（邮箱查重；头像与备注允许清空）。
@@ -119,11 +115,36 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userULID string, req *d
 	}
 	do.AvatarURL = req.AvatarURL
 	do.RemarkText = req.RemarkText
-	roleCodes, err := s.roleRepo.ListRoleCodesByUserULID(ctx, userULID)
+	return s.buildProfileVO(ctx, do)
+}
+
+// buildProfileVO 组装个人中心资料（角色名 + 权限并集一并下发，前端无需再拉两次接口）。
+func (s *AuthService) buildProfileVO(ctx context.Context, do *domain.UserDO) (domain.UserProfileVO, error) {
+	roleCodes, err := s.roleRepo.ListRoleCodesByUserULID(ctx, do.UserULID)
 	if err != nil {
 		return domain.UserProfileVO{}, err
 	}
-	return toUserProfileVO(do, roleCodes), nil
+	roles, err := s.roleRepo.ListRolesByUserULID(ctx, do.UserULID)
+	if err != nil {
+		return domain.UserProfileVO{}, err
+	}
+	roleNameList := make([]string, 0, len(roles))
+	permCodes := make([]string, 0, 16)
+	seenPerm := make(map[string]bool, 16)
+	for i := range roles {
+		roleNameList = append(roleNameList, roles[i].RoleName)
+		for _, permCode := range unmarshalPermCodes(roles[i].PermCodesJSON) {
+			if seenPerm[permCode] {
+				continue
+			}
+			seenPerm[permCode] = true
+			permCodes = append(permCodes, permCode)
+		}
+	}
+	vo := toUserProfileVO(do, roleCodes)
+	vo.RoleNameList = roleNameList
+	vo.PermCodes = permCodes
+	return vo, nil
 }
 
 // ChangePassword 校验旧密码后更新本人密码，返回新令牌（旧令牌因密码版本递增立即失效）。
@@ -134,6 +155,12 @@ func (s *AuthService) ChangePassword(ctx context.Context, userULID string, req *
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(do.PasswordHash), []byte(req.OldPasswordText)); err != nil {
 		return domain.UserPasswordChangeDTO{}, pkg.NewBizError(domain.RespCodeUnauthorized, "当前密码不正确")
+	}
+	if err := validatePasswordStrength(req.NewPasswordText); err != nil {
+		return domain.UserPasswordChangeDTO{}, err
+	}
+	if req.NewPasswordText == req.OldPasswordText {
+		return domain.UserPasswordChangeDTO{}, pkg.NewBizError(domain.RespCodeInvalidParam, "新密码不能与当前密码相同")
 	}
 	hashBytes, err := bcrypt.GenerateFromPassword([]byte(req.NewPasswordText), bcrypt.DefaultCost)
 	if err != nil {

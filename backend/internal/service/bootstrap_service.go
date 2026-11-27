@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -31,15 +32,16 @@ const (
 
 // BootstrapService AI 开书业务：生成方案与落库。
 type BootstrapService struct {
-	providerSvc *ModelProviderService // 模型选择与授权校验
-	aiClient    *ai.Client            // 模型网关
-	projectRepo *repo.ProjectRepo     // 项目仓储
-	volumeRepo  *repo.VolumeRepo      // 卷仓储
-	chapterRepo *repo.ChapterRepo     // 章节仓储
-	charRepo    *repo.CharacterRepo   // 角色仓储
-	loreRepo    *repo.LoreRepo        // 设定仓储
-	outlineRepo *repo.OutlineRepo     // 大纲仓储
-	db          *gorm.DB              // 事务入口
+	providerSvc   *ModelProviderService // 模型选择与授权校验
+	aiClient      *ai.Client            // 模型网关
+	projectRepo   *repo.ProjectRepo     // 项目仓储
+	volumeRepo    *repo.VolumeRepo      // 卷仓储
+	chapterRepo   *repo.ChapterRepo     // 章节仓储
+	charRepo      *repo.CharacterRepo   // 角色仓储
+	loreRepo      *repo.LoreRepo        // 设定仓储
+	outlineRepo   *repo.OutlineRepo     // 大纲仓储
+	db            *gorm.DB              // 事务入口
+	auditRecorder pkg.AuditRecorder     // 审计写入（AI 开书方案留痕，可为 nil）
 }
 
 // NewBootstrapService 构造开书服务。
@@ -51,6 +53,11 @@ func NewBootstrapService(providerSvc *ModelProviderService, aiClient *ai.Client,
 		projectRepo: projectRepo, volumeRepo: volumeRepo, chapterRepo: chapterRepo,
 		charRepo: charRepo, loreRepo: loreRepo, outlineRepo: outlineRepo, db: db,
 	}
+}
+
+// SetAuditRecorder 注入审计写入器（开书方案生成留痕，链路 ID 取请求的 X-Request-ID）。
+func (s *BootstrapService) SetAuditRecorder(recorder pkg.AuditRecorder) {
+	s.auditRecorder = recorder
 }
 
 // GeneratePlan 用一句创意生成开书方案（不落库，供作者预览与修改）。
@@ -72,6 +79,7 @@ func (s *BootstrapService) GeneratePlan(ctx context.Context, userULID string, re
 	}
 	planCtx, cancel := context.WithTimeout(ctx, bootstrapPlanTimeout)
 	defer cancel()
+	planStartedAt := time.Now()
 	plan, err := s.aiClient.GenerateBootstrapPlan(planCtx, spec, req.IdeaText, req.GenreCode, chapterCount)
 	if err != nil && chapterCount > bootstrapMinChapterCount {
 		// 结构化长输出可能撞到模型输出上限被截断：缩半规模重试一次，宁可章少也不给半份方案。
@@ -83,6 +91,15 @@ func (s *BootstrapService) GeneratePlan(ctx context.Context, userULID string, re
 		plan, err = s.aiClient.GenerateBootstrapPlan(planCtx, spec, req.IdeaText, req.GenreCode, retryCount)
 		chapterCount = retryCount
 	}
+	// AI 调用留痕：开书方案是链路里最贵的一步，模型、token 与耗时都要可查（重试合并为一条）
+	recordAICall(ctx, s.auditRecorder, aiCallMeta{
+		ActionCode:  domain.AuditActionAIBootstrapPlan,
+		ActionName:  "AI 开书方案",
+		TraceID:     pkg.RequestIDFromContext(ctx),
+		UserULID:    userULID,
+		ModelName:   spec.ChatModelName,
+		PromptChars: utf8.RuneCountInString(req.IdeaText),
+	}, time.Since(planStartedAt), estimateTokenCount(utf8.RuneCountInString(req.IdeaText), 0), err)
 	if err != nil {
 		return domain.ProjectBootstrapPlanVO{}, pkg.WrapBizError(domain.RespCodeAIProviderError, "开书方案生成失败", err)
 	}

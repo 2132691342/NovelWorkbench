@@ -43,11 +43,16 @@ func NewModelProviderService(providerRepo *repo.ModelProviderRepo, roleRepo *rep
 		gateway: gateway, secretKey: secretKey, timeout: timeout}
 }
 
-// SeedDefault 供应商表为空时按配置播种「一个供应商 + 一个默认模型」，并授权给内置角色（幂等）。
+// SeedDefault 按配置播种「一个供应商 + 一个默认模型」，并授权给内置角色（幂等）。
+// 判重按 provider_name 与 base_url：同名或同网关已存在即跳过，避免手工建的供应商让播种永久失效。
 func (s *ModelProviderService) SeedDefault(ctx context.Context, seed ProviderSeed) error {
-	count, err := s.providerRepo.Count(ctx)
-	if err != nil || count > 0 {
-		return err
+	baseURL := strings.TrimRight(seed.BaseURL, "/")
+	existing, err := s.providerRepo.FindByNameOrBaseURL(ctx, seed.ProviderName, baseURL)
+	if err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "供应商播种前查询失败", err)
+	}
+	if existing != nil {
+		return nil // 配置即出厂默认，已播种过（或同名/同网关供应商已存在）就不再重复插
 	}
 	cipherText, err := pkg.SealSecret(seed.APIKey, s.secretKey)
 	if err != nil {
@@ -57,13 +62,16 @@ func (s *ModelProviderService) SeedDefault(ctx context.Context, seed ProviderSee
 		ProviderULID:       pkg.NewULID(domain.IDPrefixModelProvider),
 		ProviderName:       seed.ProviderName,
 		ProtocolCode:       seed.ProtocolCode,
-		BaseURL:            strings.TrimRight(seed.BaseURL, "/"),
+		BaseURL:            baseURL,
 		APIKeyCipher:       cipherText,
 		EnabledFlag:        true,
 		LastTestStatusCode: domain.ProviderTestStatusUntested,
 		RemarkText:         "配置文件引导创建，可在模型供应商页修改",
 	}
 	if err := s.providerRepo.Create(ctx, providerDO); err != nil {
+		if repo.IsDuplicateKey(err) {
+			return nil // 并发启动另一实例已播种，视为成功
+		}
 		return pkg.WrapBizError(domain.RespCodeStorageError, "供应商播种失败", err)
 	}
 	modelDO := &domain.ModelCatalogDO{
@@ -78,17 +86,28 @@ func (s *ModelProviderService) SeedDefault(ctx context.Context, seed ProviderSee
 		LastTestStatusCode: domain.ProviderTestStatusUntested,
 	}
 	if err := s.providerRepo.CreateModel(ctx, modelDO); err != nil {
+		if repo.IsDuplicateKey(err) {
+			return nil // 同供应商下该模型已存在（并发播种），不重复插
+		}
+		// 回滚刚建的供应商：否则下次启动按名称判重会跳过它，出厂默认模型永远补不上。
+		if deleteErr := s.providerRepo.Delete(ctx, providerDO.ProviderULID); deleteErr != nil {
+			pkg.SLogger().Warnw("播种失败后回滚供应商失败", "provider_ulid", providerDO.ProviderULID, "error", deleteErr)
+		}
 		return pkg.WrapBizError(domain.RespCodeStorageError, "默认模型播种失败", err)
 	}
 	return s.grantToBuiltinRoles(ctx, modelDO.ModelULID)
 }
 
 // MigrateLegacyModels 把旧版「供应商自带一个模型」的数据迁移为模型目录行（幂等）。
-// 模型表非空时整体跳过；旧版默认标记迁移到对应模型，保证升级后开箱可用。
+// 逐供应商判断：只迁移「该供应商在模型目录里没有任何行」的 legacy 模型，
+// 避免目录被清空后重复灌入，也避免管理员手工加过一个模型就让所有旧数据永远迁不过来。
 func (s *ModelProviderService) MigrateLegacyModels(ctx context.Context) error {
-	count, err := s.providerRepo.CountModels(ctx)
-	if err != nil || count > 0 {
-		return err
+	hasColumn, err := s.providerRepo.HasLegacyModelColumn(ctx)
+	if err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "旧模型列检查失败", err)
+	}
+	if !hasColumn {
+		return nil // 新库没有旧列，无需迁移
 	}
 	rows, err := s.providerRepo.ListLegacyProviderModels(ctx)
 	if err != nil {
@@ -97,8 +116,24 @@ func (s *ModelProviderService) MigrateLegacyModels(ctx context.Context) error {
 	if len(rows) == 0 {
 		return nil
 	}
+	coveredULIDList, err := s.providerRepo.ListProviderULIDsWithModel(ctx)
+	if err != nil {
+		return pkg.WrapBizError(domain.RespCodeStorageError, "模型目录归属读取失败", err)
+	}
+	coveredSet := make(map[string]bool, len(coveredULIDList))
+	for _, providerULID := range coveredULIDList {
+		coveredSet[providerULID] = true
+	}
 	var defaultModelULID string
+	migratedCount := 0
 	for _, row := range rows {
+		if coveredSet[row.ProviderULID] {
+			// 该供应商已有模型目录行：旧列值是过期的，清掉以免目录被清空后又被灌回。
+			if err := s.providerRepo.ClearLegacyModelName(ctx, row.ProviderULID); err != nil {
+				return pkg.WrapBizError(domain.RespCodeStorageError, "旧模型列清理失败", err)
+			}
+			continue
+		}
 		do := &domain.ModelCatalogDO{
 			ModelULID:          pkg.NewULID(domain.IDPrefixModelCatalog),
 			ProviderULID:       row.ProviderULID,
@@ -113,14 +148,27 @@ func (s *ModelProviderService) MigrateLegacyModels(ctx context.Context) error {
 			do.LastTestStatusCode = domain.ProviderTestStatusUntested
 		}
 		if err := s.providerRepo.CreateModel(ctx, do); err != nil {
+			if repo.IsDuplicateKey(err) {
+				coveredSet[row.ProviderULID] = true // 并发实例已迁移该供应商，跳过
+				continue
+			}
 			return pkg.WrapBizError(domain.RespCodeStorageError, "旧模型迁移失败", err)
 		}
+		coveredSet[row.ProviderULID] = true
+		migratedCount++
 		if err := s.grantToBuiltinRoles(ctx, do.ModelULID); err != nil {
 			return err
+		}
+		// 清掉旧列值：这是「已迁移」的持久标记，目录被清空后也不会再灌回旧数据。
+		if err := s.providerRepo.ClearLegacyModelName(ctx, row.ProviderULID); err != nil {
+			return pkg.WrapBizError(domain.RespCodeStorageError, "旧模型列清理失败", err)
 		}
 		if row.DefaultFlag && defaultModelULID == "" {
 			defaultModelULID = do.ModelULID
 		}
+	}
+	if migratedCount == 0 {
+		return nil
 	}
 	if defaultModelULID != "" {
 		if err := s.providerRepo.ClearDefaultModel(ctx); err != nil {
@@ -130,7 +178,7 @@ func (s *ModelProviderService) MigrateLegacyModels(ctx context.Context) error {
 			return pkg.WrapBizError(domain.RespCodeStorageError, "旧默认模型迁移失败", err)
 		}
 	}
-	pkg.SLogger().Infow("旧版模型数据已迁移", "count", len(rows), "default_model_ulid", defaultModelULID)
+	pkg.SLogger().Infow("旧版模型数据已迁移", "count", migratedCount, "default_model_ulid", defaultModelULID)
 	return nil
 }
 
@@ -206,6 +254,10 @@ func (s *ModelProviderService) SaveProvider(ctx context.Context, req *domain.Mod
 			LastTestStatusCode: domain.ProviderTestStatusUntested,
 		}
 		if err := s.providerRepo.Create(ctx, do); err != nil {
+			if repo.IsDuplicateKey(err) {
+				return domain.ModelProviderVO{}, pkg.NewBizError(domain.RespCodeConflict,
+					"已存在同名供应商："+req.ProviderName)
+			}
 			return domain.ModelProviderVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "供应商创建失败", err)
 		}
 		return s.toProviderVO(do), nil
@@ -235,6 +287,10 @@ func (s *ModelProviderService) SaveProvider(ctx context.Context, req *domain.Mod
 		fields["enabled_flag"] = *req.EnabledFlag
 	}
 	if err := s.providerRepo.Update(ctx, req.ProviderULID, fields); err != nil {
+		if repo.IsDuplicateKey(err) {
+			return domain.ModelProviderVO{}, pkg.NewBizError(domain.RespCodeConflict,
+				"已存在同名供应商："+req.ProviderName)
+		}
 		return domain.ModelProviderVO{}, pkg.WrapBizError(domain.RespCodeStorageError, "供应商更新失败", err)
 	}
 	updated, err := s.providerRepo.GetByULID(ctx, req.ProviderULID)

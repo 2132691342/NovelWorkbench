@@ -1,6 +1,7 @@
 <!-- 写作台：目录树、正文编辑器与 AI 面板三栏布局。 -->
 <script setup lang="ts">
   import { computed, onMounted, ref, watch } from 'vue'
+  import { useRouter } from 'vue-router'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { getChapterDetail } from '@/api/chapter'
   import { getProjectTree } from '@/api/project'
@@ -13,6 +14,7 @@
   import WorkspaceTree from './WorkspaceTree.vue'
 
   const projectStore = useProjectStore()
+  const router = useRouter()
 
   const projectUlid = computed(() => projectStore.currentProjectUlid)
   const treeData = ref<NWProjectTreeVo | null>(null)
@@ -126,11 +128,50 @@
     await checkPanelRef.value?.run()
   }
 
+  /** 顶栏章节动作的可用条件：有当前章且有正文（体检与复审共用同一口径） */
+  const chapterActionDisabled = computed(() => !currentChapter.value || liveWordCount.value === 0)
+
+  /** 复审指令：只出问题不重写，正文由 AI 面板的章节引用带上 */
+  const REVIEW_INSTRUCTION = `请以编辑身份复审本章，只输出问题不重写正文：
+1) 结构与节奏
+2) 人物与动机
+3) 设定与前后一致
+4) AI 味与套话
+每类给出「有问题/无明显问题」+ 一句依据；结尾给一句总评与是否可发。`
+
+  /** AI 复审本章：正文走章节引用，已跑过体检则把问题清单一并交给编辑 */
+  const askAiReview = async () => {
+    if (!currentChapter.value) {
+      ElMessage.warning('请先打开一个章节')
+      return
+    }
+    await editorRef.value?.flushSave()
+    const issueText = (checkPanelRef.value?.report?.issue_list ?? [])
+      .map((issue) => `- ${issue.title_text}：${issue.detail_text}`)
+      .join('\n')
+    const promptText = issueText
+      ? `${REVIEW_INSTRUCTION}\n\n已知体检问题（供参考，不必逐条复述）：\n${issueText}`
+      : REVIEW_INSTRUCTION
+    askAiWithPrompt(promptText)
+  }
+
+  /** 本章开跑工作流：带章深链，工作流页据此预选手选章节 */
+  const openWorkflowForChapter = () => {
+    if (!projectUlid.value || !currentChapter.value) {
+      ElMessage.warning('请先打开一个章节')
+      return
+    }
+    void router.push({
+      path: `/workflow/${projectUlid.value}`,
+      query: { chapter: currentChapter.value.chapter_ulid }
+    })
+  }
+
   /** 体检面板把问题清单交给 AI 面板（带当前章节引用，用去 AI 味提示词改） */
-  const askAiWithPrompt = (promptText: string) => {
+  const askAiWithPrompt = (promptText: string, promptCode = 'deai') => {
     rightCollapsed.value = false
     const refList = currentChapter.value ? [currentChapter.value.chapter_ulid] : []
-    aiPanelRef.value?.presetPrompt('deai', refList)
+    aiPanelRef.value?.presetPrompt(promptCode, refList)
     aiPanelRef.value?.presetText(promptText)
   }
 
@@ -229,9 +270,23 @@
         <ElButton size="small" text @click="rightCollapsed = !rightCollapsed">
           <Icon icon="mdi:robot-outline" :size="15" />
         </ElButton>
-        <ElButton size="small" text @click="openCheck">
+        <ElButton size="small" text :disabled="chapterActionDisabled" @click="openCheck">
           <Icon icon="mdi:clipboard-check-outline" :size="15" />
           <span class="ml-4px">体检</span>
+        </ElButton>
+        <ElButton size="small" text :disabled="chapterActionDisabled" @click="askAiReview()">
+          <Icon icon="mdi:shield-check-outline" :size="15" />
+          <span class="ml-4px">AI 复审</span>
+        </ElButton>
+        <ElButton
+          type="primary"
+          plain
+          size="small"
+          :disabled="!currentChapter"
+          @click="openWorkflowForChapter()"
+        >
+          <Icon icon="mdi:play-circle-outline" :size="15" />
+          <span class="ml-4px">本章开跑</span>
         </ElButton>
       </div>
     </header>

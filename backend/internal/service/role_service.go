@@ -132,7 +132,7 @@ func sameStringSlice(left, right []string) bool {
 	return true
 }
 
-// ListPage 分页查询角色。
+// ListPage 分页查询角色（附带每个角色的用户挂载数，供删除前判断影响面）。
 func (s *RoleService) ListPage(ctx context.Context, req *domain.RoleListREQ) (domain.PageDTO[domain.RoleVO], error) {
 	req.Normalize()
 	dos, total, err := s.roleRepo.ListPage(ctx, req.PageNum, req.PageSize)
@@ -141,7 +141,12 @@ func (s *RoleService) ListPage(ctx context.Context, req *domain.RoleListREQ) (do
 	}
 	vos := make([]domain.RoleVO, 0, len(dos))
 	for i := range dos {
-		vos = append(vos, toRoleVO(&dos[i]))
+		vo := toRoleVO(&dos[i])
+		// 用户数只在列表页需要（删除按钮的禁用依据），统计失败不阻断列表
+		if userCount, countErr := s.roleRepo.CountUsersByRoleULID(ctx, dos[i].RoleULID); countErr == nil {
+			vo.UserCount = userCount
+		}
+		vos = append(vos, vo)
 	}
 	return domain.NewPageDTO(total, req.PageREQ, vos), nil
 }
@@ -388,6 +393,25 @@ func (s *RoleService) PermCodesOfUser(ctx context.Context, userULID string) ([]s
 		}
 	}
 	return permCodes, nil
+}
+
+// PermCodeRoleNameMap 汇总 权限码 → 引用它的角色名称（权限目录展示影响面用）。
+// 管理员角色的通配 "*" 不展开到具体权限码：它代表全部权限，逐条挂上只会让每项都显示「管理员」。
+func (s *RoleService) PermCodeRoleNameMap(ctx context.Context) (map[string][]string, error) {
+	roles, err := s.roleRepo.ListAll(ctx)
+	if err != nil {
+		return nil, pkg.WrapBizError(domain.RespCodeStorageError, "角色列表读取失败", err)
+	}
+	result := make(map[string][]string, len(roles)*4)
+	for i := range roles {
+		for _, permCode := range unmarshalPermCodes(roles[i].PermCodesJSON) {
+			if permCode == domain.PermAdminAll {
+				continue
+			}
+			result[permCode] = append(result[permCode], roles[i].RoleName)
+		}
+	}
+	return result, nil
 }
 
 // toRoleVO 组装角色视图对象。

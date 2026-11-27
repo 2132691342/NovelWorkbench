@@ -59,6 +59,7 @@ type RoleVO struct {
 	RemarkText  string   `json:"remark_text"`  // 备注
 	PermCodes   []string `json:"perm_codes"`   // 权限码列表
 	BuiltinFlag bool     `json:"builtin_flag"` // 是否内置角色
+	UserCount   int64    `json:"user_count"`   // 挂载该角色的用户数（实时统计，删除前的判断依据）
 	CreatedAt   string   `json:"created_at"`   // 创建时间（RFC3339）
 	UpdatedAt   string   `json:"updated_at"`   // 更新时间（RFC3339）
 }

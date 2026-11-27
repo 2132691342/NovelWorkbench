@@ -50,7 +50,7 @@ type ChatSendREQ struct {
 	RefLoreULIDList      []string `json:"ref_lore_ulid_list"`                            // @设定条目
 	RefSessionULIDList   []string `json:"ref_session_ulid_list"`                         // @历史会话（注入时逐条归档）
 	ModelULID            string   `json:"model_ulid" binding:"omitempty,max=40"`         // 指定模型，空用默认
-	SystemPromptCode     string   `json:"system_prompt_code" binding:"omitempty,max=32"` // 指定身份提示词编码，空用默认全局身份提示词
+	SystemPromptCode     string   `json:"system_prompt_code" binding:"omitempty,max=32"` // 指定身份提示词编码（可选），空用默认全局身份提示词或内置作者人格
 }
 
 // ChatHistoryREQ 拉取会话历史。

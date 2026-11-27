@@ -5,6 +5,7 @@ package repo
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -56,4 +57,22 @@ func (r *LoginLogRepo) ListPage(ctx context.Context, req *domain.LoginLogListREQ
 		return nil, 0, fmt.Errorf("list login logs: %w", err)
 	}
 	return dos, total, nil
+}
+
+// CountAll 统计登录日志总条数（留存摘要展示）。
+func (r *LoginLogRepo) CountAll(ctx context.Context) (int64, error) {
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&domain.LoginLogDO{}).Count(&total).Error; err != nil {
+		return 0, fmt.Errorf("count login logs: %w", err)
+	}
+	return total, nil
+}
+
+// DeleteBefore 删除指定时间之前的登录日志（与审计共用同一留存窗口）。
+func (r *LoginLogRepo) DeleteBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	result := r.db.WithContext(ctx).Where("created_at < ?", cutoff).Delete(&domain.LoginLogDO{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("purge login logs: %w", result.Error)
+	}
+	return int(result.RowsAffected), nil
 }

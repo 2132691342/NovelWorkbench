@@ -1,16 +1,21 @@
-<!-- 自动化工作流中心：选模板开跑、监控进度、审核产出。核心心智是「AI 干活，人点头」。 -->
+<!-- 自动化工作流中心：先看「素材够不够跑」，再一键开跑，最后只在审核点点头。
+     主路径 = 就绪度卡片 → 三步向导 → 运行卡片 → 审核抽屉。 -->
 <script setup lang="ts">
   import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+  import { useRoute, useRouter } from 'vue-router'
   import { ElMessage } from 'element-plus'
   import { getProjectTree } from '@/api/project'
   import type { NWChapterBriefVo } from '@/api/contracts'
   import {
+    fetchWorkflowReadiness,
     fetchWorkflowRunStats,
     listWorkflowRuns,
     listWorkflowTemplates,
     pauseWorkflowRun,
+    quickStartWorkflowRun,
     resumeWorkflowRun,
     retryWorkflowRun,
+    type NWWorkflowReadinessVo,
     type NWWorkflowRunStatsVo,
     type NWWorkflowRunVo,
     type NWWorkflowTemplateVo
@@ -18,14 +23,19 @@
   import { useProjectStore } from '@/store/modules/project'
   import { usePageQuery } from '@/composables/usePageQuery'
   import WorkflowCreateDialog from './components/WorkflowCreateDialog.vue'
+  import WorkflowReadinessPanel from './components/WorkflowReadinessPanel.vue'
   import WorkflowRunCard from './components/WorkflowRunCard.vue'
   import WorkflowRunDrawer from './components/WorkflowRunDrawer.vue'
 
+  const route = useRoute()
+  const router = useRouter()
   const projectStore = useProjectStore()
   const projectUlid = computed(() => projectStore.currentProjectUlid)
 
   const templateList = ref<NWWorkflowTemplateVo[]>([])
   const chapterList = ref<NWChapterBriefVo[]>([])
+  const readiness = ref<NWWorkflowReadinessVo | null>(null)
+  const readinessLoading = ref(false)
   const stats = ref<NWWorkflowRunStatsVo>({
     running_count: 0,
     waiting_review_count: 0,
@@ -34,9 +44,13 @@
   })
   const statsLoading = ref(false)
   const createVisible = ref(false)
+  /** 深链 ?chapter= 带入的预选章（写作台「本章开跑」） */
+  const presetChapterUlid = ref('')
   const drawerVisible = ref(false)
   const activeRunUlid = ref('')
   const actingUlid = ref('')
+  /** 一键开跑进行中（按钮 loading，防重复点击） */
+  const quickStarting = ref(false)
 
   const { items, total, pageNum, pageSize, loading, query, load, search, changePage } = usePageQuery(
     (req) => listWorkflowRuns({ ...req, project_ulid: projectUlid.value || undefined }),
@@ -95,6 +109,21 @@
     }
   }
 
+  const loadReadiness = async () => {
+    if (!projectUlid.value) {
+      readiness.value = null
+      return
+    }
+    readinessLoading.value = true
+    try {
+      readiness.value = await fetchWorkflowReadiness(projectUlid.value)
+    } catch {
+      readiness.value = null
+    } finally {
+      readinessLoading.value = false
+    }
+  }
+
   const loadTemplates = async () => {
     try {
       templateList.value = await listWorkflowTemplates()
@@ -116,15 +145,43 @@
     }
   }
 
-  const refresh = () => Promise.all([load(), loadStats()])
+  const refresh = () => Promise.all([load(), loadStats(), loadReadiness()])
 
-  const openCreate = () => {
+  const openCreate = async () => {
     if (!projectUlid.value) {
       ElMessage.warning('请先在顶栏选择项目')
       return
     }
-    void loadChapters()
+    await loadChapters()
+    void loadReadiness()
     createVisible.value = true
+  }
+
+  /** 一键开跑：参数全取项目默认值，模板由后端按章节现状判断，跑完停在审核门禁等作者点头 */
+  const quickStart = async () => {
+    if (!projectUlid.value) {
+      ElMessage.warning('请先在顶栏选择项目')
+      return
+    }
+    quickStarting.value = true
+    try {
+      const result = await quickStartWorkflowRun({ project_ulid: projectUlid.value })
+      if (result.ready_flag) {
+        ElMessage.success(`已开始处理 ${result.chapter_count} 章，AI 跑完会停下来等你审核`)
+      } else {
+        // 素材缺口不阻塞开跑，但必须让作者知道产出可能偏离设定
+        ElMessage.warning({
+          message: `已开始 ${result.chapter_count} 章，但有 ${result.blocking_count} 项素材未就绪：${result.blocking_hint_list[0] ?? ''}`,
+          duration: 6000
+        })
+      }
+      activeRunUlid.value = result.run_vo.run_ulid
+      drawerVisible.value = true
+      await refresh()
+      startPoll()
+    } finally {
+      quickStarting.value = false
+    }
   }
 
   const openDetail = (run: NWWorkflowRunVo) => {
@@ -153,6 +210,42 @@
     startPoll()
   }
 
+  /** 就绪度「去补齐」跳素材/大纲/提示词等页面，跳回来自动重新体检 */
+  const handleFixRoute = (fixRoute: string) => {
+    if (!fixRoute) return
+    createVisible.value = false
+    void router.push(fixRoute)
+  }
+
+  /** Dashboard 通过 ?run=<RunULID> 直接落到某次运行的审核界面 */
+  const consumeRunQuery = () => {
+    const runQuery = route.query.run
+    if (typeof runQuery === 'string' && runQuery) {
+      activeRunUlid.value = runQuery
+      drawerVisible.value = true
+      void router.replace({ query: { ...route.query, run: undefined } })
+    }
+  }
+
+  // 同页内再次带 ?run= 跳转（例如从通知里点开另一次运行）也要能落到抽屉。
+  watch(() => route.query.run, () => consumeRunQuery())
+
+  /** 写作台「本章开跑」：?chapter=<ChapterULID> 打开向导并预选该章，随即清掉 query */
+  const consumeChapterQuery = async () => {
+    const chapterQuery = route.query.chapter
+    if (typeof chapterQuery !== 'string' || !chapterQuery) return
+    presetChapterUlid.value = chapterQuery
+    await openCreate()
+    void router.replace({ query: { ...route.query, chapter: undefined } })
+  }
+
+  watch(() => route.query.chapter, () => void consumeChapterQuery())
+
+  // 预选章只对本次打开生效：关掉向导就清空，避免下次手动新建还被旧章钉住。
+  watch(createVisible, (visible) => {
+    if (!visible) presetChapterUlid.value = ''
+  })
+
   watch(
     projectUlid,
     () => {
@@ -169,6 +262,8 @@
     if (!projectUlid.value) await projectStore.loadProjectOptions()
     await Promise.all([loadTemplates(), refresh()])
     startPoll()
+    consumeRunQuery()
+    await consumeChapterQuery()
   })
 
   onBeforeUnmount(stopPoll)
@@ -179,6 +274,14 @@
     <ElEmpty v-if="!projectUlid" description="请先在顶栏选择项目，再启动自动化任务" :image-size="90" />
 
     <template v-else>
+      <section class="wf-readiness">
+        <WorkflowReadinessPanel
+          :readiness="readiness"
+          :loading="readinessLoading"
+          @fix="handleFixRoute"
+        />
+      </section>
+
       <div class="wf-page__stats">
         <div v-for="card in statCards" :key="card.label" v-loading="statsLoading" class="wf-stat">
           <Icon :icon="card.icon" :size="18" :class="`wf-stat__icon is-${card.tone}`" />
@@ -190,9 +293,13 @@
       </div>
 
       <div class="nw-toolbar">
-        <ElButton type="primary" @click="openCreate()">
-          <Icon icon="mdi:play-circle-outline" :size="15" />
-          <span class="wf-page__btn-text">新建自动化任务</span>
+        <ElButton type="primary" size="large" :loading="quickStarting" @click="quickStart()">
+          <Icon icon="mdi:rocket-launch-outline" :size="16" />
+          <span class="wf-page__btn-text">一键开跑</span>
+        </ElButton>
+        <ElButton @click="openCreate()">
+          <Icon icon="mdi:tune-variant" :size="15" />
+          <span class="wf-page__btn-text">自定义任务</span>
         </ElButton>
         <ElInput
           v-model="query.keyword_text"
@@ -239,7 +346,12 @@
       :project-ulid="projectUlid"
       :template-list="templateList"
       :chapter-list="chapterList"
+      :readiness="readiness"
+      :readiness-loading="readinessLoading"
+      :preset-chapter-ulid="presetChapterUlid"
       @created="handleCreated"
+      @fix-route="handleFixRoute"
+      @refresh-readiness="loadReadiness()"
     />
 
     <WorkflowRunDrawer
@@ -280,6 +392,10 @@
     &__btn-text {
       margin-left: 4px;
     }
+  }
+
+  .wf-readiness {
+    min-height: 60px;
   }
 
   .wf-stat {
@@ -334,5 +450,4 @@
       }
     }
   }
-
 </style>

@@ -1,23 +1,27 @@
-<!-- 个人中心：查看账号信息、编辑资料与修改密码。 -->
+<!-- 个人中心：账号资料、修改密码（强度提示 + 改后重登）、角色与权限概览。 -->
 <script setup lang="ts">
-  import { onMounted, reactive, ref } from 'vue'
+  import { computed, onMounted, reactive, ref } from 'vue'
+  import { useRouter } from 'vue-router'
   import {
     ElAlert,
     ElButton,
     ElCard,
+    ElEmpty,
     ElForm,
     ElFormItem,
     ElInput,
     ElMessage,
+    ElMessageBox,
     type FormInstance,
     type FormRules
   } from 'element-plus'
   import { changePassword, fetchProfileDetail, updateProfile } from '@/api/profile'
   import type { NWProfileVo } from '@/api/profile'
   import { useUserStore } from '@/store/modules/user'
-  import { isPersistentToken, writeToken } from '@/utils/storage'
   import { formatTime } from '@/utils/time'
+  import { checkPasswordStrength } from '@/views/Admin/components/passwordStrength'
 
+  const router = useRouter()
   const userStore = useUserStore()
 
   const profile = ref<NWProfileVo | null>(null)
@@ -47,11 +51,22 @@
     ]
   }
 
+  const strength = computed(() => checkPasswordStrength(passwordForm.new_password_text))
+
   const passwordRules: FormRules = {
     old_password_text: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
     new_password_text: [
       { required: true, message: '请输入新密码', trigger: 'blur' },
-      { min: 6, max: 64, message: '长度 6-64 个字符', trigger: 'blur' }
+      {
+        validator: (_rule, value: string, callback: (error?: Error) => void) => {
+          if (!checkPasswordStrength(value).passed) {
+            callback(new Error('新密码至少 8 位，且同时包含字母与数字'))
+            return
+          }
+          callback()
+        },
+        trigger: 'blur'
+      }
     ],
     confirm_password_text: [
       { required: true, message: '请再次输入新密码', trigger: 'blur' },
@@ -67,6 +82,15 @@
       }
     ]
   }
+
+  /** 权限概览：通配 "*" 表示全部权限 */
+  const permSummary = computed(() => {
+    const permCodes = profile.value?.perm_codes ?? []
+    if (permCodes.includes('*')) return { all: true, list: ['全部权限'] }
+    return { all: false, list: permCodes }
+  })
+
+  const roleNames = computed(() => profile.value?.role_name_list ?? [])
 
   const load = async () => {
     loading.value = true
@@ -100,24 +124,38 @@
     }
   }
 
+  /** 改密后旧令牌全部失效：提示并用新令牌续期本次会话，其他设备需重新登录 */
   const savePassword = async () => {
     const valid = await passwordFormRef.value?.validate().catch(() => false)
     if (!valid) return
 
+    try {
+      await ElMessageBox.confirm(
+        '修改后当前设备会自动续期，其他已登录设备需要重新登录。确定修改密码吗？',
+        '修改密码',
+        { type: 'warning', confirmButtonText: '确认修改', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+
     savingPassword.value = true
     try {
-      const result = await changePassword({
+      await changePassword({
         old_password_text: passwordForm.old_password_text,
         new_password_text: passwordForm.new_password_text
       })
-      // 改密会让旧令牌失效，必须立刻换用新令牌，否则下一次请求就会被踢回登录页
-      userStore.token = result.access_token
-      writeToken(result.access_token, isPersistentToken())
-      ElMessage.success('密码已修改，本次登录已自动续期')
       passwordForm.old_password_text = ''
       passwordForm.new_password_text = ''
       passwordForm.confirm_password_text = ''
       passwordFormRef.value?.clearValidate()
+      await ElMessageBox.alert(
+        '密码已修改，请使用新密码重新登录。',
+        '修改成功',
+        { type: 'success', confirmButtonText: '去登录' }
+      ).catch(() => undefined)
+      userStore.clearSession()
+      await router.replace('/login')
     } finally {
       savingPassword.value = false
     }
@@ -148,7 +186,7 @@
             class="nw-badge"
             :class="profile.user_status_code === 'active' ? 'nw-badge--success' : 'nw-badge--danger'"
           >
-            {{ profile.user_status_code === 'active' ? '正常' : '已禁用' }}
+            {{ profile.user_status_code === 'active' ? '正常' : '已停用' }}
           </span>
         </div>
 
@@ -156,12 +194,10 @@
           <div class="profile__meta-row">
             <dt>角色</dt>
             <dd>
-              <span v-if="profile.role_codes?.length" class="profile__roles">
-                <span v-for="code in profile.role_codes" :key="code" class="nw-badge nw-badge--neutral">
-                  {{ code }}
-                </span>
+              <span v-if="roleNames.length" class="profile__tags">
+                <span v-for="name in roleNames" :key="name" class="nw-badge">{{ name }}</span>
               </span>
-              <span v-else class="nw-hint">—</span>
+              <span v-else class="nw-hint">未分配角色</span>
             </dd>
           </div>
           <div class="profile__meta-row">
@@ -177,6 +213,7 @@
             <dd><code class="profile__ulid">{{ profile.user_ulid }}</code></dd>
           </div>
         </dl>
+        <ElEmpty v-else-if="!loading" description="资料加载失败，请刷新重试" />
       </ElCard>
 
       <ElCard shadow="never" class="profile__card">
@@ -210,7 +247,8 @@
           type="warning"
           :closable="false"
           show-icon
-          title="修改后需使用新密码重新登录其他设备"
+          title="修改成功后需使用新密码重新登录"
+          description="其他已登录设备上的会话会立即失效。"
         />
         <ElForm
           ref="passwordFormRef"
@@ -233,8 +271,19 @@
               type="password"
               show-password
               maxlength="64"
-              placeholder="至少 6 位"
+              placeholder="至少 8 位，含字母与数字"
             />
+            <div v-if="passwordForm.new_password_text" class="profile__strength">
+              <span class="profile__strength-bar">
+                <i
+                  v-for="level in 3"
+                  :key="level"
+                  class="profile__strength-cell"
+                  :class="level <= strength.score ? `is-filled is-${strength.tone}` : ''"
+                />
+              </span>
+              <span class="nw-hint">{{ strength.hint }}</span>
+            </div>
           </ElFormItem>
           <ElFormItem label="确认新密码" prop="confirm_password_text">
             <ElInput
@@ -251,6 +300,24 @@
           </ElButton>
         </div>
       </ElCard>
+
+      <ElCard shadow="never" class="profile__card profile__card--wide">
+        <template #header>
+          <span class="profile__title">我的权限</span>
+          <span class="nw-hint">只读概览，权限由管理员在角色权限中分配</span>
+        </template>
+        <div v-if="permSummary.list.length" class="profile__perm-cloud">
+          <span
+            v-for="permCode in permSummary.list"
+            :key="permCode"
+            class="nw-badge"
+            :class="permSummary.all ? 'nw-badge--success' : 'nw-badge--neutral'"
+          >
+            {{ permCode }}
+          </span>
+        </div>
+        <p v-else class="nw-hint">当前账号没有任何额外权限，仅可访问登录即可见的页面。</p>
+      </ElCard>
     </div>
   </div>
 </template>
@@ -266,9 +333,14 @@
 
     &__card {
       border-radius: var(--nw-radius-lg);
+
+      &--wide {
+        grid-column: 1 / -1;
+      }
     }
 
     &__title {
+      margin-right: 10px;
       font-size: 14px;
       font-weight: 650;
     }
@@ -291,6 +363,7 @@
       color: var(--el-color-primary);
       background: var(--nw-primary-soft);
       border-radius: 50%;
+      flex: none;
       place-items: center;
 
       img {
@@ -326,7 +399,8 @@
       font-size: 12.5px;
 
       dt {
-        color: var(--nw-text-secondary);
+        color: var(--el-text-color-secondary);
+        flex: none;
       }
 
       dd {
@@ -336,7 +410,7 @@
       }
     }
 
-    &__roles {
+    &__tags {
       display: inline-flex;
       flex-wrap: wrap;
       gap: 4px;
@@ -346,17 +420,55 @@
     &__ulid {
       font-family: var(--el-font-family-mono, monospace);
       font-size: 11px;
-      color: var(--nw-text-muted);
+      color: var(--el-text-color-placeholder);
     }
 
     &__password-form {
       margin-top: 12px;
     }
 
+    &__strength {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 6px;
+    }
+
+    &__strength-bar {
+      display: flex;
+      gap: 3px;
+    }
+
+    &__strength-cell {
+      width: 26px;
+      height: 4px;
+      background: var(--el-fill-color);
+      border-radius: 2px;
+      transition: background-color 0.15s ease;
+
+      &.is-filled.is-weak {
+        background: var(--nw-danger);
+      }
+
+      &.is-filled.is-medium {
+        background: var(--nw-warning);
+      }
+
+      &.is-filled.is-strong {
+        background: var(--nw-success);
+      }
+    }
+
     &__actions {
       display: flex;
       justify-content: flex-end;
       margin-top: 4px;
+    }
+
+    &__perm-cloud {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
     }
   }
 </style>

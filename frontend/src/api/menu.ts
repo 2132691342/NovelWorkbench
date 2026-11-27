@@ -14,6 +14,8 @@ export interface NWMenuSaveReqVo {
   menu_type_code: string
   scope_code?: string
   route_path?: string
+  /** 组件路径（views/Xxx/index，空为无组件） */
+  component_path?: string
   icon_code?: string
   perm_code?: string
   visible_flag?: boolean

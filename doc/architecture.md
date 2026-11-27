@@ -65,7 +65,7 @@ flowchart LR
 | 1 | 认证与会话 | `users`、`login_logs` | `api/auth_api.go`、`service/auth_service.go` |
 | 2 | 用户与角色权限 | `users`、`roles`、`user_roles` | `service/user_admin_service.go`、`service/role_service.go` |
 | 3 | 菜单与导航 | `menus` | `service/menu_service.go`、`service/menu_permission.go` |
-| 4 | 审计与登录日志 | Manticore `nw_audit`（审计）、`login_logs` | `pkg/access_middleware.go`、`service/audit_service.go`、`repo/audit_repo.go` |
+| 4 | 审计与登录日志 | Manticore `nw_audit`（审计）、`login_logs` | `pkg/access_middleware.go`、`service/audit_service.go`、`service/audit_ai.go`、`repo/audit_schema_repo.go`、`repo/audit_query_repo.go`、`repo/audit_trace_repo.go` |
 | 5 | 应用配置 | `app_settings` | `service/setting_service.go` |
 | 6 | 站内通知 | `notifications` | `service/notification_service.go` |
 | 7 | 任务中心 | `jobs` | `service/job_service.go`、`service/knowledge_worker.go` |
@@ -118,17 +118,19 @@ backend/
 ├── configs/          配置模板（凭据留空，环境变量注入）
 ├── internal/
     ├── api           HTTP 处理器与路由注册（27 个文件）
-    ├── service       业务规则、事务边界、上下文装配（44 个文件）
-    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，28 个文件）
+    ├── service       业务规则、事务边界、上下文装配（58 个文件）
+    ├── repo          SQL 与中间件访问的唯一出口（含 WithTx，32 个文件）
     ├── domain        DO / REQ / RESP / DTO / VO 唯一定义处（24 个文件）
-    ├── ai            模型网关、提示词装配、内置提示词资产、用量契约（11 个文件）
+    ├── ai            模型网关、提示词装配、内置提示词资产、用量契约（15 个文件）
     ├── infra         配置加载、连接构造、启动校验
     └── pkg           ULID、包络、错误、JWT、中间件、密钥封存、审计字段回调与时间工具
 ```
 
-`pkg` 各文件：`ulid.go`（带业务前缀的 ULID 生成）、`errors.go`（业务码与 HTTP 状态映射）、`logger.go`（Zap 全局日志）、`time.go`（RFC3339 格式化）、`text.go`（字数统计与文本工具）、`actor.go`（GORM 审计字段回调）、`jwt.go`（签名与校验，含密码版本声明）、`secret.go`（密钥封存）、`access_middleware.go`（鉴权、权限、审计）、`idempotency.go`（写请求幂等）、`middleware.go`（请求 ID、CORS、方法白名单）、`response.go`（统一包络）。
+`pkg` 各文件：`ulid.go`（带业务前缀的 ULID 生成）、`errors.go`（业务码与 HTTP 状态映射）、`logger.go`（Zap 全局日志）、`time.go`（RFC3339 格式化）、`text.go`（字数统计与文本工具）、`actor.go`（GORM 审计字段回调）、`jwt.go`（签名与校验，含密码版本声明）、`secret.go`（密钥封存）、`access_middleware.go`（鉴权、权限、审计）、`audit_names.go`（审计动作码 → 中文动作名）、`idempotency.go`（写请求幂等）、`middleware.go`（请求 ID、CORS、方法白名单）、`response.go`（统一包络）。
 
-`ai` 目录的 `domain_<域>.go` 共 3 个文件（`draft` 写正文 / `revise` 修问题 / `plan` 做规划），一个流程域一个文件，与 [prompts.md](prompts.md) 的域矩阵一一对应。
+`ai` 目录的 `domain_<域>.go` 共 4 个文件（`plan` 做规划 / `draft` 写正文 / `revise` 修问题 / `check` 做质检），一个流程域一个文件，与 [prompts.md](prompts.md) 的 4 个流程 × 2 条矩阵一一对应。
+
+存量数据不靠外部命令清理，而是由服务在启动期自愈：审计表结构退化时自动 `DROP` 重建（`AuditRepo.rebuildIfDegraded`）、已下线的表与列在迁移后显式删除、模型生态在迁移前后各跑一次去重、知识库在 worker 启动时对账孤儿切片与孤儿对象（`service/knowledge_reconcile.go`）。这样「升级后数据是干净的」是默认行为，不需要运维记住某个命令。
 
 | 约束 | 原因 |
 | --- | --- |
@@ -163,7 +165,7 @@ backend/
 | MethodWhitelist | 仅放行 GET / POST |
 | Auth | 解析 Bearer 令牌 → 查黑名单 → 校验用户状态与密码版本 → 注入 `user_ulid` |
 | Idempotency | 写动作带 `Idempotency-Key` 时只执行一次并缓存 2xx 首响应；查询类 POST 直接放行 |
-| Audit | POST 且不在跳过名单时落审计到 Manticore（请求体 + 响应体，失败只告警）；工作流步骤另写一条内部审计 |
+| Audit | POST 且不在跳过名单时落审计到 Manticore（请求体 + 响应体，失败只告警）；工作流步骤与 AI 调用另写子 span |
 | RequirePerm | 按权限码收口管理接口，缺失返回 `ERR_FORBIDDEN` |
 
 白名单：免鉴权仅 `/api/v1/auth/login`；免审计为登录、登出与 `/api/v1/chat/send`（会话正文不入审计）；免幂等同为登录与登出（重放登录会把旧令牌再发一次）。`/health`、`/ready` 挂在根引擎，不经过鉴权、幂等与审计。
@@ -201,11 +203,11 @@ backend/
 `backend/cmd/server/main.go` 的顺序：
 
 1. 初始化 Zap 与配置（`infra.LoadConfig`，启动期校验关键项）。
-2. 连接 PostgreSQL（失败即退出）→ `AutoMigrate` 声明 36 张表（失败即退出）→ 清理已下线的列（会话摘要列）。
+2. 连接 PostgreSQL（失败即退出）→ 迁移前先跑一次模型生态去重（`service/model_catalog_dedupe.go`）→ `AutoMigrate` 声明 36 张表（失败即退出；唯一索引冲突时去重后再迁移一次；`audit_logs` 启动即删，PG 实际存活 35 张）→ 迁移后再跑一次去重 → 清理已下线结构（删 `audit_logs` 表、会话摘要列与下线表列）。
 3. 连接 Redis / RabbitMQ / MinIO / Manticore；失败只告警并降级。
 4. 构造仓储 → 服务 → 中间件 → 路由。
-5. 播种：内置提示词（3 份身份 + 7 份指令，按内容指纹升级）、6 个内置工具、3 个内置工作流模板、默认配置、内置角色、内置菜单 29 行（失败即退出）；用户表为空时创建引导管理员。
-6. 可选播种出厂模型供应商（配置了网关地址与模型名且供应商表为空时）。
+5. 播种：内置提示词（4 个创作流程共 8 条任务提示词，按内容指纹升级）、6 个内置工具、3 个内置工作流模板、默认配置、内置角色、内置菜单 29 行（失败即退出）；用户表为空时创建引导管理员。
+6. 可选播种出厂模型供应商（配置了网关地址与模型名，且按供应商名或 BaseURL 查不到同名/同网关行时）。
 7. 启动知识库索引 worker（RabbitMQ 消费）。
 8. 监听端口；收到 SIGINT/SIGTERM 后优雅关闭 HTTP、worker、连接池。
 
@@ -284,9 +286,9 @@ flowchart LR
 
 ### 7.8 可观测性
 
-- 用量：按供应商、模型、调用类型聚合调用数、token、延迟、成功率；内存缓冲 5 秒批量落库。
+- 用量：按供应商、模型、调用类型聚合调用数、token、延迟、成功率；一次调用只记一条，流式在流结束时记账，网关未返回 token 时计入 `unknown_usage_count` 而 token 记 0；内存缓冲 5 秒批量落库。
 - 运行状态：探测 PostgreSQL / Redis / RabbitMQ / MinIO / Manticore 与模型健康，展示耗时与结论。
-- 审计：写操作记录操作者、动作码、目标、结果、IP；仅 `/api/v1/admin/` 路径读取 body 提取目标。
+- 审计：Manticore `nw_audit` 以 span 模型记录（`http` / `workflow_step` / `ai_call` / `system`，`job` 预留），一行一个 span，`parent_span_code` 串父子；所有 POST 都读 body 提取目标（≤32KB，凭据脱敏），响应体一并落库；动作码补中文名，AI 调用另记模型名与 token。
 - 任务中心：`jobs` 表状态机 `queued → running → success|failed`，失败可重试。
 
 ## 8. 前端架构

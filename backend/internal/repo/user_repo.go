@@ -106,6 +106,37 @@ func (r *UserRepo) ListPage(ctx context.Context, req *domain.UserAdminListREQ) (
 	return dos, total, nil
 }
 
+// ListPageByRoleCode 分页查询挂载了指定角色编码的用户（关键字/状态过滤与 ListPage 一致）。
+// 角色编码不存在时返回空页而非报错：筛选器来自下拉，历史编码失效不该让页面报错。
+func (r *UserRepo) ListPageByRoleCode(ctx context.Context, req *domain.UserAdminListREQ) ([]domain.UserDO, int64, error) {
+	// 每次统计/取页都重建一次查询，避免同一 *gorm.DB 被两条语句复用后条件互相污染
+	build := func() *gorm.DB {
+		query := r.db.WithContext(ctx).Model(&domain.UserDO{}).
+			Joins("JOIN user_roles ON user_roles.user_ulid = users.user_ulid").
+			Joins("JOIN roles ON roles.role_ulid = user_roles.role_ulid").
+			Where("roles.role_code = ?", req.RoleCode)
+		if req.KeywordText != "" {
+			like := "%" + req.KeywordText + "%"
+			query = query.Where("users.user_name LIKE ? OR users.user_email LIKE ?", like, like)
+		}
+		if req.UserStatusCode != "" {
+			query = query.Where("users.user_status_code = ?", req.UserStatusCode)
+		}
+		return query
+	}
+	var total int64
+	if err := build().Distinct("users.user_ulid").Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("count users by role: %w", err)
+	}
+	var dos []domain.UserDO
+	if err := build().Distinct("users.*").Order("users.created_at DESC").
+		Offset((req.PageNum - 1) * req.PageSize).Limit(req.PageSize).
+		Find(&dos).Error; err != nil {
+		return nil, 0, fmt.Errorf("list users by role: %w", err)
+	}
+	return dos, total, nil
+}
+
 // ListByULIDList 批量按 ULID 查询用户（模型授权展示等场景，防 N+1）。
 func (r *UserRepo) ListByULIDList(ctx context.Context, userULIDList []string) ([]domain.UserDO, error) {
 	if len(userULIDList) == 0 {

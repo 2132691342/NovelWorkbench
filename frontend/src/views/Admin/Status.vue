@@ -36,10 +36,27 @@
 
   const dependencyList = computed<NWDependencyHealthVo[]>(() => status.value?.dependency_list ?? [])
 
+  /** 本次采集时间（依赖项没有独立时间戳，用采集时刻统一标注） */
+  const checkedAt = ref('')
+
+  /** 失败依赖的「可能原因 / 下一步」提示（按依赖编码给出可执行建议） */
+  const dependencyHint = (item: NWDependencyHealthVo) => {
+    if (item.status_code === 'up') return ''
+    const hints: Record<string, string> = {
+      postgres: '数据库连接失败：检查 PostgreSQL 是否启动、连接串与账号权限，然后重试。',
+      manticore: '全文检索不可用：检查 Manticore 容器状态与 9308/9312 端口，审计与检索会降级。',
+      redis: '缓存/吊销表不可达：检查 Redis 进程与密码配置，登录吊销将失效。',
+      minio: '对象存储不可达：检查 MinIO 端口与桶权限，上传与知识库原文会失败。',
+      ai_provider: '模型网关不可用：检查供应商 base_url、API Key 与出网策略。'
+    }
+    return hints[item.dependency_code] ?? '检查该中间件进程、端口连通性与账号配置，修复后点「刷新状态」复测。'
+  }
+
   const load = async () => {
     loading.value = true
     try {
       status.value = await getSystemStatus()
+      checkedAt.value = new Date().toISOString()
     } catch {
       // 失败提示由请求层统一弹出
     } finally {
@@ -97,15 +114,22 @@
         class="dep-card"
       >
         <div class="dep-card__head">
-          <span class="dep-card__name">{{ item.dependency_name || item.dependency_code }}</span>
+          <span class="dep-card__name">
+            <span class="dep-card__dot" :class="`is-${healthBadge(item.status_code)}`" />
+            {{ item.dependency_name || item.dependency_code }}
+          </span>
           <span class="nw-badge" :class="`nw-badge--${healthBadge(item.status_code)}`">
             {{ healthLabel(item.status_code) }}
           </span>
         </div>
         <p class="dep-card__message">{{ item.message_text || '—' }}</p>
+        <p v-if="dependencyHint(item)" class="dep-card__hint">{{ dependencyHint(item) }}</p>
         <div class="dep-card__meta">
           <span class="dep-card__code">{{ item.dependency_code }}</span>
-          <span class="nw-hint">{{ item.latency_ms }} ms</span>
+          <span class="nw-hint">
+            延迟 {{ item.latency_ms }} ms
+            <template v-if="checkedAt"> · 检查于 {{ formatTime(checkedAt) }}</template>
+          </span>
         </div>
       </ElCard>
 
@@ -177,9 +201,41 @@
     }
 
     &__name {
+      display: flex;
+      gap: 6px;
+      align-items: center;
       font-size: 14px;
       font-weight: 650;
       color: var(--nw-ink);
+    }
+
+    &__dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--nw-text-muted);
+
+      &.is-success {
+        background: var(--nw-success);
+      }
+
+      &.is-warning {
+        background: var(--nw-warning);
+      }
+
+      &.is-danger {
+        background: var(--nw-danger);
+      }
+    }
+
+    &__hint {
+      padding: 6px 8px;
+      margin: 0 0 10px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--nw-warning);
+      background: color-mix(in srgb, var(--nw-warning) 8%, transparent);
+      border-radius: var(--nw-radius-sm);
     }
 
     &__message {

@@ -69,6 +69,13 @@ func (w *KnowledgeWorker) Run(ctx context.Context) error {
 			pkg.SLogger().Warnw("Manticore 全文索引重建失败，keyword 通道降级", "error", err)
 		}
 	}
+	// 启动期对账：清掉文档行已删但切片、索引行与对象仍在的孤儿数据。
+	chunkCount, manticoreCount, objectCount, err := w.ReconcileKnowledgeOrphans(ctx)
+	if err != nil {
+		pkg.SLogger().Warnw("知识库孤儿数据对账失败", "error", err)
+	} else {
+		logReconcileResult(chunkCount, manticoreCount, objectCount)
+	}
 	for {
 		err := w.mqRepo.ConsumeIndexJobs(ctx, w.handleIndexJob)
 		if err == nil || ctx.Err() != nil {

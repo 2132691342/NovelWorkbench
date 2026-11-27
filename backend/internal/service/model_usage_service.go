@@ -54,6 +54,10 @@ func (s *ModelUsageService) RecordUsage(_ context.Context, record ai.UsageRecord
 	} else {
 		accumulator.FailCount++
 	}
+	if !record.UsageKnownFlag {
+		// 网关未返回用量：token 记 0 单独计数，避免「有调用次数、token 全为 0」被误判成 bug
+		accumulator.UnknownUsageCount++
+	}
 	accumulator.PromptTokens += int64(record.PromptTokens)
 	accumulator.CompletionTokens += int64(record.CompletionTokens)
 	accumulator.TotalTokens += int64(record.PromptTokens + record.CompletionTokens)
@@ -112,6 +116,7 @@ func (s *ModelUsageService) Overview(ctx context.Context, req *domain.ModelUsage
 	for i := range vo.DailyList {
 		vo.CallCountTotal += vo.DailyList[i].CallCount
 		vo.FailCountTotal += vo.DailyList[i].FailCount
+		vo.UnknownUsageCount += vo.DailyList[i].UnknownUsageCount
 		vo.TotalTokensTotal += vo.DailyList[i].TotalTokens
 	}
 	if vo.CallCountTotal > 0 {

@@ -231,13 +231,13 @@ type chatMessageInput struct {
 	SystemPromptText string                 // 身份提示词正文（空则用内置兜底）
 	StyleText        string                 // 项目文风约束
 	ContextText      string                 // 装配后的上下文文本（空则省略）
-	CommandText      string                 // 命中的指令提示词渲染文本（空则省略）
+	CommandText      string                 // 命中的任务提示词渲染文本（空则省略）
 	HistoryList      []domain.ChatMessageDO // 注入历史（旧→新）
 	UserText         string                 // 用户输入
 }
 
 // buildChatMessages 构造发往模型的消息序列（纯函数）：
-// 身份提示词（系统）→ 上下文（系统）→ 指令提示词（系统）→ 历史（原生角色）→ 用户输入（用户）。
+// 身份提示词（系统）→ 上下文（系统）→ 任务提示词（系统）→ 历史（原生角色）→ 用户输入（用户）。
 // 历史全量按原生角色注入，不做条数截取也不做摘要替代：模型看到的就是作者说过的话。
 func buildChatMessages(input chatMessageInput) []*schema.Message {
 	messages := make([]*schema.Message, 0, len(input.HistoryList)+4)

@@ -2,17 +2,26 @@
 <script setup lang="ts">
   import { computed, onMounted, ref } from 'vue'
   import { ElButton, ElCard, ElDatePicker, ElEmpty, ElTable, ElTableColumn } from 'element-plus'
-  import type { EChartsOption } from 'echarts'
+  import type { EChartsOption, TooltipComponentFormatterCallbackParams } from 'echarts'
   import { getModelUsageOverview } from '@/api/model'
   import type { NWModelUsageGroupVo, NWModelUsageOverviewVo } from '@/api/model'
   import Echart from '@/components/Echart/index.vue'
   import { useAppStore } from '@/store/modules/app'
+
+  /** 概览指标卡（hint 为补充说明，tone 控制数值配色） */
+  interface SummaryCard {
+    label: string
+    value: string
+    tone: '' | 'success' | 'danger' | 'warning' | 'muted'
+    hint: string
+  }
 
   const appStore = useAppStore()
 
   const overview = ref<NWModelUsageOverviewVo>({
     call_count_total: 0,
     fail_count_total: 0,
+    unknown_usage_count: 0,
     total_tokens_total: 0,
     avg_latency_ms: 0,
     success_rate_value: 0,
@@ -23,29 +32,102 @@
   const loading = ref(false)
   const dateRange = ref<string[] | null>(null)
 
+  /** 日期快捷项（value 为 null 表示全部区间/自定义） */
+  const quickRanges = [
+    { value: '7', label: '近 7 天' },
+    { value: '30', label: '近 30 天' },
+    { value: '90', label: '近 90 天' }
+  ] as const
+
+  const activeQuick = ref<string>('')
+
+  /** 按「近 N 天」算出 YYYY-MM-DD 区间并写入日期选择器 */
+  const applyQuickRange = (days: string) => {
+    activeQuick.value = days
+    const end = new Date()
+    const start = new Date(end.getTime() - Number(days) * 86400_000)
+    const toDateText = (date: Date) =>
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    dateRange.value = [toDateText(start), toDateText(end)]
+    void load()
+  }
+
   /** 图表轴/网格线配色跟随明暗主题 */
   const axisColor = computed(() => (appStore.isDark ? '#94a3b8' : '#94a3b8'))
   const splitColor = computed(() => (appStore.isDark ? '#273244' : '#eef2f7'))
   const lineColor = computed(() => (appStore.isDark ? '#344055' : '#e2e8f0'))
 
-  const summaryCards = computed(() => [
-    { label: '总调用次数', value: overview.value.call_count_total.toLocaleString() },
-    { label: '失败次数', value: overview.value.fail_count_total.toLocaleString(), tone: 'danger' },
-    { label: '总 Token', value: overview.value.total_tokens_total.toLocaleString() },
-    { label: '平均延迟', value: `${overview.value.avg_latency_ms} ms` },
+  /** 未返回用量：网关未给 usage 的调用数，0 时仍展示但用次要色 */
+  const unknownUsageCount = computed(() => overview.value.unknown_usage_count ?? 0)
+
+  const summaryCards = computed<SummaryCard[]>(() => [
+    {
+      label: '总调用次数',
+      value: overview.value.call_count_total.toLocaleString(),
+      tone: '',
+      hint: ''
+    },
+    {
+      label: '失败次数',
+      value: overview.value.fail_count_total.toLocaleString(),
+      tone: 'danger',
+      hint: ''
+    },
+    {
+      label: '总 Token',
+      value: overview.value.total_tokens_total.toLocaleString(),
+      tone: '',
+      hint: ''
+    },
+    {
+      label: '平均延迟',
+      value: `${overview.value.avg_latency_ms} ms`,
+      tone: '',
+      hint: ''
+    },
     {
       label: '成功率',
       value: `${(overview.value.success_rate_value * 100).toFixed(1)}%`,
-      tone: 'success'
+      tone: 'success',
+      hint: ''
+    },
+    {
+      label: '未返回用量',
+      value: unknownUsageCount.value.toLocaleString(),
+      tone: unknownUsageCount.value > 0 ? 'warning' : 'muted',
+      hint: '网关未返回 token，非失败'
     }
   ])
+
+  /** 提示框：在默认两行指标后补「未返回用量」，该日无未知用量时不显示 */
+  const chartTooltip = (params: TooltipComponentFormatterCallbackParams) => {
+    const rows = Array.isArray(params) ? params : [params]
+    if (rows.length === 0) {
+      return ''
+    }
+    const index = rows[0].dataIndex
+    const daily = overview.value.daily_list[index]
+    if (!daily) {
+      return ''
+    }
+    const unknownCount = daily.unknown_usage_count ?? 0
+    const lines = [
+      `<div style="margin-bottom:4px">${daily.stat_date}</div>`,
+      `${rows[0].marker ?? ''}调用次数：${daily.call_count}`,
+      `${rows[1]?.marker ?? ''}Token 数：${daily.total_tokens.toLocaleString()}`
+    ]
+    if (unknownCount > 0) {
+      lines.push(`未返回用量：${unknownCount}`)
+    }
+    return lines.join('<br/>')
+  }
 
   /** 每日调用量柱状 + Token 折线（双轴） */
   const chartOption = computed<EChartsOption>(() => {
     const dailyList = overview.value.daily_list
     return {
       grid: { left: 52, right: 56, top: 40, bottom: 34 },
-      tooltip: { trigger: 'axis' },
+      tooltip: { trigger: 'axis', formatter: chartTooltip },
       legend: {
         data: ['调用次数', 'Token 数'],
         right: 12,
@@ -120,6 +202,18 @@
 <template>
   <div class="nw-page">
     <div class="nw-toolbar">
+      <div class="admin-usage__quick">
+        <button
+          v-for="item in quickRanges"
+          :key="item.value"
+          type="button"
+          class="admin-usage__chip"
+          :class="{ 'is-active': activeQuick === item.value }"
+          @click="applyQuickRange(item.value)"
+        >
+          {{ item.label }}
+        </button>
+      </div>
       <ElDatePicker
         v-model="dateRange"
         type="daterange"
@@ -127,7 +221,7 @@
         start-placeholder="开始日期"
         end-placeholder="结束日期"
         class="admin-usage__date"
-        @change="load()"
+        @change="activeQuick = ''; load()"
       />
       <ElButton type="primary" plain @click="load()">查询</ElButton>
       <div class="admin-usage__spacer" />
@@ -146,6 +240,7 @@
         <strong class="admin-usage__stat-value" :class="card.tone ? `is-${card.tone}` : ''">
           {{ card.value }}
         </strong>
+        <span v-if="card.hint" class="admin-usage__stat-hint">{{ card.hint }}</span>
       </ElCard>
     </div>
 
@@ -172,6 +267,11 @@
         </ElTableColumn>
         <ElTableColumn prop="call_count" label="调用次数" width="120" align="right" />
         <ElTableColumn prop="fail_count" label="失败次数" width="110" align="right" />
+        <ElTableColumn label="未返回用量" width="110" align="right">
+          <template #default="{ row }">
+            {{ (row.unknown_usage_count ?? 0) > 0 ? row.unknown_usage_count : '-' }}
+          </template>
+        </ElTableColumn>
         <ElTableColumn label="Token 数" width="140" align="right">
           <template #default="{ row }">{{ row.total_tokens.toLocaleString() }}</template>
         </ElTableColumn>
@@ -198,6 +298,39 @@
 
 <style lang="less" scoped>
   .admin-usage {
+    &__quick {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    &__chip {
+      height: 30px;
+      padding: 0 12px;
+      font-size: 12px;
+      color: var(--el-text-color-regular);
+      cursor: pointer;
+      background: var(--nw-surface);
+      border: 1px solid var(--nw-border);
+      border-radius: 999px;
+      transition:
+        color 0.15s ease,
+        border-color 0.15s ease,
+        background 0.15s ease;
+
+      &:hover {
+        color: var(--el-color-primary);
+        border-color: var(--el-color-primary);
+      }
+
+      &.is-active {
+        color: var(--el-color-primary);
+        background: var(--nw-primary-soft);
+        border-color: var(--el-color-primary);
+      }
+    }
+
     &__date {
       width: 260px;
     }
@@ -239,6 +372,20 @@
       &.is-danger {
         color: var(--nw-danger);
       }
+
+      &.is-warning {
+        color: var(--el-color-warning);
+      }
+
+      &.is-muted {
+        color: var(--el-text-color-secondary);
+      }
+    }
+
+    &__stat-hint {
+      font-size: 11px;
+      line-height: 1.3;
+      color: var(--el-text-color-secondary);
     }
 
     &__chart-card,

@@ -27,8 +27,8 @@ const (
 
 // workflowRunner 工作流执行器：管理运行中的 goroutine，保证同一运行不并发执行。
 type workflowRunner struct {
-	svc      *WorkflowService
-	mu       sync.Mutex
+	svc       *WorkflowService
+	mu        sync.Mutex
 	activeSet map[string]bool // 正在执行的运行 ULID
 }
 
@@ -215,9 +215,9 @@ func (s *WorkflowService) runChapter(ctx context.Context, runULID, chapterULID s
 
 // workflowStepResult 单步执行结果（体检分与复审结论供后续步骤与详情使用）。
 type workflowStepResult struct {
-	CheckScore   int
-	VerdictCode  string
-	OutputText   string
+	CheckScore  int
+	VerdictCode string
+	OutputText  string
 }
 
 // executeStep 按步骤类型执行一步，成功后落步骤记录。
@@ -295,7 +295,8 @@ func (s *WorkflowService) stepDraft(ctx context.Context, runULID string, chapter
 	}
 	stepCtx, cancel := context.WithTimeout(ctx, workflowStepTimeout)
 	defer cancel()
-	replyText, err := s.generateText(stepCtx, spec, workflowBodyOnlySystemPrompt, rendered)
+	replyText, err := s.generateText(stepCtx, spec, workflowBodyOnlySystemPrompt, rendered,
+		stepDef.StepTypeCode, runDO.TraceID, runDO.RunULID)
 	if err != nil {
 		return workflowStepResult{}, "", "", err
 	}
@@ -364,7 +365,8 @@ func (s *WorkflowService) stepReview(ctx context.Context, runULID string, chapte
 	}
 	stepCtx, cancel := context.WithTimeout(ctx, workflowStepTimeout)
 	defer cancel()
-	replyText, err := s.generateText(stepCtx, spec, workflowGenericSystemPrompt, rendered)
+	replyText, err := s.generateText(stepCtx, spec, workflowGenericSystemPrompt, rendered,
+		stepDef.StepTypeCode, runDO.TraceID, runDO.RunULID)
 	if err != nil {
 		return workflowStepResult{}, "", "", err
 	}
@@ -373,4 +375,3 @@ func (s *WorkflowService) stepReview(ctx context.Context, runULID string, chapte
 	return workflowStepResult{VerdictCode: verdictCode, CheckScore: scoreValue,
 		OutputText: summaryText}, pkg.TruncateText(summaryText, 4000), metricJSON, nil
 }
-

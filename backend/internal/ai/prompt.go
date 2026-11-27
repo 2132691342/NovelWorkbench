@@ -103,19 +103,13 @@ func TemplatePlaceholders(template string, known map[string]bool) []string {
 	return unknown
 }
 
-// SystemPrompt 生成小说创作助手基础提示词（无身份提示词时的兜底，注入项目文风约束）。
-func SystemPrompt(styleText string) string {
-	return ComposeSystemPrompt("", styleText)
-}
-
-// ComposeSystemPrompt 组合最终系统提示词：身份提示词正文（为空用内置兜底）+ 项目文风约束。
+// ComposeSystemPrompt 组合最终系统提示词：身份提示词正文（为空用内置作者人格）+ 项目文风约束。
 // 身份提示词决定身份与底线，文风约束属于项目事实，二者始终同时下发。
 func ComposeSystemPrompt(profileText, styleText string) string {
 	var builder strings.Builder
 	if strings.TrimSpace(profileText) == "" {
-		builder.WriteString("你是 NovelWorkbench 的小说创作助手，服务于长篇小说创作。\n")
-		builder.WriteString("要求：直接输出创作内容本身，不解释过程、不加引号、不输出与创作无关的客套话。\n")
-		builder.WriteString("保持人物、情节、设定与给定上下文一致；不确定的设定不要擅自编造为既定事实。\n")
+		builder.WriteString(BaseSystemPrompt)
+		builder.WriteString("\n")
 	} else {
 		builder.WriteString(strings.TrimSpace(profileText))
 		builder.WriteString("\n")

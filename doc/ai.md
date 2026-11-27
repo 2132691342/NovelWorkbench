@@ -29,8 +29,9 @@ AI 能力按「单轮可控生成」设计：用户给出意图，服务端装�
 | `ai.Client` | `backend/internal/ai/client.go` | 按 `ProviderSpec` 构造/复用 eino 对话组件，统一上报用量 |
 | `ai.ProviderSpec` | 同上 | 单次调用所需供应商快照；`APIKey` 明文只存在于内存 |
 | `ai.UsageRecorder` | `backend/internal/ai/usage.go` | 用量上报接口，由 `service.ModelUsageService` 实现 |
-| `ai.AssembleContext` / `ai.RenderPrompt` / `ai.SystemPrompt` / `ai.TemplatePlaceholders` | `backend/internal/ai/prompt.go` | 上下文装配、模板渲染与校验、系统提示词 |
-| `ai.BuiltinDomains` / `ai.BuiltinCommandCodeSet` / `ai.BuiltinSystemCodeSet` | `backend/internal/ai/prompt_assets.go` + `domain_<域>.go` | 3 个流程域的身份提示词与 7 份任务提示词、下线集合与内容指纹，与持久化结构解耦 |
+| `ai.AssembleContext` / `ai.RenderPrompt` / `ai.ComposeSystemPrompt` / `ai.TemplatePlaceholders` | `backend/internal/ai/prompt.go` | 上下文装配、模板渲染与校验、系统消息组合 |
+| `ai.BuiltinDomains` / `ai.BuiltinCommandCodeSet` / `ai.BuiltinCommandHashOf` | `backend/internal/ai/prompt_assets.go` + `domain_<流程>.go` | 4 个创作流程共 8 份任务提示词、下线集合与内容指纹，与持久化结构解耦 |
+| `ai.BaseSystemPrompt` | `backend/internal/ai/prompt_base.go` | 无身份提示词时的内置作者人格（兜底系统消息） |
 | `ai.ToolSpec` / `ai.ToolInfos` / `ai.DecodeToolArguments` | `backend/internal/ai/toolcall.go` | 工具声明构造、参数解码 |
 
 `ProviderSpec` 字段：`ProviderULID`、`ProviderName`、`ProtocolCode`、`BaseURL`、`APIKey`、`ChatModelName`、`Temperature`、`MaxTokens`、`Timeout`。密钥由 `ModelProviderService.specOf` 解密后传入，`ai` 包不接触存储。
@@ -94,24 +95,21 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 ## 3. 上下文装配
 
-### 3.1 提示词注入：身份与指令分层
+### 3.1 提示词注入：任务提示词 + 可选身份
 
-提示词只有一种资产，用 `prompt_kind_code` 分两类，**都以系统级消息下发**：
+提示词落一张 `prompts` 表，用 `prompt_kind_code` 分两类，**都以系统级消息下发**：
 
-1. **身份提示词（`system`）**：`PromptService.SystemPromptOf` 解析顺序为「请求显式 `system_prompt_code` → 启用的全局默认身份提示词（排序号最小）→ `ai.SystemPrompt("")` 内置兜底」。显式编码必须启用，且为全局或属于当前项目，否则视为未指定。
-2. **指令提示词（`command`）**：由 `/编码` 或请求体 `prompt_code` 命中，渲染后作为独立的系统级消息插在上下文之后、历史之前。
+1. **身份提示词（`system`，可选自建）**：`PromptService.SystemPromptOf` 的解析顺序是「请求显式 `system_prompt_code` → 启用的全局默认身份提示词（排序号最小）→ `ai.BaseSystemPrompt` 内置作者人格」。
+   显式编码必须启用，且为全局或属于当前项目，否则视为未指定；任何一步失败都回退到内置人格，绝不返回空串。
+2. **任务提示词（`command`，内置 8 条）**：由 `/编码` 或请求体 `prompt_code` 命中，渲染后作为独立的系统级消息插在上下文之后、历史之前。
 
 项目层约束：`projects.style_text` 非空时以「本项目文风约束」段落追加在身份提示词之后（`ai.ComposeSystemPrompt`）。
 
-分工约定：身份写「你是谁、什么绝不写」，指令写「这一次做什么、按什么格式交付」。二者同时下发，互不覆盖。
+分工约定：身份写「你是谁、什么绝不写」（可选），任务写「这一次做什么、按什么格式交付」（必需）。二者同时下发，互不覆盖。
 
-内置资产按「流程域 = 1 份身份 + 1-3 份指令」组织，完整矩阵见 [prompts.md](prompts.md)。
-
-3 份身份提示词（`novelist` 连载作者 / `reviser` 修订编辑 / `planner` 故事策划）与 7 份指令提示词
-（`continue` / `chapter` / `polish` / `deai` / `outline` / `review` / `summary`）统一落在一张 `prompts` 表上，
+内置任务提示词按「创作流程 = 2 份」组织：开书规划 / 写正文 / 修问题 / 质检，
+8 个编码是 `outline` / `chapter_plan` / `chapter` / `continue` / `polish` / `deai` / `review` / `summary`，
 由 `PromptService.SeedDefaults` 幂等播种并做指纹升级，管理端在「提示词库」页维护；完整矩阵见 [prompts.md](prompts.md)。
-
-默认身份是 `novelist`（长篇连载作者），未指定身份提示词的对话都用它。
 
 ### 3.2 块优先级
 
@@ -166,9 +164,9 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 
 角色卡与设定条目这类「一行一条」的素材按上表收紧；章节正文、文档全文走首尾保留，不按此表截。
 
-### 3.5 指令提示词渲染
+### 3.5 任务提示词渲染
 
-命中指令提示词后（`ChatService.Send`）：
+命中任务提示词后（`ChatService.Send`）：
 
 1. `chapter_content` = 引用章节正文按「当前章在前」拼接（不再截断）。
 2. `context` = `ai.AssembleContext` 装配出的上下文文本（与独立系统级上下文消息同源）。
@@ -176,8 +174,8 @@ providerULID | protocolCode | baseURL | chatModelName | sha256(apiKey)[:8] | tem
 4. `prompt_code` = 命中的编码。
 5. 渲染结果作为独立**系统级**消息（`CommandText`），位置在上下文消息之后、历史之前。
 
-因此 `{{context}}` 的内容会同时出现在指令提示词与独立上下文消息中，属于有意设计：
-指令提示词需要就近上下文，独立消息保证装配顺序可解释。
+因此 `{{context}}` 的内容会同时出现在任务提示词与独立上下文消息中，属于有意设计：
+任务提示词需要就近上下文，独立消息保证装配顺序可解释。
 
 ### 3.6 历史：全量注入，只收敛超长单条
 
@@ -237,7 +235,7 @@ flowchart LR
 | --- | --- | --- |
 | 1 | `system` | `ai.ComposeSystemPrompt(systemPromptText, styleText)`：身份提示词 + 项目文风约束 |
 | 2 | `system` | `【上下文】\n{contextText}`，为空时整条省略 |
-| 3 | `system` | 指令提示词渲染结果，为空时整条省略 |
+| 3 | `system` | 任务提示词渲染结果，为空时整条省略 |
 | 4… | 按历史顺序 | 逐条历史（全量，超长单条保留首尾），`chatRoleOf` 映射角色 |
 | 末 | `user` | 用户输入（去命令后的正文） |
 
@@ -258,7 +256,7 @@ streamChat 循环（≤ chatToolRoundLimit = 4）
 
 消息序列因此是「系统消息 → 历史 → 用户 → (assistant tool_calls → tool result)* → assistant 正文」。
 工具结果以原生 `tool` 消息回给模型，不再额外塞进上下文块——模型只该看到自己主动要来的事实。
-防打转的三道机制见 [modules.md](modules.md) 的工具资产一节。
+防打转的四道机制见 [modules.md](modules.md) 的工具资产一节。
 
 ## 5. 提示词
 
@@ -267,7 +265,7 @@ streamChat 循环（≤ chatToolRoundLimit = 4）
 提示词 = 作用域 + 种类 + 正文，落一张 `prompts` 表（列定义见 [database.md](database.md)）：
 
 - `prompt_code`：对话中以 `/code` 触发，同作用域内唯一。
-- `prompt_kind_code`：`system`（身份）/ `command`（指令）。
+- `prompt_kind_code`：`system`（身份，可选自建）/ `command`（任务，内置 8 条）。
 - `scope_code` + `project_ulid`：`global` / `project`；同编码项目提示词覆盖全局。
 - `domain_code` / `category_code`：流程域与分类，内置资产按域分组展示。
 - `prompt_text`：提示词正文，可含 `{{占位符}}`。
@@ -276,17 +274,20 @@ streamChat 循环（≤ chatToolRoundLimit = 4）
 提示词只有一种资产，用 `prompt_kind_code` 区分身份与指令，落在一张 `prompts` 表上：
 分成两张表只会让「哪一段真的生效」变得难查，因此统一存储、按种类区分。
 
-### 5.2 内置提示词（3 份身份 + 7 份指令）
+### 5.2 内置提示词（4 个流程 × 2 条 = 8 条任务）
 
-由 `ai.BuiltinDomains()` 汇总 3 个流程域（`backend/internal/ai/domain_draft.go` / `domain_revise.go` / `domain_plan.go`），
+由 `ai.BuiltinDomains()` 汇总 4 个创作流程（`backend/internal/ai/domain_plan.go` / `domain_draft.go` / `domain_revise.go` / `domain_check.go`），
 `PromptService.SeedDefaults` 以 `scope_code='global'`、`builtin_flag=true` 播种并做指纹升级。
 完整编码矩阵见 [prompts.md](prompts.md)，此处只说明判据与升级机制。
+
+内置资产全部是 `command` 类，每条正文由开场边界一句 + `【输入】` + 做法段 + `【输出格式】` + `【不做】` 组成，
+因此一条就是一次完整委托，作者不必先切身份再点任务。身份提示词是可选自建项，缺省走 `ai.BaseSystemPrompt`。
 
 判据均可核对：卖点必须能填满「一个什么人，因为什么事，必须做到什么，否则失去什么」；世界观只认「规则 / 边界 / 代价」三栏；质检每条判定必须引原句，给不出原句的判定删掉；去 AI 味只看可机检指标（句长分布、套话密度、情绪直给次数），不做主观评价。
 
 **指纹升级**：内置提示词属于产品资产，但允许作者改。每行存 `asset_hash_text`（出厂内容指纹）与 `customized_flag`。
 启动时按「不存在→插入 / 已自改→不动 / 指纹一致→不动 / 其余→覆盖并写新指纹」处理，
-所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/asset_chain_test.go` 断言域形状、编码唯一与占位符合法。
+所以代码里的提示词改版后上线即生效，作者改过的行不会被冲掉；`internal/ai/prompt_chain_test.go` 断言域形状、编码唯一与占位符合法。
 
 ### 5.3 解析与覆盖
 
@@ -305,7 +306,7 @@ streamChat 循环（≤ chatToolRoundLimit = 4）
 ### 5.5 生命周期
 
 - `SeedDefaults` 幂等 + 指纹升级：按 `(global, "", prompt_code)` 查到行后，`customized_flag=true` 或指纹一致则跳过，否则用代码资产覆盖名称/说明/正文/域/分类/排序号。
-- 已下线编码：`dropRetiredBuiltins` 用「指令编码集合 ∪ 身份编码集合」比对库中 `builtin_flag=true` 的全局提示词，把清单外的删除。
+- 已下线编码：`dropRetiredBuiltins` 比对库中 `builtin_flag=true` 的全局提示词与 `ai.BuiltinCommandCodeSet()`，把清单外的删除（不看种类，因此已下线的内置身份提示词也会被清掉）。
 - 内置提示词不可删除（`Delete` 返回「内置提示词不允许删除，可停用」），可停用、可改正文；`prompt_code`、`scope_code`、`prompt_kind_code` 不可改。
 - 保存时若提交内容与其出厂指纹不同，`customized_flag` 置 `true`，后续代码升级不再覆盖这一行；改回出厂内容会重新置回 `false`。
 - 同作用域内编码唯一由服务层查重保证（先查后写）。
@@ -470,14 +471,14 @@ CREATE TABLE IF NOT EXISTS nw_chunks(
 
 ## 8. 用量统计
 
-`ai.UsageRecord`：`ProviderULID`、`ProviderName`、`ModelName`、`CallTypeCode`（当前仅 `chat`）、`SuccessFlag`、`PromptTokens`、`CompletionTokens`、`LatencyMs`。
+`ai.UsageRecord`：`ProviderULID`、`ProviderName`、`ModelName`、`CallTypeCode`（当前仅 `chat`）、`SuccessFlag`、`UsageKnownFlag`（网关是否返回真实 token，false 时 token 记 0 并另计未知用量）、`PromptTokens`、`CompletionTokens`、`LatencyMs`。
 
 `ModelUsageService`：
 
 | 环节 | 说明 |
 | --- | --- |
 | 缓冲键 | `statDate \| providerULID \| modelName \| callTypeCode` |
-| 累加 | `call_count`、`success_count`、`fail_count`、prompt/completion/total tokens、`latency_ms_sum` |
+| 累加 | `call_count`、`success_count`、`fail_count`、prompt/completion/total tokens、`latency_ms_sum`；`UsageKnownFlag=false` 时另加 `unknown_usage_count`（token 记 0，从数据上区分「网关不给用量」与「记账漏了 token」） |
 | 刷新 | `usageFlushInterval = 5s`；ctx 取消时最后一次落库 |
 | 落库 | `usageRepo.UpsertIncrement` 按唯一维度冲突累加 |
 | 失败 | 仅告警，缓冲丢弃，避免无限增长 |

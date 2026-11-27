@@ -112,23 +112,27 @@ func AuditMiddleware(recorder AuditRecorder, skipPaths []string) gin.HandlerFunc
 		rawResp := recorderWriter.buffer.Bytes()
 		respCode, respMessage := parseAuditResp(rawResp)
 		status := recorderWriter.Status()
+		actionCode := strings.TrimPrefix(c.Request.URL.Path, "/api/v1/")
 		do := &domain.AuditLogDO{
-			LogLevelCode:  AuditLevelOf(status),
-			TraceID:       c.GetString(ContextKeyRequestID),
-			UserULID:      c.GetString(ContextKeyUserULID),
-			ActionCode:    strings.TrimPrefix(c.Request.URL.Path, "/api/v1/"),
-			RequestPath:   c.Request.URL.Path,
-			RequestMethod: c.Request.Method,
-			RequestBody:   requestBody,
-			TargetType:    "",
-			TargetULID:    "",
-			RespCode:      respCode,
-			RespMessage:   TruncateText(respMessage, 512),
-			RespBody:      sanitizeAuditResp(rawResp, recorderWriter.truncated),
-			HTTPStatus:    status,
-			LatencyMs:     time.Since(startedAt).Milliseconds(),
-			IPAddr:        c.ClientIP(),
-			UserAgentText: TruncateText(c.Request.UserAgent(), 512),
+			LogLevelCode:   AuditLevelOf(status),
+			SpanTypeCode:   domain.AuditSpanTypeHTTP, // 入口请求：链路时间线的根 span
+			TraceID:        c.GetString(ContextKeyRequestID),
+			ParentSpanCode: "", // 顶级 span 没有父动作
+			UserULID:       c.GetString(ContextKeyUserULID),
+			ActionCode:     actionCode,
+			ActionName:     AuditActionLabel(actionCode),
+			RequestPath:    c.Request.URL.Path,
+			RequestMethod:  c.Request.Method,
+			RequestBody:    requestBody,
+			TargetType:     "",
+			TargetULID:     "",
+			RespCode:       respCode,
+			RespMessage:    TruncateText(respMessage, 512),
+			RespBody:       sanitizeAuditResp(rawResp, recorderWriter.truncated),
+			HTTPStatus:     status,
+			LatencyMs:      time.Since(startedAt).Milliseconds(),
+			IPAddr:         c.ClientIP(),
+			UserAgentText:  TruncateText(c.Request.UserAgent(), 512),
 		}
 		do.TargetType, do.TargetULID = extractAuditTarget(c, requestBody)
 		if err := recorder.Record(c.Request.Context(), do); err != nil {

@@ -54,3 +54,18 @@ func (r *ObjectRepo) RemoveObject(ctx context.Context, objectKey string) error {
 	}
 	return nil
 }
+
+// ListObjectKeys 列出桶内全部对象键（启动期清理孤儿对象用）。
+func (r *ObjectRepo) ListObjectKeys(ctx context.Context) ([]string, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("list objects: minio unavailable")
+	}
+	keyList := make([]string, 0, 64)
+	for object := range r.client.ListObjects(ctx, r.bucket, minio.ListObjectsOptions{Recursive: true}) {
+		if object.Err != nil {
+			return nil, fmt.Errorf("list objects: %w", object.Err)
+		}
+		keyList = append(keyList, object.Key)
+	}
+	return keyList, nil
+}

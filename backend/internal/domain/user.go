@@ -53,13 +53,14 @@ type UserAdminListREQ struct {
 	PageREQ
 	KeywordText    string `json:"keyword_text" form:"keyword_text" binding:"omitempty,max=64"`         // 登录名/邮箱模糊过滤
 	UserStatusCode string `json:"user_status_code" form:"user_status_code" binding:"omitempty,max=16"` // 状态过滤
+	RoleCode       string `json:"role_code" form:"role_code" binding:"omitempty,max=32"`               // 角色编码过滤（空为全部角色）
 }
 
 // UserAdminCreateREQ 管理端创建用户请求。
 type UserAdminCreateREQ struct {
 	UserName     string   `json:"user_name" form:"user_name" binding:"required,min=3,max=64"`         // 登录名
 	UserEmail    string   `json:"user_email" form:"user_email" binding:"required,email,max=128"`      // 邮箱
-	PasswordText string   `json:"password_text" form:"password_text" binding:"required,min=6,max=64"` // 初始密码，仅入参
+	PasswordText string   `json:"password_text" form:"password_text" binding:"required,min=8,max=64"` // 初始密码，仅入参（≥8 且含字母与数字，见 validatePasswordStrength）
 	RoleCodes    []string `json:"role_codes" form:"role_codes" binding:"omitempty,max=16"`            // 角色编码列表
 	RemarkText   string   `json:"remark_text" form:"remark_text" binding:"omitempty,max=256"`         // 备注
 }
@@ -83,7 +84,7 @@ type UserAdminDeleteREQ struct {
 // UserResetPasswordREQ 管理端重置密码请求。
 type UserResetPasswordREQ struct {
 	UserULID        string `json:"user_ulid" form:"user_ulid" binding:"required,max=40"`                       // 用户 ULID
-	NewPasswordText string `json:"new_password_text" form:"new_password_text" binding:"required,min=6,max=64"` // 新密码，仅入参
+	NewPasswordText string `json:"new_password_text" form:"new_password_text" binding:"required,min=8,max=64"` // 新密码，仅入参（≥8 且含字母与数字）
 }
 
 // UserLoginDTO 登录结果（含令牌）。

@@ -195,10 +195,10 @@ func (s *WorkflowService) Detail(ctx context.Context, userULID string, runULID s
 			detail.ChapterWordCount = chapter.WordCount
 		}
 	}
-	if strings.TrimSpace(detail.ChapterContentText) == "" {
-		detail.ChapterContentText = runDO.CandidateText
-		detail.ChapterWordCount = pkg.CountWords(runDO.CandidateText)
-	}
+	// 候选正文是审核对象：与库内正文分开返回，前端才能展示「候选 vs 库内」的字数差。
+	// 库内正文保持原样（空白章就是空串），不做候选兜底，否则字数差永远为 0。
+	detail.CandidateText = runDO.CandidateText
+	detail.CandidateWordCount = pkg.CountWords(runDO.CandidateText)
 	for i := range stepDOS {
 		stepVO := toWorkflowStepVO(&stepDOS[i], chapterNameMap)
 		detail.StepList = append(detail.StepList, stepVO)
@@ -229,6 +229,7 @@ func (s *WorkflowService) Stats(ctx context.Context, projectULID string) (domain
 		FailedCount:        countByStatus[domain.WorkflowRunStatusFailed],
 	}, nil
 }
+
 // runVO 读取最新运行状态并组装视图（操作类接口的统一返回）。
 func (s *WorkflowService) runVO(ctx context.Context, runULID string, chapterName string) (domain.WorkflowRunVO, error) {
 	runDO, err := s.workflowRepo.GetRun(ctx, runULID)
@@ -363,4 +364,3 @@ func (s *WorkflowService) chapterNameMap(ctx context.Context, dos []domain.Workf
 	}
 	return nameMap, nil
 }
-

@@ -29,14 +29,15 @@ func (r *ModelUsageRepo) UpsertIncrement(ctx context.Context, do *domain.ModelUs
 			{Name: "stat_date"}, {Name: "provider_ulid"}, {Name: "model_name"}, {Name: "call_type_code"},
 		},
 		DoUpdates: clause.Assignments(map[string]any{
-			"call_count":        gorm.Expr("model_usage_stats.call_count + ?", do.CallCount),
-			"success_count":     gorm.Expr("model_usage_stats.success_count + ?", do.SuccessCount),
-			"fail_count":        gorm.Expr("model_usage_stats.fail_count + ?", do.FailCount),
-			"prompt_tokens":     gorm.Expr("model_usage_stats.prompt_tokens + ?", do.PromptTokens),
-			"completion_tokens": gorm.Expr("model_usage_stats.completion_tokens + ?", do.CompletionTokens),
-			"total_tokens":      gorm.Expr("model_usage_stats.total_tokens + ?", do.TotalTokens),
-			"latency_ms_sum":    gorm.Expr("model_usage_stats.latency_ms_sum + ?", do.LatencyMsSum),
-			"provider_name":     do.ProviderName,
+			"call_count":          gorm.Expr("model_usage_stats.call_count + ?", do.CallCount),
+			"success_count":       gorm.Expr("model_usage_stats.success_count + ?", do.SuccessCount),
+			"fail_count":          gorm.Expr("model_usage_stats.fail_count + ?", do.FailCount),
+			"prompt_tokens":       gorm.Expr("model_usage_stats.prompt_tokens + ?", do.PromptTokens),
+			"completion_tokens":   gorm.Expr("model_usage_stats.completion_tokens + ?", do.CompletionTokens),
+			"total_tokens":        gorm.Expr("model_usage_stats.total_tokens + ?", do.TotalTokens),
+			"unknown_usage_count": gorm.Expr("COALESCE(model_usage_stats.unknown_usage_count, 0) + ?", do.UnknownUsageCount),
+			"latency_ms_sum":      gorm.Expr("model_usage_stats.latency_ms_sum + ?", do.LatencyMsSum),
+			"provider_name":       do.ProviderName,
 		}),
 	}).Create(do).Error
 	if err != nil {
@@ -52,6 +53,7 @@ func (r *ModelUsageRepo) AggregateDaily(ctx context.Context, fromDate, toDate st
 		Select(`stat_date,
 			COALESCE(SUM(call_count), 0) AS call_count,
 			COALESCE(SUM(fail_count), 0) AS fail_count,
+			COALESCE(SUM(unknown_usage_count), 0) AS unknown_usage_count,
 			COALESCE(SUM(total_tokens), 0) AS total_tokens,
 			COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
 			(COALESCE(SUM(latency_ms_sum), 0) / GREATEST(COALESCE(SUM(call_count), 0), 1))::bigint AS avg_latency_ms`).

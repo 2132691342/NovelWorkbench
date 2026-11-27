@@ -1,5 +1,5 @@
 // 本文件定义提示词（Prompt）资产的持久化对象、请求与视图对象。
-// 一份提示词分两种：身份提示词（system）整段会话常驻，指令提示词（command）由 /编码 单次触发。
+// 一份提示词分两种：任务提示词（command，内置 8 条）由 /编码 单次触发，身份提示词（system）可选自建、整段会话常驻。
 // 二者都以系统级消息注入模型，用户输入始终是用户级消息。
 
 package domain
@@ -12,8 +12,8 @@ const (
 
 // 提示词种类编码常量。
 const (
-	PromptKindSystem  = "system"  // 身份与底线
-	PromptKindCommand = "command" // 单次任务指令
+	PromptKindSystem  = "system"  // 身份与底线（内置已下线，仅作者自建）
+	PromptKindCommand = "command" // 单次任务（内置 8 条）
 )
 
 // 提示词分类编码常量。
